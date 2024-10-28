@@ -1,4 +1,4 @@
-#OpenMuscle - LASK5 V0
+#Open Muscle Labler - (LASK5) V1
 # 4 Finger Target Value Acquirer + Joystick?
 # Coded for ESP32-S3
 # 10-23-2024 -TURFPTAx
@@ -28,6 +28,9 @@ startPIN = 11
 selectPIN = 10
 upPIN = 12
 downPIN = 13
+joystick_xPIN = 6
+joystick_yPIN = 5
+Joystick_SW = 7
 s,wlan = False,False
 
 def save_calibration(mins, maxes):
@@ -54,33 +57,28 @@ start = machine.Pin(startPIN,machine.Pin.IN,machine.Pin.PULL_UP)
 select = machine.Pin(selectPIN,machine.Pin.IN,machine.Pin.PULL_UP)
 up = machine.Pin(upPIN,machine.Pin.IN,machine.Pin.PULL_UP)
 down = machine.Pin(downPIN,machine.Pin.IN,machine.Pin.PULL_UP)
+# Initialize joystick pins as ADC
+joystick_x = machine.ADC(machine.Pin(joystick_xPIN))
+joystick_x.atten(machine.ADC.ATTN_11DB)
+joystick_y = machine.ADC(machine.Pin(joystick_yPIN))
+joystick_y.atten(machine.ADC.ATTN_11DB)
 
-#Joystick variables
-adc_jx = machine.ADC(machine.Pin(5))
-adc_jy = machine.ADC(machine.Pin(6))
-adc_jx.atten(machine.ADC.ATTN_11DB)  # Adjust based on your joystick's voltage range
-adc_jy.atten(machine.ADC.ATTN_11DB)
-
-# Initialize digital input for JSW
-jsw = machine.Pin(7, machine.Pin.IN, machine.Pin.PULL_UP)
-
-def read_joystick():
-    x_value = adc_jx.read()  # Read analog value from JX
-    y_value = adc_jy.read()  # Read analog value from JY
-    switch_pressed = not jsw.value()  # Read digital value from JSW, 'not' inverts because button press usually connects to ground
-    return x_value, y_value, switch_pressed
+# Optional joystick switch button
+joystick_sw = machine.Pin(Joystick_SW, machine.Pin.IN, machine.Pin.PULL_UP)
 
 #Startup Sequence
 led = machine.Pin(15,machine.Pin.OUT)
 
-
+# Find voltage Pin
+battery_voltage_pin = 20
+batt_level = machine.ADC(machine.Pin(battery_voltage_pin))
 
 def blink(x):
-  for _ in range(x):
-    led.value(1)
-    time.sleep(.3)
-    led.value(0)
-    time.sleep(.2)
+    for _ in range(x):
+      led.value(1)
+      time.sleep(.3)
+      led.value(0)
+      time.sleep(.2)
 
 blink(7)
 
@@ -151,14 +149,12 @@ def initNETWORK():
   return(s,wlan)
   
 def read_all(hall=hall):
-  reads = []
-  for i,x in enumerate(hall):
-    reads.append(x.read())
-    print(i,x,reads[-1])
-  return(reads)
+    reads = []
+    for i,x in enumerate(hall):
+        reads.append(x.read())
+        print(i,x,reads[-1])
+    return(reads)
     
-    
-
 def calibrate(hall, start):
     global mins
     global maxes
@@ -176,37 +172,73 @@ def calibrate(hall, start):
     save_calibration(mins, maxes)
     frint('Calibration complete and saved.')
 
+def calculate_battery_percentage(batt_adc, ref_voltage=3.3, adc_max=4095):
+    # Convert ADC reading to voltage
+    voltage = (batt_adc.read() / adc_max) * ref_voltage
+    
+    # Define battery voltage range (adjust based on your battery specifications)
+    max_battery_voltage = 4.2  # Voltage when battery is full
+    min_battery_voltage = 3.0  # Voltage when battery is nearly empty
+
+    # Map voltage to percentage (capping it between 0 and 100)
+    if voltage >= max_battery_voltage:
+        percentage = 100
+    elif voltage <= min_battery_voltage:
+        percentage = 0
+    else:
+        # Calculate percentage
+        percentage = ((voltage - min_battery_voltage) / (max_battery_voltage - min_battery_voltage)) * 100
+
+    return str(int(percentage)) + '%'  # Return rounded integer percentage
+
+def taskbar(hall=hall, oled=oled, joystick_x=joystick_x, joystick_y=joystick_y, batt_level=batt_level):
+    oled.fill(0)
+    b = calculate_battery_percentage(batt_level)
+    oled.text(f'OM-LASK4 {b}', 0, 0, 1)
+
+    # Adjusted Joystick display area to be directly above the piston animation
+    joystick_x_center = 107  # Centered above pistons (87 + 20 for half width of pistons area)
+    joystick_y_center = 6    # Y position for joystick indicator (top of display)
+
+    # Read joystick x and y values and normalize to fit in the display area
+    joy_x = joystick_x.read()
+    joy_y = joystick_y.read()
+    joy_center = 2048  # Assuming 0-4095 range, center is around 2048
+    
+    # Calculate inverted offsets for display (scaling joystick movement)
+    joy_offset_x = -int((joy_x - joy_center) / 500)  # Negate for inversion
+    joy_offset_y = -int((joy_y - joy_center) / 500)
+
+    # Limit the joystick range within the display area (40x14)
+    joy_draw_x = max(87, min(joystick_x_center + joy_offset_x, 127))  # Limit within 40-pixel width at x=87
+    joy_draw_y = max(0, min(joystick_y_center + joy_offset_y, 14))    # Inverted y direction
+
+    # Draw joystick indicator (3x3 filled square to approximate a circle)
+    oled.fill_rect(joy_draw_x, joy_draw_y, 3, 3, 1)
+
+    # Draw pistons display area (unchanged from the previous position)
+    x = 87
+    y = 17
+    global mins, maxes
+    oled.fill_rect(x, y, 40, 14, 1)
+    oled.fill_rect(x + 1, y + 1, 38, 12, 0)
+
+    for i, z in enumerate(hall):
+        div_top = (z.read() - mins[i])
+        div_bottom = (maxes[i] - mins[i])
+        if div_bottom == 0:
+            div_bottom = 1
+        ch = int((div_top / div_bottom) * 12)
+        r_x = ((i + 1) * 7) + x
+        r_y = 13 - ch + y
+        oled.fill_rect(r_x, r_y, 5, ch, 1)
+        oled.text(str(i + 1), i * 20, 16, 1)
+        oled.text(str(ch * 8), i * 20, 24, 1)
+    
+    oled.show()
 
 
-def taskbar(hall=hall,oled=oled):
-  oled.fill(0)
-  oled.text('OM-LASK4 V1',0,0,1)
-  x = 87
-  y = 17
-  global mins
-  global maxes
-  ammount = 5
-  oled.fill_rect(0+x,0+y,40,14,1)
-  oled.fill_rect(1+x,1+y,38,12,0)
-  for i,z in enumerate(hall):
-    div_top = (z.read()-mins[i])
-    div_bottom = (maxes[i]-mins[i])
-    if div_bottom == 0:
-      div_bottom = 1
-    ch = int((div_top/div_bottom)*12)
-    r_x = ((i+1)*7)+x
-    r_y = 13-(ch)+y
-    oled.fill_rect(r_x,r_y,5,ch,1)
-    oled.text(str(i+1),i*20,16,1)
-    oled.text(str(ch*8),i*20,24,1)
-  oled.show()
-  
-  
-
-frint('OM-LASK4 Boot')
-
-
-
+frint('OM-Labeler (LASK5)')
 
 for i in range(1,5):
   temp = machine.ADC(machine.Pin(i))
@@ -247,62 +279,86 @@ def fastRead(cells=cells):
 
 
 def mainMenu():
-  global start
-  global hall
-  global select
-  global up
-  global down
-  global oled
-  global s
-  global wlan
-  menu = [['[0] Wifi Connect',0,0],['[1] Calibrate',1,1],['[2] UDP Send',2,1],['[3] Exit',3,1]]
-  end = False
-  while not end:
-    oled.fill(0)
-    for i,x in enumerate(menu):
-      oled.fill_rect(0,i*8,128,8,abs(x[2]-1))
-      oled.text(x[0],0,i*8,x[2])
-    oled.show()
-    if start.value() == 0 and menu[0][2] == 0:
-      frint('init network')
-      s,wlan = initNETWORK()
-      cells = [hall[3],hall[2],hall[1],hall[0]]
-      try:
-        import ntptime
-        ntptime.settime()
-        time.localtime()
-        print(time.localtime())
-      except:
-        frint('NTP Time [f]')
-        frint('failed to set NTP time')
-      return
-    if start.value() == 0 and menu[3][2] == 0:
-      return
-    if start.value() == 0 and menu[2][2] == 0:
-      while True:
+    global start, hall, select, up, down, oled, s, wlan
+
+    # Define the main menu and submenus as dictionaries
+    menus = {
+        'main': {
+            'items': {
+                0: {'label': '[0] Wifi Connect', 'action': initNETWORK},
+                1: {'label': '[1] Calibration', 'submenu': 'calibration_menu'},
+                2: {'label': '[2] UDP Send', 'action': fastReadLoop},
+                3: {'label': '[3] Exit', 'action': lambda: 'exit'}
+            }
+        },
+        'calibration_menu': {
+            'items': {
+                0: {'label': '[0] Calibrate Controls', 'action': lambda: calibrate(hall, start)},
+                1: {'label': '[1] Back', 'action': lambda: 'back'}
+            }
+        }
+    }
+
+    current_menu = 'main'
+    current_selection = 0
+    exit_menu = False  # Flag to exit menu loop
+
+    while not exit_menu:
+        # Clear the OLED display
+        oled.fill(0)
+
+        # Draw the current menu items
+        for i, item in menus[current_menu]['items'].items():
+            is_selected = (i == current_selection)
+            if is_selected:
+                oled.fill_rect(0, i * 8, 128, 8, 1)  # Highlight background (adjusted to 8 px height)
+                oled.text(item['label'], 0, i * 8, 0)  # Inverted text on highlight
+            else:
+                oled.text(item['label'], 0, i * 8, 1)  # Normal text
+            
+        oled.show()  # Update display
+
+        # Check if start button is pressed for selection
+        if start.value() == 0:
+            selected_item = menus[current_menu]['items'][current_selection]
+            
+            # Check if item has a submenu or an action
+            if 'submenu' in selected_item:
+                # Move to the submenu
+                current_menu = selected_item['submenu']
+                current_selection = 0
+                time.sleep(0.3)  # Debounce delay after entering submenu
+            elif 'action' in selected_item:
+                action_result = selected_item['action']()
+                # Handle "Back" or "Exit" action results
+                if action_result == 'back':
+                    current_menu = 'main'
+                    current_selection = 0
+                elif action_result == 'exit':
+                    exit_menu = True  # Set flag to exit the menu loop
+                    break  # Exit the loop immediately
+
+            time.sleep(0.3)  # Debounce delay for 'start' button within submenu
+
+        # Handle up/down button navigation
+        if up.value() == 0 or down.value() == 0:
+            menu_length = len(menus[current_menu]['items'])
+            if up.value() == 0:
+                current_selection = (current_selection - 1) % menu_length
+            elif down.value() == 0:
+                current_selection = (current_selection + 1) % menu_length
+            
+            # Debounce delay for navigation buttons
+            time.sleep(0.3)
+
+def fastReadLoop():
+    """Loop for UDP send functionality; exits on select button press."""
+    while True:
         fastRead()
         if select.value() == 0:
-          return
-    if start.value() == 0 and menu[1][2] == 0:
-        calibrate(hall,start)
-        return
-    if up.value() == 0 or down.value() == 0:
-      for i,x in enumerate(menu):
-        if x[2] == 0:
-          if up.value() == 0:
-            menu[i][2] = 1
-            menu[i-len(menu)+1][2] = 0
-            time.sleep(.3)
-          if down.value() == 0:
-            menu[i][2] = 1
-            menu[i-1][2] = 0
-            time.sleep(.3)
-            
-    
+            return
 
-
-
-
+           
 def mainloup(pi=pi,plen=plen,led=led,cells=cells,start=start,select=select,up=up,down=down):
   count = 0
   exit_bool = False
@@ -331,4 +387,12 @@ def mainloup(pi=pi,plen=plen,led=led,cells=cells,start=start,select=select,up=up
 
 mainloup()
 print('this is after mainloup()')
+
+
+
+
+
+
+
+
 
