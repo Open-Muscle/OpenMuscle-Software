@@ -1,5 +1,6 @@
-#Open Muscle Labler - (LASK5) V1
+# Hardware Open Muscle Labler - (LASK5) V1
 # 4 Finger Target Value Acquirer + Joystick?
+# Software version 0.1.0
 # Coded for ESP32-S3
 # 10-23-2024 -TURFPTAx
 
@@ -10,8 +11,10 @@ import socket
 import ssd1306
 import gc
 import json
+import espnow
 
 # Globals
+count = 0
 # defin ADCs and make loud
 zero = [0,0,0,0]
 hall = []
@@ -83,51 +86,50 @@ def blink(x):
 blink(7)
 
 def initOLED(scl=machine.Pin(sclPIN),sda=machine.Pin(sdaPIN),led=led,w=oledWIDTH,h=oledHEIGHT):
-  print('scl = ',scl)
-  print('sda = ',sda)
-  oled = False
-  i2c = False
-  try:
-    i2c = machine.I2C(scl=scl,sda=sda)
-  except:
-    print('i2c failed check pins scl sda')
+    print('scl = ',scl)
+    print('sda = ',sda)
+    oled = False
+    i2c = False
     try:
-      print('i2c.scan() = ',i2c.scan())
+        i2c = machine.I2C(scl=scl,sda=sda)
     except:
-      print('i2c.scan() failed')
-  if i2c:
-    try:
-      oled = ssd1306.SSD1306_I2C(w,h,i2c)
-      print("SSD1306 initialized[Y]")  
-      print('oled = ',oled)
-      oled.rotate(False)
-    except:
-      print("failed to initialize onboard SSD1306")
-  return oled
+        print('i2c failed check pins scl sda')
+        try:
+            print('i2c.scan() = ',i2c.scan())
+        except:
+            print('i2c.scan() failed')
+    if i2c:
+        try:
+            oled = ssd1306.SSD1306_I2C(w,h,i2c)
+            print("SSD1306 initialized[Y]")  
+            print('oled = ',oled)
+            oled.rotate(False)
+        except:
+            print("failed to initialize onboard SSD1306")
+    return oled
 
 oled = initOLED()
 
 def frint(text,oled=oled,ram=ram):
-  if oled:
-    if text:
-      text = str(text)
-      if len(text) <= 16:
-        ram.append(text)
-      else:
-        ram.append(text[0:5]+'..'+text[len(text)-9:])
-    oled.fill(0)
-    n = 0
-    for i in ram[-4:]:
-      oled.text(i,0,n*8)
-      n+=1
-    if len(ram) > 9:
-      ram = ram[-9:]
-    gc.collect()
-    oled.show()
-    print('f:> ',ram[-1])
-  else:
-    print('f:< ',text)
-
+    if oled:
+        if text:
+            text = str(text)
+            if len(text) <= 16:
+                ram.append(text)
+            else:
+                ram.append(text[0:5]+'..'+text[len(text)-9:])
+        oled.fill(0)
+        n = 0
+        for i in ram[-4:]:
+            oled.text(i,0,n*8)
+            n+=1
+        if len(ram) > 9:
+            ram = ram[-9:]
+        gc.collect()
+        oled.show()
+        print('f:> ',ram[-1])
+    else:
+        print('f:< ',text)
 
 def initNETWORK():
   #need optional backup UDP repl if can't connect
@@ -140,7 +142,7 @@ def initNETWORK():
   frint('connecting to wifi now')
   wlan.connect('OpenMuscle','3141592653')
   while not wlan.isconnected():
-    pass
+      pass
   print('assinging port and bind')
   port = 3145
   frint(f'network config:{wlan.ifconfig()}')
@@ -241,9 +243,9 @@ def taskbar(hall=hall, oled=oled, joystick_x=joystick_x, joystick_y=joystick_y, 
 frint('OM-Labeler (LASK5)')
 
 for i in range(1,5):
-  temp = machine.ADC(machine.Pin(i))
-  temp.atten(machine.ADC.ATTN_11DB)
-  hall.append(temp)
+    temp = machine.ADC(machine.Pin(i))
+    temp.atten(machine.ADC.ATTN_11DB)
+    hall.append(temp)
 
 cells = [hall[0],hall[1],hall[2],hall[3]]
 read_all()
@@ -254,41 +256,58 @@ calib = [0,0,0,0]
 blink(2)
 
 def drawMenu():
-  frint('OM-LASK4 Menu')
+    frint('OM-LASK4 Menu')
 
 
 def fastRead(cells=cells):
-  global s
-  packet = {}
-  data = []
-  for i in range(len(cells)):
-      data.append(cells[i].read()-calib[i])
-  packet['id'] = 'OM-LASK4'
-  packet['ticks'] = time.ticks_ms()
-  packet['time'] = time.localtime()
-  #Append the cycle with : deliminer delimeter
-  packet['data'] = data
-  raw_data = str(packet).encode('utf-8')
-  try:
+    global s
+    packet = {}
+    data = []
+    for i in range(len(cells)):
+        data.append(cells[i].read()-calib[i])
+    packet['id'] = 'OM-LASK4'
+    packet['ticks'] = time.ticks_ms()
+    packet['time'] = time.localtime()
+    #Append the cycle with : deliminer delimeter
+    packet['data'] = data
+    raw_data = str(packet).encode('utf-8')
+    try:
     #UDP recepient address
-    s.sendto(raw_data,('192.168.1.32',3145))
-    status = str(packet)
-  except:
-    status = 'failed'
-  #return(status)
+        s.sendto(raw_data,('192.168.1.32',3145))
+        status = str(packet)
+    except:
+        status = 'failed'
+    #return(status)
 
+def ESPNowSend():
+    global e, joystick_x, joystick_y,select, mins, maxes
+    while True:
+        data_f = []
+        for i in range(len(cells)):
+            data_f.append(abs(cells[i].read()-mins[i]))
+        data_f.append(joystick_x.read())
+        e.send(peer, str(data_f), True)
+        if select.value() == 0:
+            time.sleep(.1)
+            e.send(peer, b'end')
+            e.send(peer, b'end')
+            frint('end')
+            end = True
+            return
 
+    
 def mainMenu():
-    global start, hall, select, up, down, oled, s, wlan
-
+    global start, hall, select, up, down, oled, s, wlan, e
     # Define the main menu and submenus as dictionaries
     menus = {
         'main': {
             'items': {
                 0: {'label': '[0] Wifi Connect', 'action': initNETWORK},
                 1: {'label': '[1] Calibration', 'submenu': 'calibration_menu'},
-                2: {'label': '[2] UDP Send', 'action': fastReadLoop},
-                3: {'label': '[3] Exit', 'action': lambda: 'exit'}
+                2: {'label': '[2] Send', 'submenu': 'send_menu'},
+                3: {'label': '[3] Exit', 'action': lambda: 'exit'},
+                4: {'label': '[4] Test', 'action': lambda: 'exit'},
+                5: {'label': '[5] More Options', 'action': lambda: 'exit'}  # Example for another item
             }
         },
         'calibration_menu': {
@@ -296,37 +315,64 @@ def mainMenu():
                 0: {'label': '[0] Calibrate Controls', 'action': lambda: calibrate(hall, start)},
                 1: {'label': '[1] Back', 'action': lambda: 'back'}
             }
+        },
+        'send_menu': {
+            'items': {
+                0: {'label': '[0] UDP Send', 'action': fastReadLoop},
+                1: {'label': '[1] ESPNow Send', 'action': ESPNowSend},
+                2: {'label': '[2] Back', 'action': lambda: 'back'}
+            }
         }
     }
 
     current_menu = 'main'
     current_selection = 0
+    visible_items = 4  # Number of items visible at a time
+    scroll_position = 0  # Topmost visible item index
     exit_menu = False  # Flag to exit menu loop
 
     while not exit_menu:
         # Clear the OLED display
         oled.fill(0)
 
-        # Draw the current menu items
-        for i, item in menus[current_menu]['items'].items():
+        # Calculate the current scroll position
+        if current_selection >= scroll_position + visible_items:
+            scroll_position = current_selection - visible_items + 1
+        elif current_selection < scroll_position:
+            scroll_position = current_selection
+
+        # Draw the current menu items visible within the window
+        for i in range(scroll_position, min(scroll_position + visible_items, len(menus[current_menu]['items']))):
+            item = menus[current_menu]['items'][i]
+            y_position = (i - scroll_position) * 8
             is_selected = (i == current_selection)
             if is_selected:
-                oled.fill_rect(0, i * 8, 128, 8, 1)  # Highlight background (adjusted to 8 px height)
-                oled.text(item['label'], 0, i * 8, 0)  # Inverted text on highlight
+                oled.fill_rect(0, y_position, 128, 8, 1)  # Highlight background
+                oled.text(item['label'], 0, y_position, 0)  # Inverted text on highlight
             else:
-                oled.text(item['label'], 0, i * 8, 1)  # Normal text
-            
+                oled.text(item['label'], 0, y_position, 1)  # Normal text
+
+        # Draw a scroll indicator
+        total_items = len(menus[current_menu]['items'])
+        scroll_indicator_height = max(1, 32 * visible_items // total_items)
+        scroll_indicator_position = 32 * scroll_position // total_items
+        oled.fill_rect(127, scroll_indicator_position, 1, scroll_indicator_height, 1)
+
         oled.show()  # Update display
+
+        # Button handling code remains the same
+        # Start, Up, and Down button handling with debouncing
 
         # Check if start button is pressed for selection
         if start.value() == 0:
             selected_item = menus[current_menu]['items'][current_selection]
-            
+
             # Check if item has a submenu or an action
             if 'submenu' in selected_item:
                 # Move to the submenu
                 current_menu = selected_item['submenu']
                 current_selection = 0
+                scroll_position = 0  # Reset scroll position when entering a submenu
                 time.sleep(0.3)  # Debounce delay after entering submenu
             elif 'action' in selected_item:
                 action_result = selected_item['action']()
@@ -334,6 +380,7 @@ def mainMenu():
                 if action_result == 'back':
                     current_menu = 'main'
                     current_selection = 0
+                    scroll_position = 0  # Reset scroll position when going back
                 elif action_result == 'exit':
                     exit_menu = True  # Set flag to exit the menu loop
                     break  # Exit the loop immediately
@@ -347,9 +394,10 @@ def mainMenu():
                 current_selection = (current_selection - 1) % menu_length
             elif down.value() == 0:
                 current_selection = (current_selection + 1) % menu_length
-            
+
             # Debounce delay for navigation buttons
             time.sleep(0.3)
+
 
 def fastReadLoop():
     """Loop for UDP send functionality; exits on select button press."""
@@ -359,40 +407,45 @@ def fastReadLoop():
             return
 
            
-def mainloup(pi=pi,plen=plen,led=led,cells=cells,start=start,select=select,up=up,down=down):
-  count = 0
-  exit_bool = False
-  button_thresh = 0
-  while not exit_bool:
-    if up.value() == 0 or down.value() == 0:
-      mainMenu()
-    if select.value() == 0:
-      button_thresh += 1
-    else:
-      button_thresh += -1
-    if button_thresh > 20:
-      exit_bool = True
-    elif button_thresh < 0:
-      button_thresh = 0
-    if pi == 0:
-      frint('first run')
-      #callibrate()
-    if pi >= 10:
-      taskbar()
-      count += 1
-      pi = 1
-    else:
-      pi += 1
+def mainloup(pi=pi,plen=plen,led=led,cells=cells,start=start,select=select,up=up,down=down,count=count):
+    exit_bool = False
+    button_thresh = 0
+    while not exit_bool:
+        if up.value() == 0 or down.value() == 0:
+            mainMenu()
+        if select.value() == 0:
+            button_thresh += 1
+        else:
+            button_thresh += -1
+        if button_thresh > 20:
+            exit_bool = True
+        elif button_thresh < 0:
+            button_thresh = 0
+        if pi == 0:
+            frint('first run')
+          #callibrate()
+        if pi >= 10:
+            taskbar()
+            count += 1
+            pi = 1
+        else:
+            pi += 1
     
+sta = network.WLAN(network.STA_IF)  # Or network.AP_IF
+sta.active(True)
+sta.disconnect()      # For ESP8266
+
+e = espnow.ESPNow()
+e.active(True)
+peer = b'\xff' * 6   # MAC address of peer's wifi interface
+
+try:
+    e.add_peer(peer)      # Must add_peer() before send()
+except:
+    frint('failed peer add')
+    
+
 
 mainloup()
 print('this is after mainloup()')
-
-
-
-
-
-
-
-
 
