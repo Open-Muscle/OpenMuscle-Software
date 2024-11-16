@@ -1,8 +1,8 @@
 # Hardware Open Muscle Labler - (LASK5) V1
 # 4 Finger Target Value Acquirer + Joystick?
-# Software version 0.1.1
+# Software version 0.1.2
 # Coded for ESP32-S3
-# 11-10-2024 -TURFPTAx
+# 11-16-2024 -TURFPTAx
 
 import machine
 import time
@@ -326,7 +326,10 @@ def BraceletConnect():
     nm.espnow_send(peer,f'{SSID}:{Pass}:{CPIP}'.encode('utf-8'))
     #e.send(peer, f'{SSID}:{Pass}:{CPIP}')
     
-
+def discoverPeers():
+    global nm
+    print('discover peers')
+    
 def mainMenu():
     global start, hall, select, up, down, oled, nm
     # Define the main menu and submenus as dictionaries
@@ -335,9 +338,9 @@ def mainMenu():
             'items': {
                 0: {'label': '[0] Wifi Connect', 'action': initNETWORK},
                 1: {'label': '[1] Calibration', 'submenu': 'calibration_menu'},
-                2: {'label': '[2] Send', 'submenu': 'send_menu'},
+                2: {'label': '[2] Control', 'submenu': 'control_menu'},
                 3: {'label': '[3] Network', 'submenu': 'network_menu'},
-                4: {'label': '[4] Exit', 'action': lambda: 'exit'},
+                4: {'label': '[4] Devices', 'submenu': 'device_menu'},
                 5: {'label': '[5] Exit', 'action': lambda: 'exit'}  # Example for another item
             }
         },
@@ -354,9 +357,16 @@ def mainMenu():
                 2: {'label': '[2] Back', 'action': lambda: 'back'}
             }
         },
-        'send_menu': {
+        'control_menu': {
             'items': {
                 0: {'label': '[0] UDP Send', 'action': fastReadLoop},
+                1: {'label': '[1] ESPNow Send', 'action': ESPNowSend},
+                2: {'label': '[2] Back', 'action': lambda: 'back'}
+            }
+        },
+        'device_menu': {
+            'items': {
+                0: {'label': '[0] Discover Peers', 'action': discoverPeers},
                 1: {'label': '[1] ESPNow Send', 'action': ESPNowSend},
                 2: {'label': '[2] Back', 'action': lambda: 'back'}
             }
@@ -473,5 +483,6 @@ if __name__ == "__main__":
     nm = NetworkManager()
     mainloup()
     
+
 
 
