@@ -1,59 +1,93 @@
 # Hardware Open Muscle Labler - (LASK5) V1
 # 4 Finger Target Value Acquirer + Joystick?
-# Software version 0.1.0
+# Software version 0.1.1
 # Coded for ESP32-S3
-# 10-23-2024 -TURFPTAx
+# 11-10-2024 -TURFPTAx
 
 import machine
 import time
-import network
-import socket
+
+from network_manager import NetworkManager
+#import network
+#import espnow
+#import socket
+
 import ssd1306
 import gc
 import json
-import espnow
 
 # Globals
 count = 0
-# defin ADCs and make loud
 zero = [0,0,0,0]
 hall = []
-#mins = [4156, 3961, 3617, 4157]
-#maxes = [5064, 5241, 5077, 5233]
 ram = []
-led = False
-ledPIN = 15
-sclPIN = 9
-sdaPIN = 8
-oledWIDTH = 128
-oledHEIGHT =  32
-startPIN = 11
-selectPIN = 10
-upPIN = 12
-downPIN = 13
-joystick_xPIN = 6
-joystick_yPIN = 5
-Joystick_SW = 7
 s,wlan = False,False
+peer = b'\xff' * 6   # MAC address of peer's wifi interface
 
-def save_calibration(mins, maxes):
-    # This function saves the calibration data to a file
-    with open('calibration.json', 'w') as f:
-        json.dump({'mins': mins, 'maxes': maxes}, f)
+from settings_manager import SettingsManager
+#from network_manager import NetworkManager
 
-def load_calibration():
-    try:
-        with open('calibration.json', 'r') as f:
-            data = json.load(f)
-            mins = data.get('mins', [0, 0, 0, 0])  # Provide default min values if not found
-            maxes = data.get('maxes', [4095, 4095, 4095, 4095])  # Provide default max values if not found
-            return mins, maxes
-    except (OSError, ValueError):
-        # Return default values if there's an error loading or parsing the file
-        return [0, 0, 0, 0], [4095, 4095, 4095, 4095]
+# Define default settings
+defaults = {
+    'device_name': 'OpenMuscle Labeler',
+    'sensor_mapping': False,
+    'device_mac': False,
+    'ledPIN': 8,
+    'SSID':'OpenMuscle',
+    'Pass':'3141592653',
+    'PCIP': '192.168.1.48',
+    'mins': [0, 0, 0, 0],
+    'maxes': [2500, 2500, 2500, 2500],
+    'led' : False,
+    'ledPIN' : 15,
+    'sclPIN' : 9,
+    'sdaPIN' : 8,
+    'oledWIDTH' : 128,
+    'oledHEIGHT' :  32,
+    'startPIN' : 11,
+    'selectPIN' : 10,
+    'upPIN' : 12,
+    'downPIN' : 13,
+    'joystick_xPIN' : 6,
+    'joystick_yPIN' : 5,
+    'Joystick_SW' : 7
+    # Add other default settings
+}
+
+
+# Initialize SettingsManager
+config = SettingsManager(defaults=defaults)
+
+if config.is_first_run:
+    # First run setup
+    print("First run detected. Performing initial setup...")
+    # Save initial settings
+    config.save()
+else:
+    print("Loaded saved settings.")
 
 # Load calibration data at startup
-mins, maxes = load_calibration()
+mins = config['mins']
+maxes = config['maxes']
+led = config['led']
+ledPIN = config['ledPIN']
+sclPIN = config['sclPIN']
+sdaPIN = config['sdaPIN']
+oledWIDTH = config['oledWIDTH']
+oledHEIGHT =  config['oledHEIGHT']
+startPIN = config['startPIN']
+selectPIN = config['selectPIN']
+upPIN = config['upPIN']
+downPIN = config['downPIN']
+joystick_xPIN = config['joystick_xPIN']
+joystick_yPIN = config['joystick_yPIN']
+Joystick_SW = config['Joystick_SW']
+PCIP = config['CPIP']
+SSID = config['SSID']
+Pass = config['Pass']
+# Example save to settings fiel
+# config['mins'] = mins
+# config.save()
 
 #Button variables
 start = machine.Pin(startPIN,machine.Pin.IN,machine.Pin.PULL_UP)
@@ -73,6 +107,7 @@ joystick_sw = machine.Pin(Joystick_SW, machine.Pin.IN, machine.Pin.PULL_UP)
 led = machine.Pin(15,machine.Pin.OUT)
 
 # Find voltage Pin
+# Need to find the schematic for the S3 Dev Board internal votage pin
 battery_voltage_pin = 20
 batt_level = machine.ADC(machine.Pin(battery_voltage_pin))
 
@@ -132,24 +167,9 @@ def frint(text,oled=oled,ram=ram):
         print('f:< ',text)
 
 def initNETWORK():
-  #need optional backup UDP repl if can't connect
-  #primary and secondary networks
-  #if primary then try secondary dev wifi access point
-  wlan = network.WLAN(network.STA_IF) 
-  wlan.active(False)
-  wlan.active(True)
-  time.sleep(1)
-  frint('connecting to wifi now')
-  wlan.connect('OpenMuscle','3141592653')
-  while not wlan.isconnected():
-      pass
-  print('assinging port and bind')
-  port = 3145
-  frint(f'network config:{wlan.ifconfig()}')
-  frint('network connected[Y]')
-  s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-  return(s,wlan)
-  
+    global nm, SSID, Pass
+    wifi_config = nm.wifi_connect(SSID, Pass)
+
 def read_all(hall=hall):
     reads = []
     for i,x in enumerate(hall):
@@ -160,10 +180,12 @@ def read_all(hall=hall):
 def calibrate(hall, start):
     global mins
     global maxes
-    frint('please RELEASE all controls')
+    frint('RELEASE ALL')
+    frint('Pistons')
     time.sleep(2)
     maxes = [x.read() for x in hall]
-    frint('please PRESS all controls and hit start')
+    frint('PRESS ALL Pistons')
+    frint('Then Press Start BTN')
 
     # Wait for the start button to be pressed
     while start.value():
@@ -171,7 +193,9 @@ def calibrate(hall, start):
 
     mins = [x.read() for x in hall]
     # Save the calibration data to a file after calibration
-    save_calibration(mins, maxes)
+    config['mins'] = mins
+    config['maxes'] = maxes
+    config.save()
     frint('Calibration complete and saved.')
 
 def calculate_battery_percentage(batt_adc, ref_voltage=3.3, adc_max=4095):
@@ -256,16 +280,16 @@ calib = [0,0,0,0]
 blink(2)
 
 def drawMenu():
-    frint('OM-LASK4 Menu')
+    frint('OM-LASK5 Menu')
 
 
 def fastRead(cells=cells):
-    global s
+    global nm
     packet = {}
     data = []
     for i in range(len(cells)):
         data.append(cells[i].read()-calib[i])
-    packet['id'] = 'OM-LASK4'
+    packet['id'] = 'OM-LASK5'
     packet['ticks'] = time.ticks_ms()
     packet['time'] = time.localtime()
     #Append the cycle with : deliminer delimeter
@@ -273,31 +297,38 @@ def fastRead(cells=cells):
     raw_data = str(packet).encode('utf-8')
     try:
     #UDP recepient address
-        s.sendto(raw_data,('192.168.1.32',3145))
+        nm.udp_fast_send('192.168.1.48',3145,raw_data)
+        #s.sendto(raw_data,('192.168.1.48',3145))
         status = str(packet)
     except:
         status = 'failed'
     #return(status)
 
 def ESPNowSend():
-    global e, joystick_x, joystick_y,select, mins, maxes
+    global nm, joystick_x, joystick_y,select, mins, maxes, peer
     while True:
         data_f = []
         for i in range(len(cells)):
             data_f.append(abs(cells[i].read()-mins[i]))
         data_f.append(joystick_x.read())
-        e.send(peer, str(data_f), True)
+        nm.espnow_send(peer,str(data_f))
+        #e.send(peer, str(data_f), True)
         if select.value() == 0:
             time.sleep(.1)
-            e.send(peer, b'end')
-            e.send(peer, b'end')
+            nm.espnow_send(peer,b'end')
+            #e.send(peer, b'end')
             frint('end')
             end = True
             return
-
+        
+def BraceletConnect():
+    global nm, SSID, Pass, PCIP
+    nm.espnow_send(peer,f'{SSID}:{Pass}:{CPIP}'.encode('utf-8'))
+    #e.send(peer, f'{SSID}:{Pass}:{CPIP}')
     
+
 def mainMenu():
-    global start, hall, select, up, down, oled, s, wlan, e
+    global start, hall, select, up, down, oled, nm
     # Define the main menu and submenus as dictionaries
     menus = {
         'main': {
@@ -305,15 +336,22 @@ def mainMenu():
                 0: {'label': '[0] Wifi Connect', 'action': initNETWORK},
                 1: {'label': '[1] Calibration', 'submenu': 'calibration_menu'},
                 2: {'label': '[2] Send', 'submenu': 'send_menu'},
-                3: {'label': '[3] Exit', 'action': lambda: 'exit'},
-                4: {'label': '[4] Test', 'action': lambda: 'exit'},
-                5: {'label': '[5] More Options', 'action': lambda: 'exit'}  # Example for another item
+                3: {'label': '[3] Network', 'submenu': 'network_menu'},
+                4: {'label': '[4] Exit', 'action': lambda: 'exit'},
+                5: {'label': '[5] Exit', 'action': lambda: 'exit'}  # Example for another item
             }
         },
         'calibration_menu': {
             'items': {
                 0: {'label': '[0] Calibrate Controls', 'action': lambda: calibrate(hall, start)},
                 1: {'label': '[1] Back', 'action': lambda: 'back'}
+            }
+        },
+        'network_menu': {
+            'items': {
+                0: {'label': '[0] Wifi Connect', 'action': initNETWORK},
+                1: {'label': '[1] Bracelet Connect', 'action': BraceletConnect},
+                2: {'label': '[2] Back', 'action': lambda: 'back'}
             }
         },
         'send_menu': {
@@ -324,7 +362,6 @@ def mainMenu():
             }
         }
     }
-
     current_menu = 'main'
     current_selection = 0
     visible_items = 4  # Number of items visible at a time
@@ -385,7 +422,7 @@ def mainMenu():
                     exit_menu = True  # Set flag to exit the menu loop
                     break  # Exit the loop immediately
 
-            time.sleep(0.3)  # Debounce delay for 'start' button within submenu
+            time.sleep(0.2)  # Debounce delay for 'start' button within submenu
 
         # Handle up/down button navigation
         if up.value() == 0 or down.value() == 0:
@@ -398,15 +435,16 @@ def mainMenu():
             # Debounce delay for navigation buttons
             time.sleep(0.3)
 
-
 def fastReadLoop():
     """Loop for UDP send functionality; exits on select button press."""
+    global nm
+    nm.socket_open()
     while True:
         fastRead()
         if select.value() == 0:
+            nm.socket_close()
             return
-
-           
+       
 def mainloup(pi=pi,plen=plen,led=led,cells=cells,start=start,select=select,up=up,down=down,count=count):
     exit_bool = False
     button_thresh = 0
@@ -431,21 +469,9 @@ def mainloup(pi=pi,plen=plen,led=led,cells=cells,start=start,select=select,up=up
         else:
             pi += 1
     
-sta = network.WLAN(network.STA_IF)  # Or network.AP_IF
-sta.active(True)
-sta.disconnect()      # For ESP8266
-
-e = espnow.ESPNow()
-e.active(True)
-peer = b'\xff' * 6   # MAC address of peer's wifi interface
-
-try:
-    e.add_peer(peer)      # Must add_peer() before send()
-except:
-    frint('failed peer add')
+if __name__ == "__main__":
+    nm = NetworkManager()
+    mainloup()
     
 
-
-mainloup()
-print('this is after mainloup()')
 
