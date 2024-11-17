@@ -283,27 +283,29 @@ def drawMenu():
     frint('OM-LASK5 Menu')
 
 
-def fastRead(cells=cells):
-    global nm
+def fastRead():
+    global nm, cells, mins, maxes
     packet = {}
     data = []
     for i in range(len(cells)):
-        data.append(cells[i].read()-calib[i])
-    packet['id'] = 'OM-LASK5'
-    packet['ticks'] = time.ticks_ms()
-    packet['time'] = time.localtime()
+        data.append(cells[i].read()-maxes[i])
+        #data.append(cells[i].read()-mins[i]) #calibrated needs fix
+    packet["id"] = "OM-LASK5"
+    packet["ticks"] = time.ticks_ms()
+    packet["time"] = time.localtime()
     #Append the cycle with : deliminer delimeter
-    packet['data'] = data
-    raw_data = str(packet).encode('utf-8')
+    packet["data"] = data
+    raw_data = str(packet)
+    #print('gathered',raw_data)
     try:
-    #UDP recepient address
         nm.udp_fast_send('192.168.1.48',3145,raw_data)
+        #print('sent',raw_data)
         #s.sendto(raw_data,('192.168.1.48',3145))
         status = str(packet)
-    except:
+    except Exception as e:
+        print("Error saving settings:", e)
         status = 'failed'
-    #return(status)
-
+        
 def ESPNowSend():
     global nm, joystick_x, joystick_y,select, mins, maxes, peer
     while True:

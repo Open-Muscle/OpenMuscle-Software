@@ -17,7 +17,9 @@ defaults = {
     'PCIP': '192.168.1.48',
     'device_name': 'OpenMuscle Sensor',
     'ledPIN' : 8,
-    'led' : False
+    'led' : False,
+    'cellIndex': False,
+    'hallIndex': [False,False,False,False]
 }
 
 # Initialize SettingsManager
@@ -46,6 +48,8 @@ led = config['led']
 SSID = config['SSID']
 Pass = config['Pass']
 PCIP = config['PCIP']
+cellIndex = config['cellIndex']
+hallIndex = config['hallIndex' ]
 
 
 # Code feedback through onboard LED GPIO 15 or ledPIN
@@ -85,14 +89,16 @@ def calibrate(data):
     return calib
 
 def fastRead():
-    global nm, cells
+    global nm, cells, cellIndex, hallIndex
     packet = {}
     data = []
     for i in range(len(cells)):
         data.append(cells[i].read()-calib[i])
-    packet['id'] = 'OM-BraceletV1'
+    # Open Muscle - Sensor Band - Version 1 - Cell . Index
+    packet['id'] = f'OM-SB-V1-C.{cellIndex}'
     packet['ticks'] = time.ticks_ms()
     packet['time'] = time.localtime()
+    packet['hallIndex'] = hallIndex
     #Append the cycle with : deliminer delimeter
     packet['data'] = data
     raw_data = str(packet).encode('utf-8')
@@ -113,7 +119,9 @@ def fastReadLoop():
             nm.socket_close()
             return
         
-
+def bacelet_setup():
+    print('bracelet setup')
+    
 def mainloop():
     global nm, calib, pi, plen, led, cells
     # Main loop
@@ -123,6 +131,7 @@ def mainloop():
         if message:
             mac_address, recv_msg = message
             print('recv_msg',recv_msg)
+            
             if recv_msg.startswith("HELLO_ACK"):
                 _, device_id = recv_msg.split(":")
                 print(f"Received HELLO_ACK from {device_id}")
@@ -158,14 +167,10 @@ def mainloop():
                 memory_usage = nm.get_memory_usage()
                 status_data = f"{battery_level}|{memory_usage}"
                 nm.espnow_send(mac_address, f"HEALTH_STATUS:{status_data}")
-            elif recv_msg.startswith("EXECUTE_TASK:"):
+            elif recv_msg.startswith("BRACELET_SETUP"):
                 _, task_id = recv_msg.split(":")
                 # Start the task
-                nm.start_task(task_id)
-                # Send TASK_STATUS back
-                nm.espnow_send(mac_address, f"TASK_STATUS:{task_id}|STARTED")
-                # Simulate task completion
-                time.sleep(2)  # Simulate task duration
+                bacelet_setup()
                 nm.espnow_send(mac_address, f"TASK_STATUS:{task_id}|COMPLETED")
             else:
                 print(f"Received message from {mac_address}: {recv_msg}")
