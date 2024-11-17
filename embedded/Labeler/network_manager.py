@@ -1,7 +1,6 @@
 # Network Manager V1.1.0
 # Designed on OM Labeler V1.1.0
 
-
 import network
 import espnow
 import socket
