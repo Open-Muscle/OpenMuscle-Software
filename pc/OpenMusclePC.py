@@ -81,25 +81,51 @@ def main():
     receiver_thread.start()
 
     # PyQtGraph setup
-    app = pg.mkQApp()  # Use PyQtGraph's helper function to create the application
+    app = pg.mkQApp()
     win = pg.GraphicsLayoutWidget(show=True, title="OpenMuscle Data Visualization")
-    win.resize(1000, 600)
+    win.resize(1000, 800)
     win.setWindowTitle('OpenMuscle Data Visualization')
 
     pg.setConfigOptions(antialias=True)
 
+    # Initialize devices dictionary
     devices = {
-        'OM-LASK5': {'plot': win.addPlot(title='OM-LASK5'), 'data': [[] for _ in range(4)], 'curves': []},
-        # Add other devices if needed
+        'OM-LASK5': {'plot': None, 'data': [[] for _ in range(4)], 'curves': []},
+        'SensorBand': {'plot': None, 'data': [[] for _ in range(12)], 'curves': []}
     }
 
-    for device_id, device in devices.items():
-        num_channels = 4
-        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
-        for i in range(num_channels):
-            curve = device['plot'].plot(pen=pg.mkPen(color=colors[i], width=2), name=f'Channel {i+1}')
-            device['curves'].append(curve)
-            device['data'][i] = []
+    # Set up plots and curves
+    colors = [
+        (255, 0, 0),    # Red
+        (0, 255, 0),    # Green
+        (0, 0, 255),    # Blue
+        (255, 255, 0),  # Yellow
+        (255, 0, 255),  # Magenta
+        (0, 255, 255),  # Cyan
+        (128, 0, 0),    # Maroon
+        (0, 128, 0),    # Dark Green
+        (0, 0, 128),    # Navy
+        (128, 128, 0),  # Olive
+        (128, 0, 128),  # Purple
+        (0, 128, 128)   # Teal
+    ]
+
+    # Set up OM-LASK5 plot
+    devices['OM-LASK5']['plot'] = win.addPlot(title='OM-LASK5')
+    num_channels = 4
+    for i in range(num_channels):
+        curve = devices['OM-LASK5']['plot'].plot(pen=pg.mkPen(color=colors[i % len(colors)], width=2), name=f'Channel {i+1}')
+        devices['OM-LASK5']['curves'].append(curve)
+        devices['OM-LASK5']['data'][i] = []
+
+    # Set up SensorBand plot
+    win.nextRow()
+    devices['SensorBand']['plot'] = win.addPlot(title='SensorBand')
+    num_sensors = 12
+    for i in range(num_sensors):
+        curve = devices['SensorBand']['plot'].plot(pen=pg.mkPen(color=colors[i % len(colors)], width=2), name=f'Sensor {i}')
+        devices['SensorBand']['curves'].append(curve)
+        devices['SensorBand']['data'][i] = []
 
     t0 = time.time()
     timer = QtCore.QTimer()
@@ -111,25 +137,44 @@ def main():
             packet['rec_time'] = time.time() - t0
             data_file.write(str(packet) + '\n')
             device_id = packet['id']
-            if device_id in devices:
-                device = devices[device_id]
+            if device_id == 'OM-LASK5':
+                # Process LASK5 data
+                device = devices['OM-LASK5']
                 # Append new data
                 for i, value in enumerate(packet['data']):
                     device['data'][i].append(value)
                     if len(device['data'][i]) > 1000:
                         device['data'][i] = device['data'][i][-1000:]
-                # Prepare data for plotting
+                # Update curves
                 for i, curve in enumerate(device['curves']):
                     y_data = device['data'][i]
                     x_data = list(range(len(y_data)))
                     curve.setData(x_data, y_data)
+            elif device_id.startswith('OM-SB-V1-C.'):
+                # Process bracelet data
+                sensor_band = devices['SensorBand']
+                hall_index = packet.get('hallIndex', [])
+                data_values = packet.get('data', [])
+                for index, value in zip(hall_index, data_values):
+                    if 0 <= index < 12:
+                        sensor_band['data'][index].append(value)
+                        if len(sensor_band['data'][index]) > 1000:
+                            sensor_band['data'][index] = sensor_band['data'][index][-1000:]
+                # Update curves
+                for i, curve in enumerate(sensor_band['curves']):
+                    y_data = sensor_band['data'][i]
+                    if y_data:
+                        x_data = list(range(len(y_data)))
+                        curve.setData(x_data, y_data)
+            else:
+                # Handle other devices if necessary
+                pass
 
     timer.timeout.connect(update)
     timer.start(20)  # Update every 20 ms
 
     # Start the Qt event loop
-    if (sys.flags.interactive != 1) or not hasattr(QtCore, 'PYQT_VERSION'):
-        pg.QtWidgets.QApplication.instance().exec_()
+    pg.QtWidgets.QApplication.instance().exec_()
 
     data_file.close()
 
