@@ -1,8 +1,8 @@
 # Hardware Open Muscle Labler - (LASK5) V1
 # 4 Finger Target Value Acquirer + Joystick?
-# Software version 0.1.2
+# Software version 0.1.3
 # Coded for ESP32-S3
-# 11-16-2024 -TURFPTAx
+# 11-29-2024 -TURFPTAx
 
 import machine
 import time
@@ -285,26 +285,51 @@ def drawMenu():
 
 def fastRead():
     global nm, cells, mins, maxes
-    packet = {}
-    data = []
-    for i in range(len(cells)):
-        data.append(cells[i].read()-maxes[i])
-        #data.append(cells[i].read()-mins[i]) #calibrated needs fix
-    packet["id"] = "OM-LASK5"
-    packet["ticks"] = time.ticks_ms()
-    packet["time"] = time.localtime()
-    #Append the cycle with : deliminer delimeter
-    packet["data"] = data
-    raw_data = str(packet)
-    #print('gathered',raw_data)
-    try:
-        nm.udp_fast_send('192.168.1.48',3145,raw_data)
-        #print('sent',raw_data)
-        #s.sendto(raw_data,('192.168.1.48',3145))
-        status = str(packet)
-    except Exception as e:
-        print("Error saving settings:", e)
-        status = 'failed'
+    
+    # Configuration for multisampling
+    BUFFER_SIZE = 10  # Number of ADC samples to average (adjust as needed)
+    TARGET_RATE = 25  # Target sample rate in Hz
+    SEND_INTERVAL = 1 / TARGET_RATE  # Time interval between sends in seconds
+    
+    # Initialize a buffer for each cell
+    buffers = [[] for _ in range(len(cells))]
+    last_send_time = time.ticks_ms()
+    
+    while True:
+        # Collect samples as fast as possible
+        for i in range(len(cells)):
+            reading = cells[i].read() # - maxes[i]  # Adjust based on your calibration needs
+            buffers[i].append(reading)
+            
+            # Maintain buffer size
+            if len(buffers[i]) > BUFFER_SIZE:
+                buffers[i].pop(0)
+        
+        # Check if it's time to send data
+        now = time.ticks_ms()
+        if time.ticks_diff(now, last_send_time) >= SEND_INTERVAL * 1000:
+            # Average the buffer contents for each cell
+            averaged_data = [sum(buffer) / len(buffer) if buffer else 0 for buffer in buffers]
+            
+            # Prepare the packet
+            packet = {
+                "id": "OM-LASK5",
+                "ticks": now,
+                "time": time.localtime(),
+                "data": averaged_data
+            }
+            raw_data = str(packet)
+            
+            # Send the packet over UDP
+            try:
+                nm.udp_fast_send('192.168.1.48', 3145, raw_data)
+                print('Sent:', raw_data)
+            except Exception as e:
+                print("Error sending data:", e)
+            
+            # Update the last send time
+            last_send_time = now
+
         
 def ESPNowSend():
     global nm, joystick_x, joystick_y,select, mins, maxes, peer
