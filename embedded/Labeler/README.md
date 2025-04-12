@@ -32,6 +32,7 @@ Wire **SDA → GPIO 6** and **SCL → GPIO 7** by default, or adjust in `con
 ### 1. Flash MicroPython
 
 Download the latest **ESP32‑S3** build from the official site and flash:
+(Video Tutorial)[https://www.youtube.com/watch?v=o70wEn3bJWM]
 
 ```
 esptool.py --chip esp32s3 --port /dev/ttyUSB0 --baud 460800 erase_flash
