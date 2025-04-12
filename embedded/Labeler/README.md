@@ -3,7 +3,7 @@
 
 > **Part of the** [**OpenMuscle**](https://openmuscle.org) **open‑hardware prosthetics ecosystem**  
 > This repository contains the MicroPython firmware that turns an ESP32‑based dev‑kit into a data‑labeling companion for the OpenMuscle forearm band.  
-> It shows live sensor values on an SSD1306 OLED and broadcasts them over ESP‑NOW so that the desktop _OpenMuscle‑Trainer_ can associate the raw pressure vectors with finger‑pose labels.
+> It shows live sensor values on an SSD1306 OLED and broadcasts them over ESP‑NOW or via UDP (WiFi Access Point Needed) so that the desktop _OpenMuscle‑Trainer_ can associate the raw pressure vectors with finger‑pose labels.
 
 ## ✨ Features
 
