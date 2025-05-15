@@ -119,7 +119,7 @@ def blink(x):
       led.value(0)
       time.sleep(.2)
 
-blink(7)
+blink(2)
 
 def initOLED(scl=machine.Pin(sclPIN),sda=machine.Pin(sdaPIN),led=led,w=oledWIDTH,h=oledHEIGHT):
     print('scl = ',scl)
@@ -265,8 +265,9 @@ def taskbar(hall=hall, oled=oled, joystick_x=joystick_x, joystick_y=joystick_y, 
     
     oled.show()
 
-
-frint('OM-Labeler (LASK5)')
+## Loading Screen
+import image_loader
+image_loader.loading_screen(oled)
 
 for i in range(1,5):
     temp = machine.ADC(machine.Pin(i))
