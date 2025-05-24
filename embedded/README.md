@@ -1,4 +1,3 @@
-'''
 # OpenMuscle Embedded Firmware
 
 This directory contains embedded firmware for all OpenMuscle devices, organized first by hardware type (e.g., LASK5, FlexGrid), and then by version (e.g., LASK5-V2, LASK5-V3).
@@ -24,5 +23,3 @@ A detailed contributor guide will be added soon to explain how to submit firmwar
 ## 📬 Contact
 
 Questions or want to contribute? Visit [openmuscle.org](https://openmuscle.org) or file an issue on GitHub.
-
-'''
