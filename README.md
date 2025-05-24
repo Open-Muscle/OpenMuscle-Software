@@ -64,9 +64,3 @@ pip install -r requirements.txt
 Want to help build the future of prosthetic sensing? We welcome contributions in Python, MicroPython, C, hardware design, and documentation. A full contributor guide is coming soon!
 
 ---
-
-## 📬 Contact
-
-Reach out via GitHub issues or [contact@openmuscle.org](mailto:contact@openmuscle.org) to ask questions or start collaborating.
-
----
