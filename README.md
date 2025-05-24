@@ -18,6 +18,7 @@ pip install -r requirements.txt
 
 ## Repository Structure
 
+```markdown
 OpenMuscle-Software/
 ├── embedded/
 │   ├── FlexGrid/
@@ -27,7 +28,7 @@ OpenMuscle-Software/
 │   └── [PC-related files]
 ├── LICENSE
 └── README.md
-
+```
 
 
 
