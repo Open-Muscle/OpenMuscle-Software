@@ -14,6 +14,7 @@ This repository contains the PC software for machine learning and real-time pred
 git clone https://github.com/Open-Muscle/OpenMuscle-Software.git
 cd OpenMuscle-Software
 pip install -r requirements.txt
+```
 
 ## Repository Structure
 
