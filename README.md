@@ -11,6 +11,22 @@ This repository contains the PC software for machine learning and real-time pred
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/OpenMuscle-Software.git
+git clone https://github.com/Open-Muscle/OpenMuscle-Software.git
 cd OpenMuscle-Software
 pip install -r requirements.txt
+
+## Repository Structure
+
+OpenMuscle-Software/
+├── embedded/
+│   ├── FlexGrid/
+│   ├── Lask5/
+│   └── SensorBand/
+├── pc/
+│   └── [PC-related files]
+├── LICENSE
+└── README.md
+
+
+
+
