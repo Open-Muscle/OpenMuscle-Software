@@ -164,7 +164,7 @@ def main():
 
     # Load your machine learning model
     #model_filename = 'random_forest_regressor.pkl'
-    model_filename = 'random_forest_regressor_13_features.pkl'
+    model_filename = 'random_forest_regressor_70.pkl'
     try:
         model = pickle.load(open(model_filename, 'rb'))
         print(f"Model loaded from {model_filename}")

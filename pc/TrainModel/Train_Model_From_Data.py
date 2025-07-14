@@ -55,7 +55,7 @@ def load_model(filename):
 
 def main():
     # Path to the CSV file
-    csv_file = 'filtered_output_70_and_71.csv'
+    csv_file = 'filtered_output_70.csv'
 
     # Check if the CSV file exists
     if not os.path.exists(csv_file):
@@ -75,7 +75,7 @@ def main():
     print("Model trained successfully.")
 
     # Save the model
-    model_filename = 'random_forest_regressor.pkl'
+    model_filename = 'random_forest_regressor_70.pkl'
     save_model(model, model_filename)
 
     # Load the model (for demonstration purposes)

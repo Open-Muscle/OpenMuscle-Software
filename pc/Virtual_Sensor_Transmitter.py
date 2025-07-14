@@ -23,6 +23,7 @@ for i in text_file.read().split('\n'):
     time.sleep(.001)
     raw_data = i.encode('utf-8')
     s.sendto(raw_data,(ip_address,3145))
+    print(raw_data)
     
 
 

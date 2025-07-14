@@ -1,4 +1,6 @@
 import socket
+import time
+import binascii  # For hex dumping raw bytes
 
 def get_local_ip():
     """Retrieve the local IP address of the computer."""
@@ -14,20 +16,54 @@ def get_local_ip():
     return local_ip
 
 def main():
-    local_ip = get_local_ip()
-    port = 3145
-
+    local_ip = get_local_ip()  # Use the actual local IP for display, but bind to 0.0.0.0 to listen on all interfaces
+    port = 3141  # Adjust if needed; was 3141 in previous setups—confirm with device settings
+    
     # Create a UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # Bind the socket to the local IP address and port
-    sock.bind((local_ip, port))
+    sock.settimeout(5)  # Set a 5-second timeout to allow periodic status prints without blocking forever
+    
+    # Bind the socket to all interfaces and the port
+    sock.bind(('0.0.0.0', port))
 
-    print(f"Listening for UDP packets on {local_ip}:{port}")
+    print(f"Listening for UDP packets on all interfaces (primary local IP: {local_ip}), port {port}")
+    print("Will print timestamp, sender address, packet size, decoded text (if UTF-8), and raw hex dump for each packet.")
+    print("Press Ctrl+C to exit.")
 
+    last_status_time = time.time()
     while True:
-        # Receive data from the socket
-        data, addr = sock.recvfrom(1024)  # Buffer size is 1024 bytes
-        print(f"Received message from {addr}: {data.decode()}")
+        try:
+            # Receive data from the socket
+            data, addr = sock.recvfrom(4096)  # Increased buffer size to handle larger packets (e.g., your ~225-byte ones)
+            current_time = time.time()
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time))
+            packet_size = len(data)
+            
+            # Try to decode as UTF-8, fallback to raw hex if not
+            try:
+                decoded = data.decode('utf-8')
+            except UnicodeDecodeError:
+                decoded = "Non-UTF8 data"
+            
+            hex_dump = binascii.hexlify(data).decode('ascii')  # Hex representation for raw inspection
+            
+            print(f"\n[{timestamp}] Received from {addr}:")
+            print(f"  Size: {packet_size} bytes")
+            print(f"  Decoded: {decoded}")
+            print(f"  Raw Hex: {hex_dump}")
+        
+        except socket.timeout:
+            # Periodic status to confirm listener is alive
+            current_time = time.time()
+            if current_time - last_status_time > 10:  # Print status every 10 seconds if no packets
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(current_time))}] No packets received yet... Still listening.")
+                last_status_time = current_time
+        
+        except KeyboardInterrupt:
+            print("\nExiting listener.")
+            break
+
+    sock.close()
 
 if __name__ == "__main__":
     main()
