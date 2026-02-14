@@ -1,0 +1,12 @@
+{
+    "device_id": "my-device-01",
+    "wifi_ssid": "OpenMuscle",
+    "wifi_password": "3141592653",
+    "udp_target_ip": "192.168.1.49",
+    "udp_port": 3141,
+    "scl_pin": 9,
+    "sda_pin": 8,
+    "oled_width": 128,
+    "oled_height": 64,
+    "sample_interval_ms": 100
+}

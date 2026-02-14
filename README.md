@@ -1,66 +1,110 @@
 # OpenMuscle Software
 
-This repository contains software and firmware for the **OpenMuscle** system, which captures and interprets muscle signals from flexible pressure-sensing devices like LASK5 and FlexGrid. It supports both embedded firmware and PC-side applications for machine learning and real-time prediction.
+Software and firmware for the **OpenMuscle** system -- an open-source muscle signal capture platform using flexible pressure-sensing devices.
+
+Part of the [OpenMuscle Hub](https://github.com/Open-Muscle/OpenMuscle-Hub) ecosystem.
 
 ---
 
-## 🔗 Part of the OpenMuscle Ecosystem
+## Repository Structure
 
-This repo is part of the larger [OpenMuscle Hub](https://github.com/Open-Muscle/OpenMuscle-Hub), which provides:
-
-- 🔧 Hardware design files and schematics  
-- 📜 Documentation and guides  
-- 🧪 Data pipelines and ML model training resources  
-- 🎓 Educational content and community links
-
----
-
-## 📦 Features
-
-- 📡 **Wi-Fi Data Streaming** via UDP packets from ESP32-based sensors  
-- 🧠 **Machine Learning Integration** for gesture and motion inference  
-- 📊 **Real-Time Prediction and Visualization** on PC  
-- ⚙️ **Cross-platform scripts** and libraries for research, prototyping, and evaluation
-
----
-
-## 🗂 Repository Structure
-
-```bash
+```
 OpenMuscle-Software/
-├── embedded/          # MicroPython and C firmware
-│   ├── LASK5/         # LASK5 hardware versions (V2, V3...)
-│   ├── FlexGrid/      # FlexGrid embedded sensor band
-│   └── SensorBand/    # Legacy OM12 and early band prototypes
-├── pc/                # Python tools for data acquisition and ML
-│   └── ...            # UDP receiver, model loader, data visualizer
-├── LICENSE
-└── README.md
+    embedded/
+        lib/                    Shared firmware library (om_*.py)
+        devices/
+            flexgrid_v1/        FlexGrid 60-sensor pressure band
+            lask5_v2/           LASK5 4-finger labeler
+            _template/          Template for new devices
+    pc/
+        src/openmuscle/         Python package with CLI
+        tests/                  Test suite
+        pyproject.toml          Package configuration
+    data/
+        raw/                    Organized sensor captures
+        models/                 Trained ML model artifacts
+    docs/                       Documentation
+    archive/                    Legacy code (preserved for reference)
 ```
 
----
+## Quick Start
 
-## 🧰 Installation
+### PC Tools
 
 ```bash
-git clone https://github.com/Open-Muscle/OpenMuscle-Software.git
-cd OpenMuscle-Software
-pip install -r requirements.txt
+cd pc/
+pip install -e .
+
+# Listen for devices with live heatmap
+openmuscle receive
+
+# Record paired sensor + label data
+openmuscle record -o my_capture.csv
+
+# Train a model
+openmuscle train my_capture.csv
+
+# Run real-time predictions
+openmuscle predict -m data/models/random_forest_*/model.pkl
+
+# Test without hardware
+openmuscle simulate --device-type flexgrid
 ```
 
----
+### Firmware (ESP32-S3 + MicroPython)
 
-## 📚 Related Repositories
+```bash
+# Flash MicroPython to ESP32-S3
+esptool.py --chip esp32s3 erase_flash
+esptool.py --chip esp32s3 write_flash -z 0x0 firmware.bin
 
-- [OpenMuscle-FlexGrid](https://github.com/Open-Muscle/OpenMuscle-FlexGrid): Flexible 60-sensor band PCB files
-- [OpenMuscle-LASK5](https://github.com/Open-Muscle/OpenMuscle-LASK5): Labeling hardware schematics
-- [OpenMuscle-Hub](https://github.com/Open-Muscle/OpenMuscle-Hub): Central documentation and roadmap
-- [OpenMuscle-Band](https://github.com/Open-Muscle/OpenMuscle-Band): Early MVP prototypes
+# Install libraries
+mpremote mip install ssd1306
 
----
+# Upload shared lib + device firmware
+mpremote cp embedded/lib/om_*.py :/lib/
+mpremote cp embedded/devices/flexgrid_v1/*.py :/
+mpremote mkdir :/config
+mpremote cp embedded/devices/flexgrid_v1/config/defaults.json :/config/
+```
 
-## 🤝 Contributing
+## CLI Commands
 
-Want to help build the future of prosthetic sensing? We welcome contributions in Python, MicroPython, C, hardware design, and documentation. A full contributor guide is coming soon!
+| Command | Description |
+|---------|-------------|
+| `openmuscle receive` | Live heatmap of sensor data |
+| `openmuscle record -o file.csv` | Record paired data to CSV |
+| `openmuscle train data.csv` | Train ML model (RandomForest) |
+| `openmuscle predict -m model.pkl` | Real-time inference |
+| `openmuscle simulate` | Synthetic data for testing |
+| `openmuscle models` | List trained models |
 
----
+## Documentation
+
+- [Architecture Overview](docs/architecture.md)
+- [Packet Protocol Spec](docs/protocol.md)
+- [Adding a New Device](docs/adding-a-device.md)
+- [CLI Usage Guide](docs/pc-cli.md)
+
+## Adding a New Device
+
+1. Copy `embedded/devices/_template/`
+2. Implement your sensor (extends `SensorInterface`)
+3. Configure your device (extends `BaseDevice`)
+4. Flash to ESP32 -- the PC CLI auto-discovers it
+
+See [docs/adding-a-device.md](docs/adding-a-device.md) for details.
+
+## Related Repositories
+
+- [OpenMuscle-FlexGrid](https://github.com/Open-Muscle/OpenMuscle-FlexGrid) - 60-sensor band PCB
+- [OpenMuscle-LASK5](https://github.com/Open-Muscle/OpenMuscle-LASK5) - Labeling hardware
+- [OpenMuscle-Hub](https://github.com/Open-Muscle/OpenMuscle-Hub) - Central docs and roadmap
+
+## Contributing
+
+Contributions welcome in Python, MicroPython, hardware design, and documentation.
+
+## License
+
+[MIT](LICENSE)
