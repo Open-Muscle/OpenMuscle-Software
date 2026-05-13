@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenMuscle Live</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <header>
+        <h1>OpenMuscle <span class="subtitle">Live</span></h1>
+        <div class="status">
+            <span id="ws-status" class="badge offline">disconnected</span>
+        </div>
+    </header>
+
+    <main>
+        <section class="panel devices">
+            <h2>Devices</h2>
+            <ul id="device-list">
+                <li class="empty">Waiting for a device to send a packet…</li>
+            </ul>
+        </section>
+
+        <section class="panel heatmap-panel">
+            <div class="heatmap-header">
+                <h2>Heatmap</h2>
+                <span id="heatmap-meta"></span>
+            </div>
+            <canvas id="heatmap" width="900" height="240"></canvas>
+        </section>
+
+        <section class="panel record-panel">
+            <h2>Record</h2>
+            <div class="record-controls">
+                <input id="capture-name" type="text" placeholder="capture filename (optional)">
+                <button id="record-btn" class="primary">● Start recording</button>
+                <span id="record-status" class="rec-status"></span>
+            </div>
+        </section>
+
+        <section class="panel captures-panel">
+            <h2>Captures</h2>
+            <table id="captures-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="captures-body">
+                    <tr class="empty"><td colspan="4">No captures saved yet.</td></tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <footer>
+        <span>Open-Muscle · FlexGrid · <a href="https://github.com/Open-Muscle">github</a></span>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -7,6 +7,7 @@ Usage:
     openmuscle predict     Run real-time inference with visualization
     openmuscle simulate    Send synthetic or replayed sensor data
     openmuscle models      List trained models
+    openmuscle web         Launch the browser-based UI (live + record + captures)
 """
 
 import click
@@ -26,6 +27,20 @@ def receive(port, save_dir):
     """Listen for devices and display a live heatmap."""
     from openmuscle.viz.heatmap import run_heatmap
     run_heatmap(port=port, save_dir=save_dir)
+
+
+@main.command()
+@click.option("--host", default="0.0.0.0", help="HTTP bind address")
+@click.option("--port", default=8000, help="HTTP port")
+@click.option("--udp-port", default=3141, help="UDP port to listen on for device telemetry")
+@click.option("--captures-dir", default=None,
+              help="Directory to save captures (default: data/raw/merged)")
+def web(host, port, udp_port, captures_dir):
+    """Launch the browser-based UI with live heatmap, recording, and captures."""
+    from openmuscle.web.app import serve
+    click.echo(f"OpenMuscle web UI: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
+    click.echo(f"Listening for devices on UDP {udp_port}")
+    serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir)
 
 
 @main.command()
@@ -129,3 +144,33 @@ def models():
         mse = metrics.get("mse", "N/A")
         print(f"  {m['name']}  created={m['created']}  "
               f"R2={r2}  MSE={mse}  path={m.get('path', '')}")
+
+
+@main.command()
+@click.argument("input_path")
+@click.option("--output", "-o", required=True, help="Output CSV path")
+def convert(input_path, output):
+    """Convert a legacy capture .txt file to matched CSV."""
+    from openmuscle.data.converter import convert_legacy_capture
+    rows = convert_legacy_capture(input_path, output)
+    print(f"Converted {rows} matched rows to {output}")
+
+
+@main.command()
+@click.argument("csv_files", nargs=-1, required=True)
+@click.option("--output", "-o", required=True, help="Output combined CSV path")
+def combine(csv_files, output):
+    """Combine multiple CSV files into one training set."""
+    from openmuscle.data.converter import combine_csvs
+    total = combine_csvs(list(csv_files), output)
+    print(f"Combined {len(csv_files)} files -> {total} total rows in {output}")
+
+
+@main.command()
+@click.option("--model", "-m", required=True, help="Path to trained model .pkl file")
+@click.option("--data", "-d", required=True, help="Path to capture CSV for prediction")
+@click.option("--output", "-o", required=True, help="Output JSON path for website")
+def export(model, data, output):
+    """Export predictions + ground truth to JSON for web visualization."""
+    from openmuscle.ml.export import export_predictions
+    export_predictions(model_path=model, data_path=data, output_path=output)
