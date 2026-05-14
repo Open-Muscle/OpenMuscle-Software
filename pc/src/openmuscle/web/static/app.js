@@ -292,15 +292,31 @@ function renderCaptures(list) {
 
 // ---------- LASK5 piston bars + joystick ----------
 
-// Calibrated range for LASK5 piston ADC readings. Could be made dynamic
-// per-device once we surface mins/maxes from settings; 0..4095 covers raw.
-const LASK_VMIN = 0;
-const LASK_VMAX = 4095;
+// LASK5 piston values come in two shapes depending on firmware:
+//   - monolithic (boot.py): calibrated normalized 0.0..1.0 floats
+//   - modular / future / raw: raw ADC ints in 0..4095
+// We auto-detect per value: anything in [0, 1] is treated as a fraction;
+// anything larger is treated as raw ADC and divided by 4095.
+const LASK_ADC_MAX = 4095;
 const laskMeta = document.getElementById('lask-meta');
 const laskBars = document.getElementById('lask-bars');
 const joyCanvas = document.getElementById('joystick-canvas');
 const joyCtx = joyCanvas.getContext('2d');
 const joyVals = document.getElementById('joystick-vals');
+
+function pistonFraction(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return 0;
+    // Normalized 0..1 floats land here exactly (and so do clean integer 0/1
+    // values, which we still want to render as 0% / 100% rather than 0.024%).
+    const frac = (v <= 1) ? v : (v / LASK_ADC_MAX);
+    return Math.max(0, Math.min(1, frac));
+}
+
+function pistonValText(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return '--';
+    // Floats: 2 decimals. Ints (and anything > 1): show as integer.
+    return (v <= 1 && v !== Math.floor(v)) ? v.toFixed(2) : String(v);
+}
 
 function renderLask(dev) {
     if (!dev || !Array.isArray(dev.values) || dev.values.length === 0) {
@@ -319,10 +335,9 @@ function renderLask(dev) {
     laskBars.querySelectorAll('.piston').forEach(p => {
         const i = parseInt(p.dataset.i, 10);
         const v = i < vals.length ? vals[i] : 0;
-        const pct = Math.max(0, Math.min(100,
-            ((v - LASK_VMIN) / (LASK_VMAX - LASK_VMIN)) * 100));
+        const pct = pistonFraction(v) * 100;
         p.querySelector('.piston-fill').style.height = pct.toFixed(1) + '%';
-        p.querySelector('.piston-val').textContent = String(v);
+        p.querySelector('.piston-val').textContent = pistonValText(v);
     });
     drawJoystick(dev.joystick);
 }
@@ -378,10 +393,9 @@ function renderInference(inf) {
     inferenceBars.querySelectorAll('.piston').forEach(p => {
         const i = parseInt(p.dataset.i, 10);
         const v = i < vals.length ? vals[i] : 0;
-        const pct = Math.max(0, Math.min(100,
-            ((v - LASK_VMIN) / (LASK_VMAX - LASK_VMIN)) * 100));
+        const pct = pistonFraction(v) * 100;
         p.querySelector('.piston-fill').style.height = pct.toFixed(1) + '%';
-        p.querySelector('.piston-val').textContent = String(v);
+        p.querySelector('.piston-val').textContent = pistonValText(v);
     });
 }
 
