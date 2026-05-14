@@ -39,9 +39,16 @@ DOWN_PIN = 10
 OLED_WIDTH = 128
 OLED_HEIGHT = 32
 
-# Network
-WIFI_SSID = 'OpenMuscle'
-WIFI_PASS = '3141592653'
+# Network -- defaults; override via settings.json wifi_ssid / wifi_password.
+# We connect to Wi-Fi at boot (regardless of auto_mode) so that:
+#   1. ESPNow piggybacks the STA channel, which matches the modular LASK5
+#      firmware's channel (it also connects to Wi-Fi before activating
+#      ESPNow). Without this match, broadcasts from LASK5 never reach the
+#      hand even though both 'see' the radio.
+#   2. The PC's inference plug-in can forward predicted servo angles to
+#      this hand over UDP at <hand_ip>:3145.
+WIFI_SSID_DEFAULT = 'OpenMuscle'
+WIFI_PASS_DEFAULT = '3141592653'
 WIFI_TIMEOUT_S = 10
 UDP_PORT = 3145
 
@@ -72,6 +79,11 @@ SETTINGS_DEFAULTS = {
     # listen on boot), 'udp' (auto-enter UDP listen on boot). Press Select
     # while in auto-mode to drop back to the menu.
     'auto_mode': 'menu',
+    # Wi-Fi creds (per-device, never commit). Connected at boot regardless
+    # of auto_mode so the ESPNow radio lives on the same channel as paired
+    # devices and the hand's IP is reachable for PC inference forwarding.
+    'wifi_ssid': WIFI_SSID_DEFAULT,
+    'wifi_password': WIFI_PASS_DEFAULT,
 }
 settings = dict(SETTINGS_DEFAULTS)
 
@@ -145,6 +157,47 @@ def init_servos():
         print('Servos initialized')
     except Exception as err:
         print('Servo init failed:', err)
+
+
+# Global Wi-Fi station, brought up once at boot. Both espnow_listen and
+# udp_listen reuse it instead of bouncing STA active state.
+wlan_sta = None
+
+
+def connect_wifi_boot():
+    """Connect to the configured Wi-Fi at boot. Non-fatal on failure --
+    auto-mode dispatch proceeds either way."""
+    global wlan_sta
+    wlan_sta = network.WLAN(network.STA_IF)
+    wlan_sta.active(True)
+    ssid = settings.get('wifi_ssid', WIFI_SSID_DEFAULT)
+    pw = settings.get('wifi_password', WIFI_PASS_DEFAULT)
+    if not ssid:
+        frint('No wifi cfg')
+        return
+    if wlan_sta.isconnected():
+        # Already connected (rare on cold boot, but possible after a soft
+        # reset that preserved STA state)
+        frint('IP:' + wlan_sta.ifconfig()[0])
+        return
+    frint('WiFi ' + ssid)
+    try:
+        wlan_sta.connect(ssid, pw)
+    except Exception as err:
+        frint('WiFi err')
+        print('connect raised:', err)
+        return
+    t0 = time.time()
+    while not wlan_sta.isconnected():
+        if time.time() - t0 > WIFI_TIMEOUT_S:
+            frint('WiFi timeout')
+            return
+        time.sleep(0.2)
+    ip = wlan_sta.ifconfig()[0]
+    frint('IP:' + ip)
+    # Brief pause so the operator can read the IP off the OLED before
+    # auto-mode dispatch overwrites it
+    time.sleep(1.0)
 
 
 def frint(text):
@@ -280,9 +333,13 @@ def apply_packet(device_id, values):
 
 def espnow_listen():
     frint('ESP-NOW init...')
-    wlan_sta = network.WLAN(network.STA_IF)
-    wlan_sta.active(False)
-    wlan_sta.active(True)
+    # Don't bounce STA active state -- we want to keep the boot-time Wi-Fi
+    # connection up so ESPNow uses the same channel as our paired devices
+    # (the modular LASK5 firmware activates ESPNow after WiFi connect too).
+    global wlan_sta
+    if wlan_sta is None:
+        wlan_sta = network.WLAN(network.STA_IF)
+        wlan_sta.active(True)
     e = espnow.ESPNow()
     e.active(True)
     try:
@@ -308,19 +365,16 @@ def espnow_listen():
 
 
 def udp_listen():
-    frint('WiFi connecting')
-    wlan_sta = network.WLAN(network.STA_IF)
-    wlan_sta.active(False)
-    wlan_sta.active(True)
-    time.sleep(0.5)
-    wlan_sta.connect(WIFI_SSID, WIFI_PASS)
-    t0 = time.time()
-    while not wlan_sta.isconnected():
-        if time.time() - t0 > WIFI_TIMEOUT_S:
-            frint('WiFi timeout!')
-            wlan_sta.active(False)
-            return
-        time.sleep(0.2)
+    # Reuse the boot-time STA connection. If for some reason we don't have
+    # one yet (auto_mode=menu user navigated here manually before boot
+    # connect_wifi_boot ran), reconnect using current settings.
+    global wlan_sta
+    if wlan_sta is None or not wlan_sta.isconnected():
+        connect_wifi_boot()
+    if wlan_sta is None or not wlan_sta.isconnected():
+        frint('No wifi!')
+        time.sleep(1.5)
+        return
     ip = wlan_sta.ifconfig()[0]
     frint('IP:' + ip)
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -342,8 +396,7 @@ def udp_listen():
             time.sleep(0.2)  # debounce
             break
     s.close()
-    wlan_sta.disconnect()
-    wlan_sta.active(False)
+    # Keep STA connected on exit so ESPNow still has its channel locked.
     frint('UDP stopped')
 
 
@@ -457,6 +510,11 @@ blink(3)
 init_oled()
 init_servos()
 frint('OM-HAND V2')
+
+# Bring Wi-Fi up before auto-mode dispatch. ESPNow uses the same radio,
+# so a connected STA pins the channel to match paired devices. Failure is
+# non-fatal -- device continues to work via menu/USB even without Wi-Fi.
+connect_wifi_boot()
 
 # Hold Select at boot to force the menu, regardless of auto_mode -- escape
 # hatch in case auto-mode is set to something that crashes or hangs.
