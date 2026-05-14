@@ -144,11 +144,18 @@ class AppState:
             self.devices[pkt.device_id] = dev
         dev.update(pkt, ("", 0))
 
-        # Write to active capture if recording and shape matches
+        # Write to active capture if recording and shape matches.
+        # CaptureWriter emits row-major column headers (R0C0, R0C1, ..., R0Cn,
+        # R1C0, ...), so we have to flatten the as-sent [cols][rows] matrix
+        # in row-major order. Previously we wrote it col-major which made
+        # "R0C1" actually contain the value for (col=0, row=1) -- broke
+        # every downstream analysis script.
         if self.recording and self.recording.device_id == pkt.device_id:
             mat = pkt.data.get("matrix")
             if mat:
-                flat = [v for col in mat for v in col]
+                rows = len(mat[0])
+                cols = len(mat)
+                flat = [mat[c][r] for r in range(rows) for c in range(cols)]
                 self.recording.writer.write_row(pkt.receive_time, flat, [])
 
     async def _broadcast_latest_frames(self):
