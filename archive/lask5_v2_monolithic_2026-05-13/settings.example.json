@@ -1,0 +1,33 @@
+{
+  "sdaPIN": 8,
+  "downPIN": 42,
+  "selectPIN": 10,
+  "joystick_yPIN": 5,
+  "oledHEIGHT": 32,
+  "SSID": "YOUR_WIFI_SSID",
+  "device_name": "OpenMuscle Labeler",
+  "led": false,
+  "Joystick_SW": 7,
+  "maxes": [
+    2500,
+    2500,
+    2500,
+    2500
+  ],
+  "Pass": "YOUR_WIFI_PASSWORD",
+  "sensor_mapping": false,
+  "joystick_xPIN": 6,
+  "ledPIN": 15,
+  "device_mac": false,
+  "upPIN": 41,
+  "mins": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "startPIN": 11,
+  "PCIP": "192.168.1.49",
+  "oledWIDTH": 128,
+  "sclPIN": 9
+}
