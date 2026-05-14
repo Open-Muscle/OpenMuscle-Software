@@ -59,6 +59,15 @@
                 <div class="piston" data-i="2"><div class="piston-label">P3̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
                 <div class="piston" data-i="3"><div class="piston-label">P4̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
             </div>
+            <div class="inference-controls">
+                <button id="infer-toggle" disabled>▶ Start</button>
+                <label class="rec-pick">
+                    <span>→ Hand</span>
+                    <input id="infer-hand" type="text" placeholder="10.0.0.17:3145" spellcheck="false">
+                </label>
+                <button id="infer-hand-apply">Apply</button>
+                <span id="infer-hand-state" class="sel-status"></span>
+            </div>
         </section>
 
         <section class="panel record-panel">

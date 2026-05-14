@@ -223,7 +223,38 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(status_code=400, detail=f"Could not load model: {e}")
         return {
             "active": state.engine is not None,
+            "enabled": state.inference_enabled,
             "model": state.engine.name if state.engine else None,
+        }
+
+    class SetEnabledBody(BaseModel):
+        enabled: bool
+
+    @app.post("/api/inference/enabled")
+    async def set_inference_enabled(body: SetEnabledBody):
+        state.set_inference_enabled(body.enabled)
+        return {
+            "enabled": state.inference_enabled,
+            "model": state.engine.name if state.engine else None,
+        }
+
+    class SetHandBody(BaseModel):
+        # host=null or empty -> disable forwarding. Otherwise port defaults
+        # to 3145 (the robot hand's UDP listen port).
+        host: Optional[str] = None
+        port: int = 3145
+
+    @app.post("/api/inference/hand")
+    async def set_hand(body: SetHandBody):
+        try:
+            state.set_hand_target(body.host, body.port)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {
+            "hand_target": (
+                f"{state.hand_target[0]}:{state.hand_target[1]}"
+                if state.hand_target else None
+            ),
         }
 
     return app

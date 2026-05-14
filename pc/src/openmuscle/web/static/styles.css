@@ -467,6 +467,67 @@ button.link.danger { color: var(--red); }
     color: var(--fg-dim);
 }
 
+.inference-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.inference-controls .rec-pick input {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    width: 130px;
+}
+
+.inference-controls .rec-pick input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+#infer-toggle {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#infer-toggle.running {
+    background: var(--green);
+    border-color: var(--green);
+    color: var(--bg);
+}
+
+#infer-toggle.paused {
+    background: var(--accent-2);
+    border-color: var(--accent-2);
+    color: white;
+}
+
+#infer-toggle:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#infer-hand-apply {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+#infer-hand-state {
+    font-size: 11px;
+    color: var(--fg-faint);
+}
+
+#infer-hand-state.active { color: var(--green); }
+
 /* ---- footer ---- */
 
 footer {

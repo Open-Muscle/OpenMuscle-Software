@@ -616,10 +616,22 @@ function drawJoystick(j) {
 
 // ---------- ML inference (predicted LASK) ----------
 
-const inferenceMeta = document.getElementById('inference-meta');
-const inferenceBars = document.getElementById('inference-bars');
+const inferenceMeta   = document.getElementById('inference-meta');
+const inferenceBars   = document.getElementById('inference-bars');
+const inferToggleBtn  = document.getElementById('infer-toggle');
+const inferHandInput  = document.getElementById('infer-hand');
+const inferHandApply  = document.getElementById('infer-hand-apply');
+const inferHandState  = document.getElementById('infer-hand-state');
+
+// Don't blast user input every WS tick. We only sync the input from the
+// server when it changes AND the field isn't currently focused (so we
+// don't yank text out from under their cursor).
+let lastSnapshotHand = undefined;
 
 function renderInference(inf) {
+    // Controls state (button + hand input) regardless of bars
+    renderInferenceControls(inf);
+
     if (!inf) {
         inferenceMeta.textContent = 'no model loaded';
         return;
@@ -644,6 +656,95 @@ function renderInference(inf) {
         p.querySelector('.piston-val').textContent = pistonValText(v);
     });
 }
+
+function renderInferenceControls(inf) {
+    const hasModel = !!(inf && inf.model);
+    const enabled  = !!(inf && inf.enabled);
+
+    // --- toggle button ---
+    inferToggleBtn.disabled = !hasModel;
+    inferToggleBtn.classList.toggle('running', enabled);
+    inferToggleBtn.classList.toggle('paused', hasModel && !enabled);
+    if (!hasModel)      inferToggleBtn.textContent = '▶ Start';
+    else if (enabled)   inferToggleBtn.textContent = '⏸ Pause';
+    else                inferToggleBtn.textContent = '▶ Resume';
+    inferToggleBtn.title = hasModel
+        ? (enabled ? 'Click to pause inference' : 'Click to resume inference')
+        : 'Load a model from the Models panel first';
+
+    // --- hand target input ---
+    const hand = (inf && inf.hand_target) || '';
+    if (hand !== lastSnapshotHand) {
+        lastSnapshotHand = hand;
+        if (document.activeElement !== inferHandInput) {
+            inferHandInput.value = hand;
+        }
+    }
+    if (hand) {
+        inferHandState.className = 'sel-status active';
+        inferHandState.textContent = '● forwarding';
+    } else {
+        inferHandState.className = 'sel-status';
+        inferHandState.textContent = 'no hand target';
+    }
+}
+
+// ---- toggle inference on/off ----
+inferToggleBtn.onclick = async () => {
+    if (inferToggleBtn.disabled) return;
+    const wantEnabled = !inferToggleBtn.classList.contains('running');
+    try {
+        const r = await fetch('/api/inference/enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: wantEnabled }),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+    } catch (e) {
+        alert(`Could not ${wantEnabled ? 'resume' : 'pause'}: ${e.message}`);
+    }
+};
+
+// ---- apply hand target ----
+async function applyHandTarget() {
+    const raw = inferHandInput.value.trim();
+    let host = null;
+    let port = 3145;
+    if (raw) {
+        // Accept "host" or "host:port"
+        if (raw.includes(':')) {
+            const idx = raw.lastIndexOf(':');
+            host = raw.slice(0, idx);
+            const portStr = raw.slice(idx + 1);
+            const portN = parseInt(portStr, 10);
+            if (!Number.isFinite(portN) || portN < 1 || portN > 65535) {
+                alert(`Bad port: ${portStr}`);
+                return;
+            }
+            port = portN;
+        } else {
+            host = raw;
+        }
+    }
+    try {
+        const r = await fetch('/api/inference/hand', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, port }),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+        // Force the snapshot side to refresh by clearing the cache so the
+        // next tick syncs the (possibly normalized) value back into the input.
+        lastSnapshotHand = undefined;
+    } catch (e) {
+        alert(`Could not set hand target: ${e.message}`);
+    }
+}
+
+inferHandApply.onclick = applyHandTarget;
+inferHandInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyHandTarget();
+});
 
 // ---------- utils ----------
 

@@ -169,6 +169,11 @@ class AppState:
                 # Don't crash the server on bad model; show the error in the UI.
                 self.engine_status = "load failed: {}".format(e)
 
+        # Runtime on/off for inference. Defaults to True iff a model was
+        # passed at startup -- if you launched `openmuscle web` without
+        # --model, inference stays paused until you load + Resume in the UI.
+        self.inference_enabled: bool = self.engine is not None
+
         # Forwarding socket to robot hand. Opened lazily.
         self.hand_target: Optional[tuple] = hand_target
         self._hand_sock: Optional[socket.socket] = None
@@ -234,10 +239,12 @@ class AppState:
         if self.recording is not None:
             self._record_packet(pkt)
 
-        # Run inference on flexgrid frames if an engine is loaded. We do this
-        # synchronously in the same thread as packet handling -- RF predict is
-        # ~ms, well under the 40ms inter-frame budget at 25Hz.
-        if self.engine and pkt.device_type == "flexgrid":
+        # Run inference on flexgrid frames if an engine is loaded and not
+        # paused. We do this synchronously in the same thread as packet
+        # handling -- RF predict is ~ms, well under the 40ms inter-frame
+        # budget at 25Hz.
+        if (self.engine and self.inference_enabled
+                and pkt.device_type == "flexgrid"):
             mat = pkt.data.get("matrix")
             if mat:
                 pred = self.engine.predict(mat)
@@ -419,12 +426,27 @@ class AppState:
         ground truth), so any sklearn model that produces consistent units
         will render correctly.
         """
+        hand_str = (f"{self.hand_target[0]}:{self.hand_target[1]}"
+                    if self.hand_target else None)
+
         if not self.engine:
             return {
                 "available": False,
+                "enabled": False,
                 "model": None,
                 "piston_values": None,
                 "status": self.engine_status,
+                "hand_target": hand_str,
+            }
+
+        if not self.inference_enabled:
+            return {
+                "available": False,
+                "enabled": False,
+                "model": self.engine.name,
+                "piston_values": None,
+                "status": "paused",
+                "hand_target": hand_str,
             }
 
         # Mark as stale if no frame has come through recently (e.g. FlexGrid
@@ -446,9 +468,11 @@ class AppState:
 
         return {
             "available": fresh,
+            "enabled": True,
             "model": self.engine.name,
             "piston_values": self._last_inference_values,
             "status": status,
+            "hand_target": hand_str,
         }
 
     # ----- recording -----
@@ -732,16 +756,54 @@ class AppState:
 
     def set_model(self, model_path: str) -> None:
         """Hot-swap the inference engine. Idempotent: same path is a no-op
-        unless the existing engine has a different one."""
+        unless the existing engine has a different one.
+
+        Loading a model also auto-enables inference (intuitively: if you
+        clicked 'use' on a model, you want predictions to start flowing).
+        """
         from openmuscle.web.inference import InferenceEngine
         if self.engine is not None and str(self.engine.model_path) == str(model_path):
+            self.inference_enabled = True
             return
         new_engine = InferenceEngine(model_path)
         self.engine = new_engine
         self.engine_status = "loaded"
+        self.inference_enabled = True
         # Drop the cached prediction -- it's from the OLD model, not relevant.
         self._last_inference_values = None
         self._last_inference_ts = 0.0
+
+    def set_inference_enabled(self, enabled: bool) -> None:
+        """Toggle inference on/off. Doesn't unload the model -- pausing is
+        a soft state so the operator can resume without reloading."""
+        self.inference_enabled = bool(enabled)
+        if not self.inference_enabled:
+            # Clear the cached prediction so the panel shows "paused" cleanly
+            # rather than freezing on the last value.
+            self._last_inference_values = None
+            self._last_inference_ts = 0.0
+
+    def set_hand_target(self, host: Optional[str], port: int = 3145) -> None:
+        """Set or clear the robot-hand UDP forwarding target. Pass host=None
+        (or empty string) to disable forwarding."""
+        if not host:
+            self.hand_target = None
+        else:
+            try:
+                port = int(port)
+            except Exception:
+                raise RuntimeError(f"Invalid port: {port!r}")
+            if not (1 <= port <= 65535):
+                raise RuntimeError(f"Port out of range: {port}")
+            self.hand_target = (host.strip(), port)
+        # Drop the cached socket so the next sendto() reopens with whatever
+        # bindings the OS gives it for the new target.
+        if self._hand_sock is not None:
+            try:
+                self._hand_sock.close()
+            except Exception:
+                pass
+            self._hand_sock = None
 
     def list_models(self) -> list:
         """List models in the registry, augmented with `active` flag."""

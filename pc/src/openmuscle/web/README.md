@@ -94,6 +94,8 @@ The `_snapshot()` dict pushed to every connected browser is the contract:
 | POST | `/api/train` | body `{captures: [name1, name2, ...], model_type?, n_estimators?, test_split?, activate?}` — combines the named captures into one training set, fits a model, optionally hot-swaps it into the live inference engine. Returns `{model_path, metrics, active, captures}`. |
 | GET | `/api/models` | list of trained models with metadata (`{name, created, metrics:{r2, mse, n_features, n_labels, ...}, path, active}`). Newest first. |
 | POST | `/api/inference/model` | body `{path}` — hot-swap the live inference engine to a different model.pkl without restarting the server. |
+| POST | `/api/inference/enabled` | body `{enabled: bool}` — pause or resume inference at runtime (engine stays loaded; predictions stop flowing). Returns `{enabled, model}`. |
+| POST | `/api/inference/hand` | body `{host: str?, port?: int}` — set or clear the robot-hand UDP forwarding target. Pass `host: null` or empty string to disable forwarding. `port` defaults to 3145. Returns `{hand_target}`. |
 
 OpenAPI docs at `/docs` once the server is running.
 
@@ -179,7 +181,15 @@ The 5th servo angle for the hand is the **joystick X from the most recent LASK5 
 
 **Caveat — model output range:** the hand-forwarding code assumes predictions are in **0..1** (matching the modular LASK5 firmware's calibrated wire format). Older models trained on raw ADC values (e.g. our `random_forest_20260321_110750`) emit numbers in the 2000–4000 range; the clamp will saturate the hand at 179° for every finger. The web UI's piston bars handle either range fine (the frontend's `pistonFraction` auto-detects fraction vs raw), but **you'll want to retrain on data captured from the current modular LASK5** before the hand will visibly track predictions. The same model-shape check that catches feature-count mismatches will also tell you in the status line if you point the engine at an incompatible model.
 
-**Frontend (already wired):** the **LASK Inference — Predicted** panel un-dims the moment `inference.available` flips to `true` in the WS snapshot. Same auto-detect-fraction-vs-raw piston bars as the LASK5 ground-truth panel.
+### Runtime inference controls
+
+The **LASK Inference — Predicted** panel now exposes three things below the bars, so the inference pipeline can be reconfigured live without restarting the server:
+
+1. **▶ Resume / ⏸ Pause toggle**: gates `_handle_packet`'s inference call. The engine stays loaded while paused (no reload cost on resume); predictions just stop flowing and the panel shows `status: paused`. Disabled until a model has been loaded — load one via the Models panel's `use` button or `POST /api/inference/model`.
+2. **→ Hand `<host[:port]>` input**: sets the UDP forwarding target for the robot hand. Type `10.0.0.17` or `10.0.0.17:3145`, press Enter or click Apply. Clearing the field and applying disables forwarding entirely. The state badge next to the input shows `● forwarding` (green) when active.
+3. The button auto-syncs with `inference.enabled` in the WS snapshot so a `POST /api/inference/enabled` from elsewhere (e.g. curl) is reflected in the UI without a refresh.
+
+Loading a model (`POST /api/inference/model` or the Models panel's `use` button) implicitly **resumes inference** — the intuition is "if you just clicked use on a model, you want predictions to start". If you want to load a model in the paused state, `POST /api/inference/enabled {enabled: false}` immediately after.
 
 ### Future: model hot-swap UI
 
