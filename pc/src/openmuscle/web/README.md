@@ -13,6 +13,9 @@ openmuscle web               # defaults: HTTP :8000, UDP :3141
 Options:
 ```
 openmuscle web --port 8000 --udp-port 3141 --captures-dir data/raw/merged
+openmuscle web --model data/models/random_forest_*/model.pkl   # live ML inference
+openmuscle web --model X --hand 10.0.0.55                      # also forward to robot hand
+openmuscle web --model X --hand 10.0.0.55:3145                 # custom hand port
 ```
 
 First-run on Windows: Defender will prompt for inbound UDP — click **Allow** on both Private and Public, or pre-add: `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3141" -Direction Inbound -Protocol UDP -LocalPort 3141 -Action Allow` (admin PowerShell).
@@ -95,22 +98,38 @@ OpenAPI docs at `/docs` once the server is running.
 
 CSVs are written **row-major** so the column headers `R0C0, R0C1, ..., R0Cn, R1C0, ...` correspond directly to the cell at `(row=r, col=c)`. Earlier (pre-commit `245cb8f`) the writer flattened col-major while the header was row-major, which silently transposed the meaning of every column and confused analysis. Old captures written before that commit need to be re-interpreted with col-major rule.
 
-## Extension points
+## ML inference (`--model` / `--hand`)
 
-### Wiring up ML inference (the obvious next thing)
+The **LASK Inference — Predicted** panel runs live when you pass `--model PATH`. Pipeline:
 
-The frontend already has the **LASK Inference — Predicted** panel rendering a `piston_values: [int, int, int, int]` array from the WS snapshot. Server-side, it currently returns a hardcoded "not loaded" placeholder. To wire it up:
+```
+FlexGrid UDP packet ──> AppState._handle_packet
+                             │
+                             ↓ flatten row-major (R0C0..R0Cn, R1C0..)
+                       InferenceEngine.predict(matrix)
+                             │
+                  ┌──────────┴──────────┐
+                  ↓                     ↓
+            WS snapshot              if --hand HOST[:PORT] set:
+            inference.piston_values  send 'PC,a1,a2,a3,a4,a5' UDP datagram
+                                     to robot hand (hand maps linearly
+                                     0..179 → 0..179° per its 'PC' device)
+```
 
-1. Add an `InferenceEngine` class in `web/state.py` (or a new `web/inference.py`):
-   - `__init__(model_path)` — load a `sklearn` / `numpy` / whatever model from `data/models/`.
-   - `predict(flexgrid_matrix) -> list[int]` — input a `[cols][rows]` matrix, return 4 piston predictions.
-2. Hold an `InferenceEngine | None` on `AppState`. Create it lazily when the CLI flag/config asks for it.
-3. In `_handle_packet`, when a flexgrid packet arrives, call `engine.predict(mat)` and store the result on `AppState.last_inference` with a timestamp.
-4. Update `_inference_snapshot()` to return `{"available": True, "model": <name>, "piston_values": list, "status": "live"}`.
-5. (Optional) Add a CLI flag `--model PATH` so you can launch with a specific trained model: `openmuscle web --model data/models/random_forest_*/model.pkl`.
-6. (Optional) Surface a model picker in the UI — a dropdown that lists `data/models/*.pkl` and hot-swaps the loaded model.
+The 5th servo angle for the hand is the **joystick X from the most recent LASK5 packet** (passed through, not predicted), per the design call that the model only predicts the 4 pistons it was trained on. If no LASK5 has been seen this session, finger-0 stays at 90°.
 
-The frontend will automatically un-dim the panel and start animating the blue bars as soon as the snapshot's `inference.available` flips to `true`.
+**Code:**
+- `web/inference.py` — `InferenceEngine` class. Loads `model.pkl` + sibling `metadata.json`, validates input shape against `n_features_in_` / metadata, returns `None` on mismatch (with `last_error` set, surfaced in the UI status line). No numpy dependency in the hot path; sklearn `predict()` is called with a list-of-lists.
+- `web/state.py` — `AppState(model_path=..., hand_target=...)`. Owns the engine + a non-blocking UDP socket to the hand. `_forward_to_hand(pred)` clamps each predicted piston to [0, 1] (assumes normalized output — see caveat below) and scales to 0..179° before sending.
+- `cli.py` — `--model PATH` and `--hand HOST[:PORT]` (port defaults to 3145 if omitted).
+
+**Caveat — model output range:** the hand-forwarding code assumes predictions are in **0..1** (matching the modular LASK5 firmware's calibrated wire format). Older models trained on raw ADC values (e.g. our `random_forest_20260321_110750`) emit numbers in the 2000–4000 range; the clamp will saturate the hand at 179° for every finger. The web UI's piston bars handle either range fine (the frontend's `pistonFraction` auto-detects fraction vs raw), but **you'll want to retrain on data captured from the current modular LASK5** before the hand will visibly track predictions. The same model-shape check that catches feature-count mismatches will also tell you in the status line if you point the engine at an incompatible model.
+
+**Frontend (already wired):** the **LASK Inference — Predicted** panel un-dims the moment `inference.available` flips to `true` in the WS snapshot. Same auto-detect-fraction-vs-raw piston bars as the LASK5 ground-truth panel.
+
+### Future: model hot-swap UI
+
+A dropdown in the UI that lists `data/models/*.pkl` and reloads `AppState.engine` on selection would be a clean follow-up — `InferenceEngine.__init__` already does all the work, so it's a single REST endpoint + a `<select>` in `app.js`.
 
 ### Adding a new device type
 

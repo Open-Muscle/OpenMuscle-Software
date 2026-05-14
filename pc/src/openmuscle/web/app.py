@@ -24,8 +24,15 @@ from openmuscle.web.state import AppState
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None) -> FastAPI:
-    state = AppState(udp_port=udp_port, captures_dir=captures_dir)
+def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
+               model_path: Optional[str] = None,
+               hand_target: Optional[tuple] = None) -> FastAPI:
+    state = AppState(
+        udp_port=udp_port,
+        captures_dir=captures_dir,
+        model_path=model_path,
+        hand_target=hand_target,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -152,8 +159,15 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None) -> Fast
 
 
 def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
-          captures_dir: Optional[str] = None):
+          captures_dir: Optional[str] = None,
+          model_path: Optional[str] = None,
+          hand_target: Optional[tuple] = None):
     """Run the web UI server (blocks)."""
     import uvicorn
-    app = create_app(udp_port=udp_port, captures_dir=captures_dir)
+    app = create_app(
+        udp_port=udp_port,
+        captures_dir=captures_dir,
+        model_path=model_path,
+        hand_target=hand_target,
+    )
     uvicorn.run(app, host=host, port=port, log_level="info")

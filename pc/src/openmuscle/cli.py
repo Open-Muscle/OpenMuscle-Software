@@ -35,12 +35,34 @@ def receive(port, save_dir):
 @click.option("--udp-port", default=3141, help="UDP port to listen on for device telemetry")
 @click.option("--captures-dir", default=None,
               help="Directory to save captures (default: data/raw/merged)")
-def web(host, port, udp_port, captures_dir):
+@click.option("--model", "model_path", default=None, type=click.Path(),
+              help="Path to a trained model.pkl. When set, FlexGrid frames are run "
+                   "through the model and predictions appear in the LASK Inference panel.")
+@click.option("--hand", "hand", default=None,
+              help="Robot hand target as HOST or HOST:PORT (e.g. 10.0.0.55 or "
+                   "10.0.0.55:3145). When set together with --model, inference "
+                   "outputs are forwarded over UDP as 'PC,a1,a2,a3,a4,a5'. "
+                   "Default port if omitted: 3145.")
+def web(host, port, udp_port, captures_dir, model_path, hand):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
     click.echo(f"OpenMuscle web UI: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
     click.echo(f"Listening for devices on UDP {udp_port}")
-    serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir)
+    if model_path:
+        click.echo(f"Inference model: {model_path}")
+    hand_target = None
+    if hand:
+        if ":" in hand:
+            h, p = hand.rsplit(":", 1)
+            try:
+                hand_target = (h, int(p))
+            except ValueError:
+                raise click.BadParameter(f"--hand: invalid port in '{hand}'")
+        else:
+            hand_target = (hand, 3145)
+        click.echo(f"Forwarding inference to robot hand at {hand_target[0]}:{hand_target[1]}")
+    serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
+          model_path=model_path, hand_target=hand_target)
 
 
 @main.command()

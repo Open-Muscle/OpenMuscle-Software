@@ -18,9 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import socket
+
 from openmuscle.data.storage import CaptureWriter
 from openmuscle.protocol.schema import OpenMusclePacket
 from openmuscle.receiver.udp_listener import UDPListener
+from openmuscle.web.inference import InferenceEngine
 
 
 @dataclass
@@ -98,7 +101,22 @@ class ActiveCapture:
 class AppState:
     """Owns the UDP listener, device registry, current recording, WS clients."""
 
-    def __init__(self, udp_port: int = 3141, captures_dir: Path | None = None):
+    def __init__(self, udp_port: int = 3141, captures_dir: Path | None = None,
+                 model_path: Optional[str] = None,
+                 hand_target: Optional[tuple] = None):
+        """
+        Args:
+            udp_port: incoming device telemetry port (FlexGrid + LASK5)
+            captures_dir: where recorded CSVs go
+            model_path: optional path to a trained model .pkl. When set, every
+                        FlexGrid packet is run through the model and its
+                        predictions populate the WS snapshot's `inference`
+                        field.
+            hand_target: optional (host, port) tuple. When BOTH model_path and
+                         hand_target are set, predictions are forwarded over
+                         UDP to the robot hand in its `PC,a1,a2,a3,a4,a5`
+                         CSV-with-device-id format.
+        """
         self.udp_port = udp_port
         self.captures_dir = Path(captures_dir or Path("data/raw/merged"))
         self.captures_dir.mkdir(parents=True, exist_ok=True)
@@ -109,6 +127,25 @@ class AppState:
         self.ws_clients: set = set()
         self._broadcast_task: Optional[asyncio.Task] = None
         self._started = False
+
+        # ----- inference -----
+        self.engine: Optional[InferenceEngine] = None
+        self.engine_status: str = "no model loaded"
+        if model_path:
+            try:
+                self.engine = InferenceEngine(model_path)
+                self.engine_status = "loaded"
+            except Exception as e:
+                # Don't crash the server on bad model; show the error in the UI.
+                self.engine_status = "load failed: {}".format(e)
+
+        # Forwarding socket to robot hand. Opened lazily.
+        self.hand_target: Optional[tuple] = hand_target
+        self._hand_sock: Optional[socket.socket] = None
+
+        # Most recent prediction surfaced in the WS snapshot
+        self._last_inference_values: Optional[list] = None
+        self._last_inference_ts: float = 0.0
 
     # ----- lifecycle -----
 
@@ -122,6 +159,12 @@ class AppState:
         self.listener.stop()
         if self.recording:
             self.stop_recording()
+        if self._hand_sock is not None:
+            try:
+                self._hand_sock.close()
+            except Exception:
+                pass
+            self._hand_sock = None
 
     async def run_broadcaster(self):
         """Background task that drains the listener queue and pushes frames
@@ -170,6 +213,65 @@ class AppState:
                 cols = len(mat)
                 flat = [mat[c][r] for r in range(rows) for c in range(cols)]
                 self.recording.writer.write_row(pkt.receive_time, flat, [])
+
+        # Run inference on flexgrid frames if an engine is loaded. We do this
+        # synchronously in the same thread as packet handling -- RF predict is
+        # ~ms, well under the 40ms inter-frame budget at 25Hz.
+        if self.engine and pkt.device_type == "flexgrid":
+            mat = pkt.data.get("matrix")
+            if mat:
+                pred = self.engine.predict(mat)
+                if pred is not None:
+                    self._last_inference_values = pred
+                    self._last_inference_ts = time.time()
+                    if self.hand_target:
+                        self._forward_to_hand(pred)
+
+    def _forward_to_hand(self, pred: list):
+        """Send the prediction to the robot hand as a `PC,...` UDP datagram.
+
+        Builds 5 servo angles in 0..179 from the 4 piston predictions (assumed
+        normalized 0..1; clamped) plus the most recent LASK5 joystick X as the
+        5th. The hand's `'PC'` device config uses linear 0..179 -> 0..179
+        mapping, so values land directly on servo angles.
+        """
+        # Pistons -> 0..179, assuming model output is normalized 0..1.
+        # Anything else gets clamped, which is the right failure mode --
+        # bracelet finger goes to extreme rather than 4000-degree angle.
+        angles = []
+        for v in pred[:4]:
+            try:
+                v = max(0.0, min(1.0, float(v)))
+            except Exception:
+                v = 0.0
+            angles.append(int(v * 179))
+
+        # 5th finger = joystick X from the most recent LASK5 packet. Range
+        # 0..4095 -> 0..179. Default to center (90) if no LASK5 has been seen.
+        joy_x = None
+        for d in self.devices.values():
+            if d.device_type == "lask5" and d.last_joystick:
+                jx = d.last_joystick.get("x")
+                if isinstance(jx, (int, float)):
+                    joy_x = jx
+                    break
+        if joy_x is None:
+            angles.append(90)
+        else:
+            angles.append(max(0, min(179, int((joy_x / 4095.0) * 179))))
+
+        # Build the CSV the hand expects: 'PC,a1,a2,a3,a4,a5'
+        payload = ("PC," + ",".join(str(a) for a in angles)).encode("utf-8")
+
+        try:
+            if self._hand_sock is None:
+                self._hand_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._hand_sock.setblocking(False)
+            self._hand_sock.sendto(payload, self.hand_target)
+        except Exception:
+            # Non-fatal: hand might be offline / on a different subnet.
+            # We don't spam logs since this fires per FlexGrid packet.
+            pass
 
     async def _broadcast_latest_frames(self):
         """Push the latest frame for each device to all WS clients."""
@@ -220,16 +322,43 @@ class AppState:
     def _inference_snapshot(self) -> dict:
         """Predicted-LASK output from the FlexGrid -> model pipeline.
 
-        v1 placeholder: returns a 'not loaded' status. When the inference
-        plugin is wired in later, this will return live predicted piston
-        values alongside the real LASK5 values so the operator can visually
-        compare ground-truth (LASK5) vs prediction in the same UI.
+        When `openmuscle web --model PATH` is set, this returns live
+        predictions from the trained model. The frontend's piston-bar
+        renderer auto-detects whether the values are 0..1 (normalized) or
+        raw 0..4095 (per the same auto-detect logic that handles LASK5
+        ground truth), so any sklearn model that produces consistent units
+        will render correctly.
         """
+        if not self.engine:
+            return {
+                "available": False,
+                "model": None,
+                "piston_values": None,
+                "status": self.engine_status,
+            }
+
+        # Mark as stale if no frame has come through recently (e.g. FlexGrid
+        # unplugged) -- the frontend will keep showing the last value but
+        # the status line tells the operator data isn't fresh.
+        fresh = (
+            self._last_inference_values is not None
+            and (time.time() - self._last_inference_ts) < 2.0
+        )
+        last_err = self.engine.last_error
+        if last_err:
+            status = last_err
+        elif fresh:
+            status = "live"
+        elif self._last_inference_values is not None:
+            status = "stale (no flexgrid)"
+        else:
+            status = "waiting for flexgrid"
+
         return {
-            "available": False,
-            "model": None,
-            "piston_values": None,
-            "status": "no model loaded",
+            "available": fresh,
+            "model": self.engine.name,
+            "piston_values": self._last_inference_values,
+            "status": status,
         }
 
     # ----- recording -----
