@@ -3,13 +3,17 @@
 Launch via the CLI: `openmuscle web --port 8000`
 """
 
-from __future__ import annotations
+# NOTE: deliberately NOT using `from __future__ import annotations` here.
+# That makes all annotations into strings, which breaks FastAPI's body-vs-query
+# inference for Pydantic model parameters (it reads "StartRecordingBody" as a
+# string and falls back to treating the param as a query string field).
 
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,7 +24,7 @@ from openmuscle.web.state import AppState
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(udp_port: int = 3141, captures_dir: str | None = None) -> FastAPI:
+def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None) -> FastAPI:
     state = AppState(udp_port=udp_port, captures_dir=captures_dir)
 
     @asynccontextmanager
@@ -41,6 +45,18 @@ def create_app(udp_port: int = 3141, captures_dir: str | None = None) -> FastAPI
     app.state.app_state = state
 
     # ----- static frontend -----
+    # Disable browser caching so live edits to app.js / styles.css are picked up
+    # the moment you refresh. This is a developer/local app, not internet-facing.
+
+    @app.middleware("http")
+    async def no_cache_static(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
     @app.get("/")
     async def index():
@@ -76,7 +92,7 @@ def create_app(udp_port: int = 3141, captures_dir: str | None = None) -> FastAPI
 
     class StartRecordingBody(BaseModel):
         device_id: str
-        filename: str | None = None
+        filename: Optional[str] = None
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):
@@ -84,6 +100,9 @@ def create_app(udp_port: int = 3141, captures_dir: str | None = None) -> FastAPI
             rec = state.start_recording(body.device_id, body.filename)
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to create capture file: {e}")
         return {
             "filename": rec.path.name,
             "device_id": rec.device_id,
@@ -133,7 +152,7 @@ def create_app(udp_port: int = 3141, captures_dir: str | None = None) -> FastAPI
 
 
 def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
-          captures_dir: str | None = None):
+          captures_dir: Optional[str] = None):
     """Run the web UI server (blocks)."""
     import uvicorn
     app = create_app(udp_port=udp_port, captures_dir=captures_dir)
