@@ -71,3 +71,11 @@ mpremote connect COM<N> reset
 ## When to use the modular version instead
 
 If you're starting a new LASK5 build, prefer [`embedded/devices/lask5_v2/`](../../embedded/devices/lask5_v2/) — same hardware target, but with the shared `om_*` library, cleaner protocol packets (uniform `{v, type, id, ts, data}` JSON), and proper `BaseDevice` lifecycle. This monolithic archive is here for posterity, not as a starting point.
+
+## Migrating *this* device to the modular firmware
+
+There's a full migration plan with feature gap analysis, settings-key mapping, step-by-step deploy procedure, verification checklist, and rollback instructions at:
+
+**[`../../embedded/devices/lask5_v2/MIGRATION_FROM_MONOLITHIC.md`](../../embedded/devices/lask5_v2/MIGRATION_FROM_MONOLITHIC.md)**
+
+That's the document to read first when picking this back up. This README is just the archive contents; the migration spec is the *action plan*.
