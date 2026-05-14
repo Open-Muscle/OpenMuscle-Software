@@ -72,7 +72,8 @@ mpremote cp embedded/devices/flexgrid_v1/config/defaults.json :/config/
 
 | Command | Description |
 |---------|-------------|
-| `openmuscle receive` | Live heatmap of sensor data |
+| `openmuscle receive` | Live heatmap of sensor data (matplotlib) |
+| `openmuscle web` | Browser UI: live heatmap, LASK5 piston bars, ML inference panel, recording, captures management — see [`pc/src/openmuscle/web/README.md`](pc/src/openmuscle/web/README.md) |
 | `openmuscle record -o file.csv` | Record paired data to CSV |
 | `openmuscle train data.csv` | Train ML model (RandomForest) |
 | `openmuscle predict -m model.pkl` | Real-time inference |
