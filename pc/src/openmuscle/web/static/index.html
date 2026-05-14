@@ -79,10 +79,17 @@
         </section>
 
         <section class="panel captures-panel">
-            <h2>Captures</h2>
+            <div class="captures-header">
+                <h2>Captures</h2>
+                <div class="captures-actions">
+                    <span id="captures-sel-status" class="sel-status">0 selected</span>
+                    <button id="train-btn" class="primary" disabled>⚙ Train selected</button>
+                </div>
+            </div>
             <table id="captures-table">
                 <thead>
                     <tr>
+                        <th class="captures-check"><input id="captures-check-all" type="checkbox"></th>
                         <th>Name</th>
                         <th>Size</th>
                         <th>Modified</th>
@@ -90,7 +97,30 @@
                     </tr>
                 </thead>
                 <tbody id="captures-body">
-                    <tr class="empty"><td colspan="4">No captures saved yet.</td></tr>
+                    <tr class="empty"><td colspan="5">No captures saved yet.</td></tr>
+                </tbody>
+            </table>
+            <div id="train-status" class="train-status"></div>
+        </section>
+
+        <section class="panel models-panel">
+            <div class="captures-header">
+                <h2>Models</h2>
+                <span id="models-count" class="sel-status"></span>
+            </div>
+            <table id="models-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Created</th>
+                        <th>R²</th>
+                        <th>MSE</th>
+                        <th>Features × Labels</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="models-body">
+                    <tr class="empty"><td colspan="6">No models trained yet.</td></tr>
                 </tbody>
             </table>
         </section>

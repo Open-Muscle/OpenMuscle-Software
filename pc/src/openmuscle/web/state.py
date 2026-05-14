@@ -616,4 +616,143 @@ class AppState:
         if p is None:
             return False
         p.unlink()
+        # Also delete sidecars if present
+        stem = p.with_suffix("")
+        for suffix in (".sensor.jsonl", ".label.jsonl"):
+            sidecar = Path(str(stem) + suffix)
+            if sidecar.exists():
+                try:
+                    sidecar.unlink()
+                except OSError:
+                    pass
         return True
+
+    # ----- training + model management -----
+
+    def train_from_captures(self,
+                            capture_names: list,
+                            model_type: str = "random_forest",
+                            n_estimators: int = 100,
+                            test_split: float = 0.2,
+                            activate: bool = True) -> dict:
+        """Combine N captures from captures_dir, train a model, optionally
+        hot-swap it into the inference engine.
+
+        Args:
+            capture_names: list of CSV filenames (NOT full paths) inside
+                           captures_dir. Each is whitelisted via
+                           capture_path() before use.
+            model_type:    'random_forest' for now.
+            n_estimators:  RF n_estimators (default 100).
+            test_split:    fraction held out for evaluation.
+            activate:      if True, the trained model is loaded into
+                           self.engine immediately, so live inference uses
+                           it without restarting the server.
+
+        Returns:
+            {model_path, metrics: {r2, mse, ...}, active: bool}
+
+        Raises:
+            RuntimeError on invalid capture or empty result.
+        """
+        # Import here to keep the FastAPI cold-start fast.
+        import tempfile
+        import os
+        from openmuscle.ml.training import train_model
+        from openmuscle.data.converter import combine_csvs
+
+        if not capture_names:
+            raise RuntimeError("No captures selected")
+
+        paths = []
+        for name in capture_names:
+            p = self.capture_path(name)
+            if p is None:
+                raise RuntimeError(f"Capture not found: {name}")
+            paths.append(str(p))
+
+        # Combine (or just use the single path directly)
+        if len(paths) == 1:
+            combined_path = paths[0]
+            cleanup = None
+        else:
+            fd, combined_path = tempfile.mkstemp(prefix="om_combined_", suffix=".csv")
+            os.close(fd)
+            cleanup = combined_path
+            combine_csvs(paths, combined_path)
+
+        try:
+            model, metrics = train_model(
+                data_path=combined_path,
+                model_type=model_type,
+                n_estimators=n_estimators,
+                test_split=test_split,
+            )
+        finally:
+            if cleanup:
+                try:
+                    os.unlink(cleanup)
+                except OSError:
+                    pass
+
+        # train_model() saved the model via ModelRegistry; find the most-
+        # recent registry dir (timestamp suffix monotonic) to get its path.
+        model_path = self._latest_registered_model_path()
+
+        activated = False
+        if activate and model_path:
+            try:
+                self.set_model(model_path)
+                activated = True
+            except Exception as e:
+                # Don't fail the whole training response if hot-swap fails;
+                # the file is on disk, the operator can still load it.
+                self.engine_status = "trained but activate failed: {}".format(e)
+
+        return {
+            "model_path": model_path,
+            "metrics": metrics,
+            "active": activated,
+            "captures": list(capture_names),
+        }
+
+    def _latest_registered_model_path(self) -> Optional[str]:
+        """Find the most recent model.pkl under data/models/."""
+        try:
+            from openmuscle.ml.registry import ModelRegistry
+            reg = ModelRegistry()
+            entries = reg.list_models()
+            if not entries:
+                return None
+            # list_models returns ordered by directory name (timestamped),
+            # which is chronological. Last entry == newest.
+            return entries[-1].get("path")
+        except Exception:
+            return None
+
+    def set_model(self, model_path: str) -> None:
+        """Hot-swap the inference engine. Idempotent: same path is a no-op
+        unless the existing engine has a different one."""
+        from openmuscle.web.inference import InferenceEngine
+        if self.engine is not None and str(self.engine.model_path) == str(model_path):
+            return
+        new_engine = InferenceEngine(model_path)
+        self.engine = new_engine
+        self.engine_status = "loaded"
+        # Drop the cached prediction -- it's from the OLD model, not relevant.
+        self._last_inference_values = None
+        self._last_inference_ts = 0.0
+
+    def list_models(self) -> list:
+        """List models in the registry, augmented with `active` flag."""
+        from openmuscle.ml.registry import ModelRegistry
+        reg = ModelRegistry()
+        out = []
+        active_path = str(self.engine.model_path) if self.engine else None
+        for m in reg.list_models():
+            entry = dict(m)
+            entry["active"] = (entry.get("path") == active_path)
+            out.append(entry)
+        # Newest first in the UI
+        out.reverse()
+        return out

@@ -175,6 +175,57 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(status_code=404, detail="Capture not found")
         return {"deleted": name}
 
+    # ----- REST: training + model registry -----
+
+    class TrainBody(BaseModel):
+        captures: list[str]                # filenames inside captures_dir
+        model_type: str = "random_forest"
+        n_estimators: int = 100
+        test_split: float = 0.2
+        activate: bool = True              # hot-swap the trained model into engine
+
+    @app.post("/api/train")
+    async def train_endpoint(body: TrainBody):
+        if not body.captures:
+            raise HTTPException(status_code=400, detail="No captures specified")
+        try:
+            # Training is CPU-bound (RandomForest fit). Run it in a worker
+            # thread so the asyncio event loop / WS broadcast keeps flowing
+            # to other clients while training runs.
+            result = await asyncio.to_thread(
+                state.train_from_captures,
+                body.captures,
+                body.model_type,
+                body.n_estimators,
+                body.test_split,
+                body.activate,
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Training failed: {e}")
+        return result
+
+    @app.get("/api/models")
+    async def list_models():
+        return state.list_models()
+
+    class SetModelBody(BaseModel):
+        path: str
+
+    @app.post("/api/inference/model")
+    async def set_model(body: SetModelBody):
+        try:
+            state.set_model(body.path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Model file not found")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not load model: {e}")
+        return {
+            "active": state.engine is not None,
+            "model": state.engine.name if state.engine else None,
+        }
+
     return app
 
 

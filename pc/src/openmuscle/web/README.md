@@ -90,7 +90,10 @@ The `_snapshot()` dict pushed to every connected browser is the contract:
 | DELETE | `/api/recording` | stops the active capture, returns final stats + sidecar paths |
 | GET | `/api/captures` | list of `{name, size_bytes, mtime}` for files in `--captures-dir` |
 | GET | `/api/captures/{name}/download` | CSV file |
-| DELETE | `/api/captures/{name}` | remove the capture file |
+| DELETE | `/api/captures/{name}` | remove the capture file + its `.sensor.jsonl` / `.label.jsonl` sidecars |
+| POST | `/api/train` | body `{captures: [name1, name2, ...], model_type?, n_estimators?, test_split?, activate?}` — combines the named captures into one training set, fits a model, optionally hot-swaps it into the live inference engine. Returns `{model_path, metrics, active, captures}`. |
+| GET | `/api/models` | list of trained models with metadata (`{name, created, metrics:{r2, mse, n_features, n_labels, ...}, path, active}`). Newest first. |
+| POST | `/api/inference/model` | body `{path}` — hot-swap the live inference engine to a different model.pkl without restarting the server. |
 
 OpenAPI docs at `/docs` once the server is running.
 
@@ -125,6 +128,29 @@ CSVs are written **row-major** so the column headers `R0C0, R0C1, ..., R0Cn, R1C
 ### UI device pickers
 
 Two dropdowns in the Record panel let you override the auto-pick (first flexgrid + first lask5). Selections persist to `localStorage`, so on next page load you don't have to re-pick. While a recording is active both dropdowns are disabled to keep the matcher's input streams stable.
+
+## Multi-capture training
+
+The typical workflow is: record several short sessions of different motions (open/close, point, grip, ...) and train one model over all of them.
+
+**From the UI:**
+1. Make N recordings; each shows up in the Captures panel.
+2. Tick the checkboxes for the ones you want to include (or the header-row check-all).
+3. Hit **⚙ Train selected**. The captures are combined row-wise into one training set, an RF regressor is fit, the trained model lands in `data/models/random_forest_<timestamp>/`, and — if `activate: true`, the default — the engine is **hot-swapped to use the new model immediately**, no server restart.
+4. The new model appears in the **Models** panel below with R², MSE, feature/label counts. Click **use** on any other model to switch back.
+
+Training runs in `asyncio.to_thread()` so the WS broadcast and packet ingest keep flowing for other clients during the fit. On a typical RF with 100 trees + 50k rows + 60 features this is ~10-30s.
+
+**From the CLI:**
+```
+openmuscle train data/raw/merged/session_a.csv \
+                 data/raw/merged/session_b.csv \
+                 data/raw/merged/session_c.csv
+```
+
+Variadic positional args: the CLI concats the CSVs to a temp file (same `combine_csvs` helper the web uses), trains, and removes the temp. Single-file invocation still works (`openmuscle train one.csv`).
+
+**Schema requirement:** all selected captures must share the same column layout (same matrix shape + same label count). `combine_csvs` writes the first file's header verbatim; subsequent files contribute body rows only. If you mix V1 (12-sensor) and V3 (60-sensor) captures, you'll get garbage — keep them in separate model lineages.
 
 ## ML inference (`--model` / `--hand`)
 

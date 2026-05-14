@@ -12,10 +12,19 @@ const captureName = document.getElementById('capture-name');
 const capturesBody= document.getElementById('captures-body');
 const sensorSelect= document.getElementById('sensor-select');
 const labelSelect = document.getElementById('label-select');
+const trainBtn    = document.getElementById('train-btn');
+const trainStatus = document.getElementById('train-status');
+const selStatus   = document.getElementById('captures-sel-status');
+const checkAll    = document.getElementById('captures-check-all');
+const modelsBody  = document.getElementById('models-body');
+const modelsCount = document.getElementById('models-count');
 
 // Per-user pick preferences that survive a refresh
 const STORE_SENSOR = 'om.sensor_device_id';
 const STORE_LABEL  = 'om.label_device_id';
+
+// Set of capture filenames currently checked in the table
+const selectedCaptures = new Set();
 
 let selectedDeviceId = null;
 let lastDevices = [];
@@ -360,14 +369,23 @@ async function refreshCaptures() {
 }
 
 function renderCaptures(list) {
+    // Prune selection set down to captures that still exist
+    const existing = new Set(list.map(c => c.name));
+    for (const n of [...selectedCaptures]) {
+        if (!existing.has(n)) selectedCaptures.delete(n);
+    }
+
     if (!list.length) {
-        capturesBody.innerHTML = '<tr class="empty"><td colspan="4">No captures saved yet.</td></tr>';
+        capturesBody.innerHTML = '<tr class="empty"><td colspan="5">No captures saved yet.</td></tr>';
+        updateSelectionStatus();
         return;
     }
     const rows = list.map(c => {
         const date = new Date(c.mtime * 1000).toLocaleString();
         const kb = (c.size_bytes / 1024).toFixed(1);
-        return `<tr>
+        const checked = selectedCaptures.has(c.name) ? 'checked' : '';
+        return `<tr data-name="${escapeHtml(c.name)}">
+            <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
             <td>${escapeHtml(c.name)}</td>
             <td>${kb} KB</td>
             <td>${escapeHtml(date)}</td>
@@ -385,6 +403,135 @@ function renderCaptures(list) {
             const r = await fetch(`/api/captures/${encodeURIComponent(name)}`, { method: 'DELETE' });
             if (r.ok) refreshCaptures();
             else alert('Delete failed');
+        };
+    });
+    capturesBody.querySelectorAll('input.cap-check').forEach(box => {
+        box.onchange = () => {
+            const name = box.dataset.name;
+            if (box.checked) selectedCaptures.add(name);
+            else selectedCaptures.delete(name);
+            updateSelectionStatus();
+        };
+    });
+    updateSelectionStatus();
+}
+
+function updateSelectionStatus() {
+    const n = selectedCaptures.size;
+    selStatus.textContent = `${n} selected`;
+    trainBtn.disabled = (n === 0);
+    // Sync check-all state: checked when ALL rows are selected, indeterminate
+    // when some but not all are.
+    const total = capturesBody.querySelectorAll('input.cap-check').length;
+    checkAll.checked = (n > 0 && n === total);
+    checkAll.indeterminate = (n > 0 && n < total);
+}
+
+checkAll.onchange = () => {
+    const boxes = capturesBody.querySelectorAll('input.cap-check');
+    boxes.forEach(b => {
+        b.checked = checkAll.checked;
+        const name = b.dataset.name;
+        if (b.checked) selectedCaptures.add(name);
+        else selectedCaptures.delete(name);
+    });
+    updateSelectionStatus();
+};
+
+// ---------- training ----------
+
+trainBtn.onclick = async () => {
+    if (selectedCaptures.size === 0) return;
+    const captures = [...selectedCaptures];
+    const label = captures.length === 1 ? captures[0] : `${captures.length} captures`;
+
+    trainBtn.disabled = true;
+    trainStatus.className = 'train-status busy';
+    trainStatus.textContent = `⏳ Training on ${label}...`;
+
+    try {
+        const r = await fetch('/api/train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ captures, activate: true }),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+        const result = await r.json();
+        const m = result.metrics || {};
+        const r2 = (m.r2 ?? 0).toFixed(3);
+        const mse = (m.mse ?? 0).toFixed(4);
+        const nf  = m.n_features ?? '?';
+        const nl  = m.n_labels ?? '?';
+        const nt  = m.n_train ?? '?';
+        const active = result.active ? ' [active]' : '';
+        trainStatus.className = 'train-status ok';
+        trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse}${active}`;
+        await refreshModels();
+    } catch (e) {
+        trainStatus.className = 'train-status error';
+        trainStatus.textContent = `✗ Train failed: ${e.message}`;
+    } finally {
+        trainBtn.disabled = (selectedCaptures.size === 0);
+    }
+};
+
+// ---------- models panel ----------
+
+async function refreshModels() {
+    try {
+        const r = await fetch('/api/models');
+        if (!r.ok) return;
+        const list = await r.json();
+        renderModels(list);
+    } catch (e) {
+        // best-effort
+    }
+}
+
+function renderModels(list) {
+    modelsCount.textContent = `${list.length} model${list.length === 1 ? '' : 's'}`;
+    if (!list.length) {
+        modelsBody.innerHTML = '<tr class="empty"><td colspan="6">No models trained yet.</td></tr>';
+        return;
+    }
+    modelsBody.innerHTML = list.map(m => {
+        const metrics = m.metrics || {};
+        const r2  = (metrics.r2 ?? null);
+        const mse = (metrics.mse ?? null);
+        const nf  = metrics.n_features ?? '?';
+        const nl  = metrics.n_labels ?? '?';
+        const r2s  = (r2 !== null && !isNaN(r2)) ? Number(r2).toFixed(3) : '—';
+        const mses = (mse !== null && !isNaN(mse)) ? Number(mse).toFixed(4) : '—';
+        const created = m.created ?? '';
+        const activeBadge = m.active ? '<span class="badge-active">active</span>' : '';
+        const escName = escapeHtml(m.name || '');
+        const escPath = escapeHtml(m.path || '');
+        return `<tr>
+            <td>${escName} ${activeBadge}</td>
+            <td>${escapeHtml(created)}</td>
+            <td>${r2s}</td>
+            <td>${mses}</td>
+            <td>${nf} × ${nl}</td>
+            <td class="actions">
+                ${m.active ? '' :
+                  `<button class="link" data-activate="${escPath}">use</button>`}
+            </td>
+        </tr>`;
+    }).join('');
+    modelsBody.querySelectorAll('button[data-activate]').forEach(btn => {
+        btn.onclick = async () => {
+            const path = btn.dataset.activate;
+            try {
+                const r = await fetch('/api/inference/model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path }),
+                });
+                if (!r.ok) throw new Error(await readError(r));
+                await refreshModels();
+            } catch (e) {
+                alert(`Activate failed: ${e.message}`);
+            }
         };
     });
 }
@@ -506,8 +653,10 @@ function escapeHtml(s) {
     }[c]));
 }
 
-// Refresh captures list once on load and whenever a recording stops
+// Refresh captures + models lists on load and periodically
 refreshCaptures();
+refreshModels();
 setInterval(refreshCaptures, 5000);
+setInterval(refreshModels, 10000);
 
 connectWS();
