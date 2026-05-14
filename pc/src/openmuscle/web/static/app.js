@@ -10,6 +10,12 @@ const recordBtn   = document.getElementById('record-btn');
 const recordStatus= document.getElementById('record-status');
 const captureName = document.getElementById('capture-name');
 const capturesBody= document.getElementById('captures-body');
+const sensorSelect= document.getElementById('sensor-select');
+const labelSelect = document.getElementById('label-select');
+
+// Per-user pick preferences that survive a refresh
+const STORE_SENSOR = 'om.sensor_device_id';
+const STORE_LABEL  = 'om.label_device_id';
 
 let selectedDeviceId = null;
 let lastDevices = [];
@@ -46,6 +52,7 @@ function handleTick(msg) {
     lastDevices = msg.devices || [];
     recordingState = msg.recording || null;
     renderDevices();
+    renderRecordPickers();
     renderRecording();
     const dev = selectedDevice();
     if (dev) {
@@ -186,12 +193,95 @@ function pressureColor(v, vmax) {
 
 // ---------- recording ----------
 
+// ---------- record device pickers ----------
+
+function renderRecordPickers() {
+    // Rebuild dropdown options to match the current device list, preserving
+    // any user-chosen selection that's still present. We avoid rebuilding on
+    // every tick if the options would be unchanged -- otherwise an open
+    // <select> closes on every WS message.
+    fillDeviceSelect(sensorSelect, lastDevices.filter(d => d.device_type === 'flexgrid'),
+                     localStorage.getItem(STORE_SENSOR), '(auto-pick flexgrid)');
+    fillDeviceSelect(labelSelect, lastDevices.filter(d => d.device_type === 'lask5'),
+                     localStorage.getItem(STORE_LABEL), '(auto-pick lask5)',
+                     /*allowNone=*/ true);
+
+    // Disable both pickers while recording so the user can't accidentally
+    // change the active stream out from under the matcher.
+    const recording = !!recordingState;
+    sensorSelect.disabled = recording;
+    labelSelect.disabled = recording;
+}
+
+function fillDeviceSelect(sel, devices, preferredId, autoLabel, allowNone) {
+    // Compute desired option list as id strings
+    const desired = [''].concat(devices.map(d => d.device_id));
+    if (allowNone) desired.push('__none__');
+
+    const current = Array.from(sel.options).map(o => o.value);
+    const sameKeys = current.length === desired.length
+                  && current.every((v, i) => v === desired[i]);
+
+    if (!sameKeys) {
+        const prevValue = sel.value;
+        sel.innerHTML = '';
+        // First option = blank = "let the server auto-pick"
+        const optAuto = document.createElement('option');
+        optAuto.value = '';
+        optAuto.textContent = autoLabel;
+        sel.appendChild(optAuto);
+        for (const d of devices) {
+            const o = document.createElement('option');
+            o.value = d.device_id;
+            o.textContent = `${d.device_id} · ${d.device_type}`;
+            sel.appendChild(o);
+        }
+        if (allowNone) {
+            const o = document.createElement('option');
+            o.value = '__none__';
+            o.textContent = '(no label / sensor-only)';
+            sel.appendChild(o);
+        }
+        // Restore selection
+        if (preferredId && desired.includes(preferredId)) sel.value = preferredId;
+        else if (prevValue && desired.includes(prevValue)) sel.value = prevValue;
+    }
+}
+
+sensorSelect.addEventListener('change', () => {
+    if (sensorSelect.value) localStorage.setItem(STORE_SENSOR, sensorSelect.value);
+    else localStorage.removeItem(STORE_SENSOR);
+});
+labelSelect.addEventListener('change', () => {
+    if (labelSelect.value) localStorage.setItem(STORE_LABEL, labelSelect.value);
+    else localStorage.removeItem(STORE_LABEL);
+});
+
+// ---------- recording UI ----------
+
 function renderRecording() {
     if (recordingState) {
         recordBtn.textContent = '■ Stop recording';
         recordBtn.classList.add('recording');
-        recordStatus.textContent =
-            `${recordingState.filename} · ${recordingState.rows} rows · ${recordingState.duration_s}s`;
+
+        const r = recordingState;
+        const rate = (r.match_rate ?? 0);
+        const ratePct = (rate * 100).toFixed(1);
+        let rateCls = 'match-rate-good';
+        if (rate < 0.5)      rateCls = 'match-rate-bad';
+        else if (rate < 0.9) rateCls = 'match-rate-warn';
+
+        const sensor = r.sensor_device_id || '?';
+        const label  = r.label_device_id  || '(none)';
+
+        recordStatus.innerHTML = `
+            <div>${escapeHtml(r.filename)} · ${r.rows} paired rows · ${r.duration_s}s · win ${r.window_ms ?? 100}ms</div>
+            <div>sensor: <b>${escapeHtml(sensor)}</b> &nbsp; label: <b>${escapeHtml(label)}</b></div>
+            <div>matched: ${r.matched ?? 0} / ${r.sensor_frames_seen ?? 0}
+                 (<span class="${rateCls}">${ratePct}%</span>)
+                 · unpaired sensor: ${r.unpaired_sensor ?? 0}
+                 · label pkts: ${r.label_packets_seen ?? 0}</div>
+        `;
     } else {
         recordBtn.textContent = '● Start recording';
         recordBtn.classList.remove('recording');
@@ -230,15 +320,24 @@ recordBtn.onclick = async () => {
             if (!r.ok) throw new Error(await readError(r));
             await refreshCaptures();
         } else {
-            const dev = selectedDevice();
-            if (!dev) { alert('No active device.'); return; }
+            // Map picker values to the API contract:
+            //   ''         -> omit (let server auto-pick)
+            //   '__none__' -> '' (explicit empty -> server disables pairing)
+            //   '<id>'     -> '<id>' (explicit device pick)
+            const sensorVal = sensorSelect.value;
+            const labelVal  = labelSelect.value;
+            const body = { filename: captureName.value.trim() || null };
+            if (sensorVal === '__none__') {
+                throw new Error('Sensor source can\'t be "none" -- need a flexgrid to record');
+            }
+            if (sensorVal) body.sensor_device_id = sensorVal;
+            if (labelVal === '__none__') body.label_device_id = '';
+            else if (labelVal)           body.label_device_id = labelVal;
+
             const r = await fetch('/api/recording', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    device_id: dev.device_id,
-                    filename: captureName.value.trim() || null,
-                }),
+                body: JSON.stringify(body),
             });
             if (!r.ok) throw new Error(await readError(r));
             captureName.value = '';

@@ -13,15 +13,17 @@ of the process. It owns:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 
 import socket
 
 from openmuscle.data.storage import CaptureWriter
 from openmuscle.protocol.schema import OpenMusclePacket
+from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.web.inference import InferenceEngine
 
@@ -82,12 +84,33 @@ class DeviceInfo:
 
 @dataclass
 class ActiveCapture:
+    """An in-progress paired recording.
+
+    Architecturally three files are written concurrently:
+      - `<name>.csv`           paired rows (timestamp + sensor matrix + label values),
+                               only emitted when a sensor frame found a label within the
+                               temporal window. This is the file training reads.
+      - `<name>.sensor.jsonl`  raw sensor packets (one per line, with receive_time).
+      - `<name>.label.jsonl`   raw label packets (one per line, with receive_time).
+    The two JSONL sidecars let us re-pair offline with a different window without
+    needing to re-capture. They're cheap to produce (~10-50 KB/s at typical rates).
+    """
     writer: CaptureWriter
     path: Path
-    device_id: str
+    sensor_device_id: str
+    label_device_id: Optional[str]
     started_at: float
-    rows: int
+    rows: int           # sensor matrix shape
     cols: int
+    window_s: float
+    matcher: TemporalMatcher
+    sensor_jsonl: Optional[IO] = None
+    label_jsonl: Optional[IO] = None
+    # Stats surfaced in the WS snapshot
+    sensor_frames_seen: int = 0
+    label_packets_seen: int = 0
+    matched_count: int = 0
+    unpaired_sensor_count: int = 0
 
     @property
     def row_count(self) -> int:
@@ -96,6 +119,13 @@ class ActiveCapture:
     @property
     def duration_s(self) -> float:
         return time.time() - self.started_at
+
+    @property
+    def match_rate(self) -> float:
+        """Fraction of sensor frames that found a label within window."""
+        if self.sensor_frames_seen == 0:
+            return 0.0
+        return self.matched_count / self.sensor_frames_seen
 
 
 class AppState:
@@ -200,19 +230,9 @@ class AppState:
             self.devices[pkt.device_id] = dev
         dev.update(pkt, ("", 0))
 
-        # Write to active capture if recording and shape matches.
-        # CaptureWriter emits row-major column headers (R0C0, R0C1, ..., R0Cn,
-        # R1C0, ...), so we have to flatten the as-sent [cols][rows] matrix
-        # in row-major order. Previously we wrote it col-major which made
-        # "R0C1" actually contain the value for (col=0, row=1) -- broke
-        # every downstream analysis script.
-        if self.recording and self.recording.device_id == pkt.device_id:
-            mat = pkt.data.get("matrix")
-            if mat:
-                rows = len(mat[0])
-                cols = len(mat)
-                flat = [mat[c][r] for r in range(rows) for c in range(cols)]
-                self.recording.writer.write_row(pkt.receive_time, flat, [])
+        # Recording: dispatch this packet to the matcher/writer/sidecars.
+        if self.recording is not None:
+            self._record_packet(pkt)
 
         # Run inference on flexgrid frames if an engine is loaded. We do this
         # synchronously in the same thread as packet handling -- RF predict is
@@ -226,6 +246,67 @@ class AppState:
                     self._last_inference_ts = time.time()
                     if self.hand_target:
                         self._forward_to_hand(pred)
+
+    def _record_packet(self, pkt: OpenMusclePacket):
+        """Route a packet to the active capture: sidecars + matcher + paired CSV."""
+        rec = self.recording
+        if rec is None:
+            return
+
+        # --- Label stream: append to matcher and JSONL sidecar ---
+        if rec.label_device_id is not None and pkt.device_id == rec.label_device_id:
+            rec.matcher.add_label(pkt)
+            rec.label_packets_seen += 1
+            self._write_jsonl(rec.label_jsonl, pkt)
+            return
+
+        # --- Sensor stream: write JSONL sidecar always, paired CSV when matched ---
+        if pkt.device_id != rec.sensor_device_id:
+            return  # ignore packets from third-party devices during this recording
+
+        mat = pkt.data.get("matrix")
+        if not mat:
+            return  # nothing to record for non-matrix sensor payloads yet
+
+        rec.sensor_frames_seen += 1
+        self._write_jsonl(rec.sensor_jsonl, pkt)
+
+        # Try to pair this sensor frame with the closest label in window
+        if rec.label_device_id is None:
+            # Sensor-only mode (no label device): just write sensor + empty labels.
+            label_values = []
+        else:
+            matched = rec.matcher.match(pkt)
+            if matched is None:
+                rec.unpaired_sensor_count += 1
+                return  # drop unpaired sensor frames from the paired CSV
+            rec.matched_count += 1
+            label_values = list(matched.data.get("values", []))
+
+        # Flatten as-sent [cols][rows] matrix row-major. Header in CaptureWriter
+        # is R0C0..R0Cn, R1C0.., so iterating rows-then-cols here keeps the
+        # column meaning correct (cf. the col-major bug we fixed in 245cb8f).
+        rows = len(mat[0])
+        cols = len(mat)
+        flat = [mat[c][r] for r in range(rows) for c in range(cols)]
+        rec.writer.write_row(pkt.receive_time, flat, label_values)
+
+    @staticmethod
+    def _write_jsonl(stream: Optional[IO], pkt: OpenMusclePacket):
+        """Append one packet as a JSONL line. No-op if stream is None."""
+        if stream is None:
+            return
+        try:
+            stream.write(json.dumps({
+                "t": pkt.receive_time,
+                "device_id": pkt.device_id,
+                "device_type": pkt.device_type,
+                "data": pkt.data,
+            }) + "\n")
+        except Exception:
+            # Don't kill the recording on a serialization hiccup; the paired
+            # CSV is the authoritative file.
+            pass
 
     def _forward_to_hand(self, pred: list):
         """Send the prediction to the robot hand as a `PC,...` UDP datagram.
@@ -305,12 +386,21 @@ class AppState:
             })
         rec = None
         if self.recording:
+            r = self.recording
             rec = {
-                "filename": self.recording.path.name,
-                "device_id": self.recording.device_id,
-                "rows": self.recording.row_count,
-                "duration_s": round(self.recording.duration_s, 1),
-                "shape": [self.recording.rows, self.recording.cols],
+                "filename": r.path.name,
+                "sensor_device_id": r.sensor_device_id,
+                "label_device_id": r.label_device_id,
+                "rows": r.row_count,
+                "duration_s": round(r.duration_s, 1),
+                "shape": [r.rows, r.cols],
+                "window_ms": int(r.window_s * 1000),
+                # Match-quality counters, updated every frame
+                "matched": r.matched_count,
+                "unpaired_sensor": r.unpaired_sensor_count,
+                "sensor_frames_seen": r.sensor_frames_seen,
+                "label_packets_seen": r.label_packets_seen,
+                "match_rate": round(r.match_rate, 3),
             }
         return {
             "type": "tick",
@@ -363,35 +453,106 @@ class AppState:
 
     # ----- recording -----
 
-    def start_recording(self, device_id: str, filename: str | None = None) -> ActiveCapture:
-        if self.recording is not None:
-            raise RuntimeError("Already recording — stop the current capture first")
-        dev = self.devices.get(device_id)
-        if dev is None:
-            raise RuntimeError(f"Device '{device_id}' not seen yet")
-        if dev.rows == 0 or dev.cols == 0:
-            raise RuntimeError(f"Device '{device_id}' has not sent a matrix payload yet")
+    def _auto_pick_sensor(self) -> Optional[str]:
+        """First connected matrix-producing device (FlexGrid), if any."""
+        for d in self.devices.values():
+            if d.device_type == "flexgrid" and d.rows and d.cols:
+                return d.device_id
+        return None
 
+    def _auto_pick_label(self) -> Optional[str]:
+        """First connected label-producing device (LASK5), if any."""
+        for d in self.devices.values():
+            if d.device_type == "lask5":
+                return d.device_id
+        return None
+
+    def start_recording(self,
+                        sensor_device_id: Optional[str] = None,
+                        label_device_id: Optional[str] = None,
+                        filename: Optional[str] = None,
+                        window_ms: int = 100,
+                        label_count: int = 4) -> ActiveCapture:
+        """Start a paired recording.
+
+        Args:
+            sensor_device_id: device producing the FlexGrid matrix. If None,
+                              auto-picks the first connected flexgrid device.
+            label_device_id:  device producing the labels (LASK5). If None,
+                              auto-picks the first connected lask5. Explicitly
+                              pass an empty string '' to disable pairing and
+                              record sensor frames only (the paired CSV will
+                              have no label columns).
+            filename: CSV name. JSONL sidecars derived from it.
+            window_ms: temporal match window in milliseconds (default 100).
+            label_count: how many label_* columns to write per row (default 4
+                         for the standard LASK5 piston count).
+        """
+        if self.recording is not None:
+            raise RuntimeError("Already recording -- stop the current capture first")
+
+        # Auto-pick devices if not specified
+        if not sensor_device_id:
+            sensor_device_id = self._auto_pick_sensor()
+            if sensor_device_id is None:
+                raise RuntimeError("No flexgrid device seen yet; can't auto-pick sensor source")
+
+        # Distinguish "explicit empty -> sensor-only" from "auto-pick"
+        if label_device_id is None:
+            label_device_id = self._auto_pick_label()
+            # if still None, sensor-only mode (label_count gets zeroed below)
+        elif label_device_id == "":
+            label_device_id = None
+
+        sensor_dev = self.devices.get(sensor_device_id)
+        if sensor_dev is None:
+            raise RuntimeError(f"Sensor device '{sensor_device_id}' not seen yet")
+        if sensor_dev.rows == 0 or sensor_dev.cols == 0:
+            raise RuntimeError(
+                f"Sensor device '{sensor_device_id}' has not sent a matrix payload yet"
+            )
+
+        if label_device_id is not None and label_device_id not in self.devices:
+            raise RuntimeError(f"Label device '{label_device_id}' not seen yet")
+
+        effective_label_count = label_count if label_device_id else 0
+
+        # Build paths
         name = filename or f"capture_{int(time.time())}.csv"
         if not name.endswith(".csv"):
             name += ".csv"
-        # Strip any path components a user might submit
-        name = Path(name).name
-        path = self.captures_dir / name
+        name = Path(name).name  # strip any path components the user submitted
+        csv_path = self.captures_dir / name
+        stem = csv_path.with_suffix("")           # data/raw/merged/foo (no .csv)
+        sensor_sidecar = stem.with_suffix(".sensor.jsonl")
+        label_sidecar  = stem.with_suffix(".label.jsonl")
 
         writer = CaptureWriter(
-            output_path=str(path),
-            matrix_rows=dev.rows,
-            matrix_cols=dev.cols,
-            label_count=0,
+            output_path=str(csv_path),
+            matrix_rows=sensor_dev.rows,
+            matrix_cols=sensor_dev.cols,
+            label_count=effective_label_count,
         )
+
+        # Open sidecars line-buffered so a crash mid-recording still leaves
+        # readable JSONL on disk.
+        sensor_stream = open(sensor_sidecar, "w", buffering=1)
+        label_stream = open(label_sidecar, "w", buffering=1) if label_device_id else None
+
+        matcher = TemporalMatcher(window_s=window_ms / 1000.0)
+
         self.recording = ActiveCapture(
             writer=writer,
-            path=path,
-            device_id=device_id,
+            path=csv_path,
+            sensor_device_id=sensor_device_id,
+            label_device_id=label_device_id,
             started_at=time.time(),
-            rows=dev.rows,
-            cols=dev.cols,
+            rows=sensor_dev.rows,
+            cols=sensor_dev.cols,
+            window_s=window_ms / 1000.0,
+            matcher=matcher,
+            sensor_jsonl=sensor_stream,
+            label_jsonl=label_stream,
         )
         return self.recording
 
@@ -400,11 +561,29 @@ class AppState:
             return None
         rec = self.recording
         rec.writer.close()
+        for stream in (rec.sensor_jsonl, rec.label_jsonl):
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
         result = {
             "filename": rec.path.name,
             "rows": rec.row_count,
             "duration_s": round(rec.duration_s, 1),
             "path": str(rec.path),
+            "sensor_device_id": rec.sensor_device_id,
+            "label_device_id": rec.label_device_id,
+            "window_ms": int(rec.window_s * 1000),
+            "matched": rec.matched_count,
+            "unpaired_sensor": rec.unpaired_sensor_count,
+            "sensor_frames_seen": rec.sensor_frames_seen,
+            "label_packets_seen": rec.label_packets_seen,
+            "match_rate": round(rec.match_rate, 3),
+            "sidecars": {
+                "sensor": str(rec.path.with_suffix("")) + ".sensor.jsonl",
+                "label": (str(rec.path.with_suffix("")) + ".label.jsonl") if rec.label_jsonl else None,
+            },
         }
         self.recording = None
         return result

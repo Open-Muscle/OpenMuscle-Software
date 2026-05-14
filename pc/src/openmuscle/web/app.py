@@ -98,13 +98,23 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     # ----- REST: recording -----
 
     class StartRecordingBody(BaseModel):
-        device_id: str
+        # All optional -- recorder auto-picks first flexgrid + first lask5 if
+        # the operator doesn't specify. Pass label_device_id="" (empty string)
+        # to deliberately record sensor-only without pairing.
+        sensor_device_id: Optional[str] = None
+        label_device_id: Optional[str] = None
         filename: Optional[str] = None
+        window_ms: int = 100
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):
         try:
-            rec = state.start_recording(body.device_id, body.filename)
+            rec = state.start_recording(
+                sensor_device_id=body.sensor_device_id,
+                label_device_id=body.label_device_id,
+                filename=body.filename,
+                window_ms=body.window_ms,
+            )
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except OSError as e:
@@ -112,7 +122,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                                 detail=f"Failed to create capture file: {e}")
         return {
             "filename": rec.path.name,
-            "device_id": rec.device_id,
+            "sensor_device_id": rec.sensor_device_id,
+            "label_device_id": rec.label_device_id,
+            "window_ms": int(rec.window_s * 1000),
             "shape": [rec.rows, rec.cols],
         }
 
@@ -127,12 +139,20 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def recording_status():
         if state.recording is None:
             return {"recording": False}
+        r = state.recording
         return {
             "recording": True,
-            "filename": state.recording.path.name,
-            "device_id": state.recording.device_id,
-            "rows": state.recording.row_count,
-            "duration_s": round(state.recording.duration_s, 1),
+            "filename": r.path.name,
+            "sensor_device_id": r.sensor_device_id,
+            "label_device_id": r.label_device_id,
+            "window_ms": int(r.window_s * 1000),
+            "rows": r.row_count,
+            "duration_s": round(r.duration_s, 1),
+            "matched": r.matched_count,
+            "unpaired_sensor": r.unpaired_sensor_count,
+            "sensor_frames_seen": r.sensor_frames_seen,
+            "label_packets_seen": r.label_packets_seen,
+            "match_rate": round(r.match_rate, 3),
         }
 
     # ----- REST: captures -----

@@ -85,18 +85,46 @@ The `_snapshot()` dict pushed to every connected browser is the contract:
 | GET | `/static/*` | static assets (no-cache headers in dev) |
 | WS  | `/ws/live` | server-pushes the `tick` snapshot above on every batch of packets |
 | GET | `/api/devices` | same `devices` array as in the tick |
-| GET | `/api/recording` | `{recording, filename, device_id, rows, duration_s}` or `{recording: false}` |
-| POST | `/api/recording` | body `{device_id, filename?}` — starts a capture |
-| DELETE | `/api/recording` | stops the active capture, returns final stats |
+| GET | `/api/recording` | `{recording, filename, sensor_device_id, label_device_id, window_ms, rows, duration_s, matched, unpaired_sensor, match_rate, ...}` or `{recording: false}` |
+| POST | `/api/recording` | body `{sensor_device_id?, label_device_id?, filename?, window_ms?}` — starts a paired capture. All fields optional. `sensor_device_id` defaults to first flexgrid; `label_device_id` defaults to first lask5. Pass `label_device_id: ""` to record sensor-only (no pairing). |
+| DELETE | `/api/recording` | stops the active capture, returns final stats + sidecar paths |
 | GET | `/api/captures` | list of `{name, size_bytes, mtime}` for files in `--captures-dir` |
 | GET | `/api/captures/{name}/download` | CSV file |
 | DELETE | `/api/captures/{name}` | remove the capture file |
 
 OpenAPI docs at `/docs` once the server is running.
 
-## CSV recording
+## Paired recording (sensor + label)
 
-CSVs are written **row-major** so the column headers `R0C0, R0C1, ..., R0Cn, R1C0, ...` correspond directly to the cell at `(row=r, col=c)`. Earlier (pre-commit `245cb8f`) the writer flattened col-major while the header was row-major, which silently transposed the meaning of every column and confused analysis. Old captures written before that commit need to be re-interpreted with col-major rule.
+A single recording produces **three files** under `--captures-dir`:
+
+| File | Format | Purpose |
+|---|---|---|
+| `<name>.csv` | row-major CSV: `timestamp, R0C0..R3Cn, label_0..label_3` | The trainable file. One row per sensor frame **that found a label within the temporal window**. Unpaired sensor frames are dropped. |
+| `<name>.sensor.jsonl` | one packet per line: `{t, device_id, device_type, data}` | Raw sensor stream. Every received frame, regardless of pairing. |
+| `<name>.label.jsonl`  | same shape | Raw label stream. Every received label packet. |
+
+The two JSONL sidecars exist so you can **re-pair offline with a different window** without re-capturing. A 5-line Python script using `TemporalMatcher(window_s=0.05)` over the two JSONL files reproduces the CSV with whatever temporal tolerance you want. Cheap insurance (~10-50 KB/s extra disk at typical rates).
+
+### Pairing algorithm
+
+`TemporalMatcher` (in `receiver/matcher.py`) is a deque-based nearest-neighbour matcher keyed on packet `receive_time`:
+
+1. Every label packet appends to a deque.
+2. On each sensor frame, the deque is pruned of labels older than `receive_time - window_s`.
+3. The remaining labels are linearly scanned for the one with the smallest `|gap|`. That label is emitted as the pair. If the deque is empty after pruning, the sensor frame is counted as `unpaired` and dropped from the CSV.
+
+Default window is **100 ms** -- at 25 Hz LASK5 input that's ~2-3 labels in window, so the matcher almost always has a candidate. Tune via the POST body's `window_ms` field, or in the UI via the (forthcoming) window slider. Tight windows reject more sensor frames but give crisper alignment; loose windows pair more aggressively but accept stale labels.
+
+The same `TemporalMatcher` runs in the CLI's `openmuscle record` command, so paired CSVs are byte-equivalent regardless of capture source.
+
+### CSV column order (row-major; do not rearrange)
+
+CSVs are written **row-major** so the column headers `R0C0, R0C1, ..., R0Cn, R1C0, ...` correspond directly to the cell at `(row=r, col=c)`. Earlier (pre-commit `245cb8f`) the writer flattened col-major while the header was row-major, which silently transposed the meaning of every column and confused analysis. Old captures written before that commit need to be re-interpreted with col-major rule. `web/inference.py` flattens FlexGrid frames the same way before calling `model.predict()`, so feature order at inference matches training.
+
+### UI device pickers
+
+Two dropdowns in the Record panel let you override the auto-pick (first flexgrid + first lask5). Selections persist to `localStorage`, so on next page load you don't have to re-pick. While a recording is active both dropdowns are disabled to keep the matcher's input streams stable.
 
 ## ML inference (`--model` / `--hand`)
 

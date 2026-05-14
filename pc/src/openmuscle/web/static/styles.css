@@ -180,6 +180,33 @@ main {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
+}
+
+.rec-pick {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.rec-pick select {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-width: 140px;
+}
+
+.rec-pick select:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 .record-controls input[type="text"] {
@@ -232,8 +259,14 @@ button.primary.recording {
     color: var(--orange);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
-    min-width: 200px;
+    margin-top: 8px;
+    min-height: 16px;     /* reserve space so layout doesn't jump on start */
+    line-height: 1.5;
 }
+
+.rec-status .match-rate-bad  { color: var(--red);   }
+.rec-status .match-rate-warn { color: var(--orange); }
+.rec-status .match-rate-good { color: var(--green); }
 
 /* ---- captures ---- */
 
