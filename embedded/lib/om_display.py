@@ -9,7 +9,15 @@ import om_logger as log
 
 class Display:
     def __init__(self, scl_pin=9, sda_pin=8, width=128, height=64,
-                 i2c_freq=400000, addr=0x3C):
+                 i2c_freq=400000, addr=0x3C, flip=False):
+        """
+        Args:
+            flip: If True, rotate the display 180 degrees. This is a hardware
+                  mounting concern -- whether the OLED is right-side-up on
+                  the PCB. Set via per-unit settings.json `oled_flip` key
+                  (the default driver init is correct for FlexGrid V3 boards
+                  but inverted for the LASK5 v2 enclosure).
+        """
         self.oled = None
         self.width = width
         self.height = height
@@ -25,10 +33,35 @@ class Display:
                 return
 
             self.oled = ssd1306.SSD1306_I2C(width, height, i2c, addr=addr)
+            if flip:
+                self._apply_flip()
             self.clear()
-            log.info("SSD1306 initialized")
+            log.info("SSD1306 initialized" + (" (flipped)" if flip else ""))
         except Exception as e:
             log.error("Display init failed: {}".format(e))
+
+    def _apply_flip(self):
+        """Rotate the panel 180 degrees via SSD1306 hardware commands.
+
+        Tries the driver's high-level `rotate()` first (newer ssd1306 module),
+        falls back to direct register writes (SEG_REMAP + COM_OUT_DIR) for
+        older driver builds where rotate() is missing. Either way fails open
+        -- if neither works we just keep the default orientation.
+        """
+        if self.oled is None:
+            return
+        try:
+            self.oled.rotate(False)   # False = unflipped-from-driver-default = 180 from physical
+            return
+        except Exception:
+            pass
+        try:
+            # SET_SEG_REMAP | 0x00 (default driver uses 0x01 = 0xA1)
+            self.oled.write_cmd(0xA0)
+            # SET_COM_OUT_DIR | 0x00 (default driver uses 0x08 = 0xC8)
+            self.oled.write_cmd(0xC0)
+        except Exception as e:
+            log.warn("OLED flip failed: {}".format(e))
 
     @property
     def available(self):

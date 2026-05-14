@@ -1,9 +1,60 @@
 # display_lask5.py - LASK5-specific display rendering
 #
-# Taskbar with battery level, joystick indicator, and piston bar chart.
+# Taskbar with battery level, joystick indicator, and piston bar chart,
+# plus an optional boot splash animation (24 frames, ported from the
+# monolithic firmware).
+
+import time
+
+
+def play_splash(display, frame_delay_ms=100):
+    """Play the OM-LASK5 boot splash if the frame data and an OLED are both
+    available. Safe no-op otherwise.
+
+    The animation is written by blitting raw bytearrays directly into the
+    SSD1306 frame buffer, which matches how the monolithic firmware did it.
+    If `splash_frames.py` isn't on the device (e.g. tight flash budget), we
+    skip silently so boot still succeeds.
+
+    Args:
+        display: om_display.Display instance.
+        frame_delay_ms: per-frame delay; ~100ms gives ~2.4s total at 24 frames.
+    """
+    if not getattr(display, "available", False):
+        return
+    try:
+        import splash_frames
+    except ImportError:
+        return
+
+    oled = display.oled
+    if oled is None or not hasattr(oled, "buffer"):
+        return
+
+    try:
+        for frame in splash_frames.frames:
+            try:
+                oled.buffer[:] = frame
+                oled.show()
+            except Exception:
+                # If a frame is the wrong length for this OLED size, abort the
+                # animation rather than crashing the boot.
+                return
+            time.sleep_ms(frame_delay_ms)
+    finally:
+        # The 24 frames are ~12 KB of bytearrays + the .py overhead. After the
+        # splash plays we never need them again -- and on ESP32-S3 the internal
+        # heap (where lwip lives) is small enough that hanging on to this data
+        # caused [Errno 12] ENOMEM on UDP sends. Free it back to GC.
+        import sys, gc
+        if "splash_frames" in sys.modules:
+            del sys.modules["splash_frames"]
+        gc.collect()
+
 
 def draw_taskbar(display, sensor_values, mins, maxes,
-                 joystick_x=None, joystick_y=None, battery_pct=None):
+                 joystick_x=None, joystick_y=None, battery_pct=None,
+                 mode=None):
     """
     Render the LASK5 taskbar on a 128x32 OLED.
 
@@ -15,14 +66,21 @@ def draw_taskbar(display, sensor_values, mins, maxes,
         joystick_x: raw joystick X ADC value (optional)
         joystick_y: raw joystick Y ADC value (optional)
         battery_pct: battery percentage string (optional)
+        mode: current stream mode (e.g. "udp" / "espnow") shown in the
+              header so the operator can tell at a glance where packets
+              are flowing. None = no mode label.
     """
     if not display.available:
         return
 
     display.fill(0)
 
-    # Header
+    # Header: "OM-LASK5 [MODE] [BATT]". Mode is shortened to fit ("ESPN" for
+    # espnow) so the joystick indicator at x=87 still has room.
     label = "OM-LASK5"
+    if mode:
+        short = {"udp": "UDP", "espnow": "EPN"}.get(mode, mode[:3].upper())
+        label = "{} {}".format(label, short)
     if battery_pct:
         label = "{} {}".format(label, battery_pct)
     display.text(label, 0, 0)

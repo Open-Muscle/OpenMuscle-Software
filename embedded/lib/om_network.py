@@ -23,6 +23,7 @@ class NetworkManager:
         self.sta = network.WLAN(network.STA_IF)
         self._sock = None
         self._espnow = None
+        self._espnow_peers = set()  # track which MACs we've registered
 
     async def connect_wifi(self, timeout_s=20):
         """Connect to WiFi and open a UDP socket. Raises RuntimeError on failure."""
@@ -93,11 +94,28 @@ class NetworkManager:
                 pass
 
     def espnow_send(self, mac, data):
-        """Send data via ESPNOW. data can be bytes or str."""
-        if self._espnow:
-            if isinstance(data, str):
-                data = data.encode()
+        """Send data via ESPNOW. data can be bytes or str.
+
+        Auto-registers the peer on first send -- ESPNow requires `add_peer()`
+        before `send()`, including for the broadcast MAC `b'\\xff'*6`. We
+        track registered peers in a set so the add_peer call is once-per-mac
+        rather than on every send.
+        """
+        if not self._espnow:
+            return
+        if mac not in self._espnow_peers:
+            try:
+                self._espnow.add_peer(mac)
+            except Exception:
+                # Already added (or unsupported); cache to suppress retries.
+                pass
+            self._espnow_peers.add(mac)
+        if isinstance(data, str):
+            data = data.encode()
+        try:
             self._espnow.send(mac, data)
+        except Exception as e:
+            log.warn("ESPNow send error: " + str(e))
 
     def espnow_recv(self, timeout=0):
         """Non-blocking ESPNOW receive. Returns (mac, msg) or None."""

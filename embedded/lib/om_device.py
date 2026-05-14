@@ -24,6 +24,7 @@ class BaseDevice:
             sda_pin=self.settings.get("sda_pin", 8),
             width=self.settings.get("oled_width", 128),
             height=self.settings.get("oled_height", 64),
+            flip=self.settings.get("oled_flip", False),
         )
         self.device_id = self.settings.get("device_id", self.DEVICE_TYPE)
 

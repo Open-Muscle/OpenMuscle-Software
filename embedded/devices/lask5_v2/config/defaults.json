@@ -3,11 +3,12 @@
     "wifi_ssid": "OpenMuscle",
     "wifi_password": "3141592653",
     "udp_target_ip": "192.168.1.48",
-    "udp_port": 3145,
+    "udp_port": 3141,
     "scl_pin": 9,
     "sda_pin": 8,
     "oled_width": 128,
     "oled_height": 32,
+    "oled_flip": true,
     "mins": [0, 0, 0, 0],
     "maxes": [2500, 2500, 2500, 2500],
     "led_pin": 15,
@@ -18,5 +19,6 @@
     "joystick_x_pin": 6,
     "joystick_y_pin": 5,
     "joystick_sw_pin": 7,
-    "sample_rate_hz": 25
+    "sample_rate_hz": 25,
+    "stream_mode": "udp"
 }
