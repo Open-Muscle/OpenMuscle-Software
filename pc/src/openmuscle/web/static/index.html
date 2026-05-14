@@ -30,6 +30,37 @@
             <canvas id="heatmap" width="900" height="240"></canvas>
         </section>
 
+        <section class="panel lask-panel">
+            <div class="lask-header">
+                <h2>LASK5 — Ground Truth</h2>
+                <span id="lask-meta" class="meta-line">no device</span>
+            </div>
+            <div id="lask-bars" class="piston-bars">
+                <div class="piston" data-i="0"><div class="piston-label">P1</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                <div class="piston" data-i="1"><div class="piston-label">P2</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                <div class="piston" data-i="2"><div class="piston-label">P3</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                <div class="piston" data-i="3"><div class="piston-label">P4</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+            </div>
+            <div id="lask-joystick" class="joystick">
+                <span class="joy-label">joystick</span>
+                <canvas id="joystick-canvas" width="80" height="80"></canvas>
+                <span id="joystick-vals" class="joy-vals">--, --</span>
+            </div>
+        </section>
+
+        <section class="panel inference-panel">
+            <div class="lask-header">
+                <h2>LASK Inference — Predicted</h2>
+                <span id="inference-meta" class="meta-line">no model loaded</span>
+            </div>
+            <div id="inference-bars" class="piston-bars dimmed">
+                <div class="piston" data-i="0"><div class="piston-label">P1̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                <div class="piston" data-i="1"><div class="piston-label">P2̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                <div class="piston" data-i="2"><div class="piston-label">P3̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                <div class="piston" data-i="3"><div class="piston-label">P4̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+            </div>
+        </section>
+
         <section class="panel record-panel">
             <h2>Record</h2>
             <div class="record-controls">

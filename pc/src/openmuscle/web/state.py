@@ -36,7 +36,9 @@ class DeviceInfo:
     _window_start: float = 0.0
     _window_count: int = 0
     hz: float = 0.0
-    last_matrix: list = field(default_factory=list)   # [cols][rows] as-sent
+    last_matrix: list = field(default_factory=list)   # [cols][rows] flexgrid
+    last_values: list = field(default_factory=list)   # generic 1-D payload (LASK5 pistons, sensorband, ...)
+    last_joystick: dict = field(default_factory=dict) # LASK5 joystick {"x": v, "y": v}
 
     def update(self, pkt: OpenMusclePacket, src_addr: tuple):
         self.device_type = pkt.device_type
@@ -50,6 +52,17 @@ class DeviceInfo:
             self.last_matrix = mat
             self.cols = len(mat)
             self.rows = len(mat[0]) if mat else 0
+
+        # Track LASK5 / sensorband-style 1-D payloads.
+        # Both the new protocol ("data": {"values": [...]}) and legacy
+        # parser-side mapping put the array in pkt.data["values"].
+        vals = pkt.data.get("values")
+        if vals:
+            self.last_values = list(vals)
+
+        joy = pkt.data.get("joystick")
+        if isinstance(joy, dict):
+            self.last_joystick = joy
 
         # Rate (1-second sliding window)
         now = pkt.receive_time
@@ -185,6 +198,8 @@ class AppState:
                 "packets": d.packets_total,
                 "last_seen_age": round(time.time() - d.last_seen, 2),
                 "matrix": d.last_matrix,
+                "values": d.last_values,         # LASK5 piston ADCs etc.
+                "joystick": d.last_joystick,     # LASK5 joystick {"x", "y"}
             })
         rec = None
         if self.recording:
@@ -195,7 +210,27 @@ class AppState:
                 "duration_s": round(self.recording.duration_s, 1),
                 "shape": [self.recording.rows, self.recording.cols],
             }
-        return {"type": "tick", "devices": devices_out, "recording": rec}
+        return {
+            "type": "tick",
+            "devices": devices_out,
+            "recording": rec,
+            "inference": self._inference_snapshot(),
+        }
+
+    def _inference_snapshot(self) -> dict:
+        """Predicted-LASK output from the FlexGrid -> model pipeline.
+
+        v1 placeholder: returns a 'not loaded' status. When the inference
+        plugin is wired in later, this will return live predicted piston
+        values alongside the real LASK5 values so the operator can visually
+        compare ground-truth (LASK5) vs prediction in the same UI.
+        """
+        return {
+            "available": False,
+            "model": None,
+            "piston_values": None,
+            "status": "no model loaded",
+        }
 
     # ----- recording -----
 
