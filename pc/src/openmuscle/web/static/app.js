@@ -526,9 +526,11 @@ trainBtn.onclick = async () => {
         const nf  = m.n_features ?? '?';
         const nl  = m.n_labels ?? '?';
         const nt  = m.n_train ?? '?';
-        const active = result.active ? ' [active]' : '';
+        // `active` from the API now means "loaded into engine", NOT "running".
+        // Inference stays paused on a fresh load -- operator clicks ▶ to run.
+        const loaded = result.active ? ' [loaded · click ▶ Resume to run]' : '';
         trainStatus.className = 'train-status ok';
-        trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse}${active}`;
+        trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse}${loaded}`;
         await refreshModels();
     } catch (e) {
         trainStatus.className = 'train-status error';
@@ -817,10 +819,98 @@ function escapeHtml(s) {
     }[c]));
 }
 
-// Refresh captures + models lists on load and periodically
+// ---------- logs panel ----------
+
+const logList         = document.getElementById('log-list');
+const logLevelFilter  = document.getElementById('log-level-filter');
+const logClearBtn     = document.getElementById('log-clear-btn');
+const logAutoscroll   = document.getElementById('log-autoscroll');
+
+// Last log id we've seen from the server. Polling sends ?since=N so we
+// only fetch entries we haven't already rendered.
+let lastLogId = 0;
+// Local mirror of received entries so filters can re-render without
+// re-fetching. Capped to avoid unbounded DOM growth.
+let logEntries = [];
+const LOG_LOCAL_CAP = 500;
+
+async function refreshLogs() {
+    try {
+        const r = await fetch(`/api/logs?since=${lastLogId}`);
+        if (!r.ok) return;
+        const body = await r.json();
+        const fresh = body.entries || [];
+        if (!fresh.length && lastLogId !== 0) return;
+        if (fresh.length) {
+            logEntries.push(...fresh);
+            if (logEntries.length > LOG_LOCAL_CAP) {
+                logEntries.splice(0, logEntries.length - LOG_LOCAL_CAP);
+            }
+            lastLogId = body.latest_id ?? fresh[fresh.length - 1].id;
+        } else {
+            lastLogId = body.latest_id ?? lastLogId;
+        }
+        renderLogs();
+    } catch (e) {
+        // best-effort polling
+    }
+}
+
+function renderLogs() {
+    const filter = logLevelFilter.value;  // '', 'WARN', 'ERROR'
+    const filtered = logEntries.filter(e => {
+        if (!filter) return true;
+        if (filter === 'WARN')  return e.level === 'WARNING' || e.level === 'WARN' || e.level === 'ERROR';
+        if (filter === 'ERROR') return e.level === 'ERROR' || e.level === 'CRITICAL';
+        return true;
+    });
+    if (!filtered.length) {
+        logList.innerHTML = '<div class="log-empty">No log entries match the current filter.</div>';
+        return;
+    }
+    const wasAtBottom = logAutoscroll.checked
+        ? (logList.scrollTop + logList.clientHeight >= logList.scrollHeight - 10)
+        : false;
+    logList.innerHTML = filtered.map(e => {
+        const ts = formatLogTs(e.t);
+        const lvl = (e.level || 'INFO').toUpperCase();
+        const lvlCls = 'lvl-' + lvl.toLowerCase().replace('warning', 'warn');
+        return `<div class="log-row ${lvlCls}">
+            <span class="log-ts">${escapeHtml(ts)}</span>
+            <span class="log-level">${escapeHtml(lvl)}</span>
+            <span class="log-source">${escapeHtml(e.source || '-')}</span>
+            <span class="log-message">${escapeHtml(e.message || '')}</span>
+        </div>`;
+    }).join('');
+    if (logAutoscroll.checked || wasAtBottom) {
+        logList.scrollTop = logList.scrollHeight;
+    }
+}
+
+function formatLogTs(unixSec) {
+    if (typeof unixSec !== 'number') return '';
+    const d = new Date(unixSec * 1000);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    return `${hh}:${mm}:${ss}.${ms.slice(0, 2)}`;
+}
+
+logLevelFilter.onchange = renderLogs;
+logClearBtn.onclick = () => {
+    // Clears only the local view; the server keeps its ring buffer so a
+    // refresh restores history.
+    logEntries = [];
+    renderLogs();
+};
+
+// Refresh captures + models + logs on load and periodically
 refreshCaptures();
 refreshModels();
+refreshLogs();
 setInterval(refreshCaptures, 5000);
 setInterval(refreshModels, 10000);
+setInterval(refreshLogs, 2000);   // logs are the most "real-time" panel
 
 connectWS();

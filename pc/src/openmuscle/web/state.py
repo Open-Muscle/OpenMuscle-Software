@@ -26,6 +26,7 @@ from openmuscle.protocol.schema import OpenMusclePacket
 from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.web.inference import InferenceEngine
+from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
 
 @dataclass
@@ -190,6 +191,14 @@ class AppState:
         self.captures_dir = Path(captures_dir or Path("data/raw/merged"))
         self.captures_dir.mkdir(parents=True, exist_ok=True)
 
+        # Log buffer: catches uvicorn/FastAPI/our own `logging` records into
+        # a ring buffer the UI can poll. Installed before anything else so
+        # we don't miss startup errors.
+        self.log_buffer = LogBuffer(capacity=400)
+        install_log_handler(self.log_buffer)
+        self.log_buffer.info("server", "AppState init  udp_port={}  captures_dir={}".format(
+            udp_port, str(self.captures_dir)))
+
         self.listener = UDPListener(port=udp_port)
         self.devices: dict[str, DeviceInfo] = {}
         self.recording: Optional[ActiveCapture] = None
@@ -204,9 +213,11 @@ class AppState:
             try:
                 self.engine = InferenceEngine(model_path)
                 self.engine_status = "loaded"
+                self.log_buffer.info("inference", "model loaded from CLI: {}".format(self.engine.name))
             except Exception as e:
                 # Don't crash the server on bad model; show the error in the UI.
                 self.engine_status = "load failed: {}".format(e)
+                self.log_buffer.error("inference", "model load failed at startup: {}".format(e))
 
         # Runtime on/off for inference. Defaults to True iff a model was
         # passed at startup -- if you launched `openmuscle web` without
@@ -636,6 +647,9 @@ class AppState:
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
         )
+        self.log_buffer.info("recording",
+            "started: {} (sensor={}, label={}, window={}ms)".format(
+                name, sensor_device_id, label_device_id or "(none)", window_ms))
         return self.recording
 
     def stop_recording(self) -> Optional[dict]:
@@ -649,6 +663,10 @@ class AppState:
                     stream.close()
                 except Exception:
                     pass
+        self.log_buffer.info("recording",
+            "stopped: {} -- {} matched / {} sensor frames ({}%), {}s".format(
+                rec.path.name, rec.matched_count, rec.sensor_frames_seen,
+                round(rec.match_rate * 100, 1), round(rec.duration_s, 1)))
         result = {
             "filename": rec.path.name,
             "rows": rec.row_count,
@@ -745,6 +763,9 @@ class AppState:
 
         if not capture_names:
             raise RuntimeError("No captures selected")
+        self.log_buffer.info("training",
+            "started: {} captures, model={}, trees={}, test_split={}".format(
+                len(capture_names), model_type, n_estimators, test_split))
 
         paths = []
         for name in capture_names:
@@ -790,6 +811,17 @@ class AppState:
                 # Don't fail the whole training response if hot-swap fails;
                 # the file is on disk, the operator can still load it.
                 self.engine_status = "trained but activate failed: {}".format(e)
+                self.log_buffer.error("training", "load-after-train failed: {}".format(e))
+
+        self.log_buffer.info("training",
+            "done: rows={} R²={:.3f} MSE={:.4f} feats={}x{} model={} ({})".format(
+                metrics.get("n_train", 0) + metrics.get("n_test", 0),
+                metrics.get("r2", 0.0),
+                metrics.get("mse", 0.0),
+                metrics.get("n_features", 0),
+                metrics.get("n_labels", 0),
+                Path(model_path).parent.name if model_path else "?",
+                "loaded · click ▶ to run" if activated else "saved only"))
 
         return {
             "model_path": model_path,
@@ -816,25 +848,44 @@ class AppState:
         """Hot-swap the inference engine. Idempotent: same path is a no-op
         unless the existing engine has a different one.
 
-        Loading a model also auto-enables inference (intuitively: if you
-        clicked 'use' on a model, you want predictions to start flowing).
+        Loading a model does NOT start running it. Inference stays paused
+        until the operator clicks ▶ Resume (or POSTs /api/inference/enabled
+        {enabled: true}). This was a deliberate change from the earlier
+        "auto-start on load" behaviour, which surprised the operator by
+        having the model start consuming CPU + driving the hand the moment
+        a different model was clicked in the Models panel. Explicit on/off
+        beats clever defaults here.
+
+        Exception: the `--model` CLI flag at server startup DOES auto-start
+        (handled in __init__), since passing a model on the command line is
+        an explicit "run this now" intent.
         """
         from openmuscle.web.inference import InferenceEngine
         if self.engine is not None and str(self.engine.model_path) == str(model_path):
-            self.inference_enabled = True
-            return
+            return  # already loaded; don't touch the enabled flag
         new_engine = InferenceEngine(model_path)
         self.engine = new_engine
         self.engine_status = "loaded"
-        self.inference_enabled = True
         # Drop the cached prediction -- it's from the OLD model, not relevant.
         self._last_inference_values = None
         self._last_inference_ts = 0.0
+        # NB: deliberately do NOT touch self.inference_enabled here. Loading
+        # a new model preserves whatever paused/running state the operator
+        # had. If you want it running, click ▶.
+        self.log_buffer.info("inference", "model loaded: {} (inference still {})".format(
+            new_engine.name,
+            "running" if self.inference_enabled else "PAUSED -- click ▶ to start"))
 
     def set_inference_enabled(self, enabled: bool) -> None:
         """Toggle inference on/off. Doesn't unload the model -- pausing is
         a soft state so the operator can resume without reloading."""
+        prev = self.inference_enabled
         self.inference_enabled = bool(enabled)
+        if prev != self.inference_enabled:
+            self.log_buffer.info("inference",
+                "{} (model={})".format(
+                    "resumed" if self.inference_enabled else "paused",
+                    self.engine.name if self.engine else "none"))
         if not self.inference_enabled:
             # Clear the cached prediction so the panel shows "paused" cleanly
             # rather than freezing on the last value.
@@ -846,6 +897,7 @@ class AppState:
         (or empty string) to disable forwarding."""
         if not host:
             self.hand_target = None
+            self.log_buffer.info("inference", "hand forwarding disabled")
         else:
             try:
                 port = int(port)
@@ -854,6 +906,8 @@ class AppState:
             if not (1 <= port <= 65535):
                 raise RuntimeError(f"Port out of range: {port}")
             self.hand_target = (host.strip(), port)
+            self.log_buffer.info("inference",
+                "hand target set: {}:{}".format(self.hand_target[0], self.hand_target[1]))
         # Drop the cached socket so the next sendto() reopens with whatever
         # bindings the OS gives it for the new target.
         if self._hand_sock is not None:

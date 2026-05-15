@@ -257,6 +257,19 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             ),
         }
 
+    # ----- REST: logs -----
+
+    @app.get("/api/logs")
+    async def list_logs(since: int = 0, limit: int = 200):
+        """Return recent log entries. Frontend polls with ?since=<last_id>
+        so each call only ships new entries. `latest_id` lets the client
+        bootstrap to the tail of the buffer on first load."""
+        entries = state.log_buffer.entries(since_id=since, limit=limit)
+        return {
+            "latest_id": state.log_buffer.latest_id(),
+            "entries": entries,
+        }
+
     return app
 
 

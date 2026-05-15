@@ -133,6 +133,27 @@
                 </tbody>
             </table>
         </section>
+
+        <section class="panel logs-panel">
+            <div class="captures-header">
+                <h2>Logs</h2>
+                <div class="captures-actions">
+                    <select id="log-level-filter" class="rec-pick">
+                        <option value="">all levels</option>
+                        <option value="WARN">warn + error</option>
+                        <option value="ERROR">errors only</option>
+                    </select>
+                    <button id="log-clear-btn" class="link" title="Clear visible logs (server buffer keeps history)">clear view</button>
+                    <label class="rec-pick" style="font-size:11px">
+                        <input type="checkbox" id="log-autoscroll" checked>
+                        <span>auto-scroll</span>
+                    </label>
+                </div>
+            </div>
+            <div id="log-list" class="log-list">
+                <div class="log-empty">No log entries yet.</div>
+            </div>
+        </section>
     </main>
 
     <footer>
