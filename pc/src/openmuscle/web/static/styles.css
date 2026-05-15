@@ -152,6 +152,30 @@ main {
 .device-meta .hz    { color: var(--green); font-weight: 600; }
 .device-meta .age   { color: var(--green); }
 
+.device-status {
+    margin-top: 5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--fg-dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.device-status .bat,
+.device-status .up,
+.device-status .rssi {
+    white-space: nowrap;
+}
+
+.device-status .bat.bat-good { color: var(--green); }
+.device-status .bat.bat-warn { color: var(--orange); }
+.device-status .bat.bat-crit { color: var(--red);   font-weight: 600; }
+
+.device-status .rssi.rssi-ok   { color: var(--fg-dim); }
+.device-status .rssi.rssi-warn { color: var(--orange); }
+.device-status .rssi.rssi-bad  { color: var(--red); }
+
 /* ---- heatmap ---- */
 
 .heatmap-header {

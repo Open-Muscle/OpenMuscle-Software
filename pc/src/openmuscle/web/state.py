@@ -44,6 +44,12 @@ class DeviceInfo:
     last_matrix: list = field(default_factory=list)   # [cols][rows] flexgrid
     last_values: list = field(default_factory=list)   # generic 1-D payload (LASK5 pistons, sensorband, ...)
     last_joystick: dict = field(default_factory=dict) # LASK5 joystick {"x": v, "y": v}
+    # Device-status telemetry from the v1.0 packet's `meta` field. Stays
+    # whatever the device last reported -- a missing key in a later packet
+    # doesn't clobber an earlier value. Common keys: vbat, pct, uptime_s,
+    # free_mem, rssi, imu.
+    status: dict = field(default_factory=dict)
+    status_updated_at: float = 0.0
 
     def update(self, pkt: OpenMusclePacket, src_addr: tuple):
         self.device_type = pkt.device_type
@@ -68,6 +74,16 @@ class DeviceInfo:
         joy = pkt.data.get("joystick")
         if isinstance(joy, dict):
             self.last_joystick = joy
+
+        # Telemetry from the v1.0 envelope's `meta` field -- e.g. {vbat, pct,
+        # uptime_s, free_mem, rssi, imu}. Merge keys (don't overwrite the
+        # whole dict) so a status update with a subset of keys doesn't
+        # wipe previously-reported ones.
+        meta = pkt.metadata
+        if isinstance(meta, dict) and meta:
+            for k, v in meta.items():
+                self.status[k] = v
+            self.status_updated_at = pkt.receive_time
 
         # Rate (1-second sliding window)
         now = pkt.receive_time
@@ -379,6 +395,8 @@ class AppState:
         """Snapshot of all devices + recording status for clients."""
         devices_out = []
         for d in self.devices.values():
+            status_age = (round(time.time() - d.status_updated_at, 2)
+                          if d.status_updated_at else None)
             devices_out.append({
                 "device_id": d.device_id,
                 "device_type": d.device_type,
@@ -390,6 +408,8 @@ class AppState:
                 "matrix": d.last_matrix,
                 "values": d.last_values,         # LASK5 piston ADCs etc.
                 "joystick": d.last_joystick,     # LASK5 joystick {"x", "y"}
+                "status": d.status if d.status else None,   # vbat/pct/uptime/...
+                "status_age": status_age,
             })
         rec = None
         if self.recording:

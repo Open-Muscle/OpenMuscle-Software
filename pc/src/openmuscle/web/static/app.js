@@ -96,6 +96,7 @@ function renderDevices() {
     const html = lastDevices.map(d => {
         const isSel = (d.device_id === selectedDeviceId);
         const stale = d.last_seen_age > 2.0;
+        const statusLine = renderDeviceStatus(d);
         return `
             <li class="device ${isSel ? 'selected' : ''} ${stale ? 'stale' : ''}"
                 data-id="${d.device_id}">
@@ -106,6 +107,7 @@ function renderDevices() {
                     <span class="hz">${d.hz.toFixed(1)} Hz</span>
                     <span class="age">${stale ? `${d.last_seen_age.toFixed(1)}s` : 'live'}</span>
                 </div>
+                ${statusLine}
             </li>`;
     }).join('');
     deviceList.innerHTML = html;
@@ -115,6 +117,56 @@ function renderDevices() {
             renderDevices();
         };
     });
+}
+
+// Battery + uptime + rssi line under the device meta row. Returns '' when
+// the device never reported a meta field (legacy firmware).
+function renderDeviceStatus(d) {
+    const s = d.status;
+    if (!s) return '';
+
+    const parts = [];
+
+    // Battery: prefer pct + voltage when both are present, color-coded
+    if (typeof s.vbat === 'number' || typeof s.pct === 'number') {
+        const v = (typeof s.vbat === 'number') ? s.vbat.toFixed(2) + 'V' : null;
+        const pct = (typeof s.pct === 'number') ? s.pct + '%' : null;
+        let cls = 'bat-good';
+        if (typeof s.pct === 'number') {
+            if      (s.pct < 15) cls = 'bat-crit';
+            else if (s.pct < 40) cls = 'bat-warn';
+        } else if (typeof s.vbat === 'number') {
+            if      (s.vbat < 3.55) cls = 'bat-crit';
+            else if (s.vbat < 3.75) cls = 'bat-warn';
+        }
+        const batText = [v, pct].filter(Boolean).join(' ');
+        parts.push(`<span class="bat ${cls}">🔋 ${escapeHtml(batText)}</span>`);
+    }
+
+    // Uptime in compact form: 1234s -> 20m 34s -> 3h 22m
+    if (typeof s.uptime_s === 'number') {
+        parts.push(`<span class="up">⏱ ${escapeHtml(formatUptime(s.uptime_s))}</span>`);
+    }
+
+    // RSSI (only if we have it). ESP32 reports negative dBm.
+    if (typeof s.rssi === 'number') {
+        let cls = 'rssi-ok';
+        if      (s.rssi < -80) cls = 'rssi-bad';
+        else if (s.rssi < -67) cls = 'rssi-warn';
+        parts.push(`<span class="rssi ${cls}">📶 ${s.rssi} dBm</span>`);
+    }
+
+    if (!parts.length) return '';
+    return `<div class="device-status">${parts.join(' ')}</div>`;
+}
+
+function formatUptime(s) {
+    s = Math.floor(s);
+    if (s < 60)   return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h + 'h ' + m + 'm';
 }
 
 // ---------- heatmap ----------
