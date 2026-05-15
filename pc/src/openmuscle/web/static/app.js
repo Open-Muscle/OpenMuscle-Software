@@ -156,6 +156,17 @@ function renderDeviceStatus(d) {
         parts.push(`<span class="rssi ${cls}">📶 ${s.rssi} dBm</span>`);
     }
 
+    // Reboot indicator: only shown when the device has reset at least
+    // once this PC session. Includes how long ago + the reason (e.g.
+    // WDT = task hung, POWER_ON = cold boot or brownout).
+    if (d.reboot_count && d.reboot_count > 0) {
+        const age = (typeof d.last_reboot_age === 'number')
+            ? formatUptime(d.last_reboot_age) + ' ago'
+            : '?';
+        const why = d.last_reset_cause ? ` (${escapeHtml(String(d.last_reset_cause))})` : '';
+        parts.push(`<span class="reboots">⟳ ${d.reboot_count} reboot${d.reboot_count === 1 ? '' : 's'}, last ${age}${why}</span>`);
+    }
+
     if (!parts.length) return '';
     return `<div class="device-status">${parts.join(' ')}</div>`;
 }

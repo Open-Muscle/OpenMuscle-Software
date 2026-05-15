@@ -47,9 +47,16 @@ class DeviceInfo:
     # Device-status telemetry from the v1.0 packet's `meta` field. Stays
     # whatever the device last reported -- a missing key in a later packet
     # doesn't clobber an earlier value. Common keys: vbat, pct, uptime_s,
-    # free_mem, rssi, imu.
+    # free_mem, rssi, imu, reset_cause, reset_cause_name.
     status: dict = field(default_factory=dict)
     status_updated_at: float = 0.0
+    # Reboot detection: when meta.uptime_s arrives lower than the previously
+    # seen value, the device must have restarted in between. We bump
+    # reboot_count and stamp the wall-clock time. The web UI surfaces this
+    # so an unexpected reset mid-recording is impossible to miss.
+    reboot_count: int = 0
+    last_reboot_at: float = 0.0
+    last_reset_cause: Optional[str] = None
 
     def update(self, pkt: OpenMusclePacket, src_addr: tuple):
         self.device_type = pkt.device_type
@@ -76,11 +83,27 @@ class DeviceInfo:
             self.last_joystick = joy
 
         # Telemetry from the v1.0 envelope's `meta` field -- e.g. {vbat, pct,
-        # uptime_s, free_mem, rssi, imu}. Merge keys (don't overwrite the
-        # whole dict) so a status update with a subset of keys doesn't
-        # wipe previously-reported ones.
+        # uptime_s, free_mem, rssi, imu, reset_cause_name}. Merge keys (don't
+        # overwrite the whole dict) so a status update with a subset of keys
+        # doesn't wipe previously-reported ones.
         meta = pkt.metadata
         if isinstance(meta, dict) and meta:
+            # Reboot detection: an uptime_s that goes BACKWARDS means the
+            # device restarted. We allow a small slack (2s) to absorb clock
+            # jitter on the device side. This is the smoking-gun signal --
+            # if it fires mid-recording, the device crashed/brownout-reset.
+            new_uptime = meta.get("uptime_s")
+            prev_uptime = self.status.get("uptime_s")
+            if (isinstance(new_uptime, (int, float))
+                    and isinstance(prev_uptime, (int, float))
+                    and new_uptime + 2 < prev_uptime):
+                self.reboot_count += 1
+                self.last_reboot_at = pkt.receive_time
+                # Remember WHY this boot started -- the device reports it in
+                # the first meta-bearing packet after the reset.
+                rc = meta.get("reset_cause_name") or meta.get("reset_cause")
+                if rc is not None:
+                    self.last_reset_cause = str(rc)
             for k, v in meta.items():
                 self.status[k] = v
             self.status_updated_at = pkt.receive_time
@@ -316,16 +339,27 @@ class AppState:
 
     @staticmethod
     def _write_jsonl(stream: Optional[IO], pkt: OpenMusclePacket):
-        """Append one packet as a JSONL line. No-op if stream is None."""
+        """Append one packet as a JSONL line. No-op if stream is None.
+
+        Includes pkt.metadata so post-mortem analysis of a recording can
+        spot device reboots / battery dips / wifi RSSI drops at the moment
+        the recording stopped. This is the difference between 'why did the
+        device stop' and 'no idea, packets just ended'.
+        """
         if stream is None:
             return
         try:
-            stream.write(json.dumps({
+            row = {
                 "t": pkt.receive_time,
                 "device_id": pkt.device_id,
                 "device_type": pkt.device_type,
                 "data": pkt.data,
-            }) + "\n")
+            }
+            # Only include `meta` when present -- otherwise we'd add an
+            # empty dict to every line, wasting disk.
+            if pkt.metadata:
+                row["meta"] = pkt.metadata
+            stream.write(json.dumps(row) + "\n")
         except Exception:
             # Don't kill the recording on a serialization hiccup; the paired
             # CSV is the authoritative file.
@@ -410,6 +444,10 @@ class AppState:
                 "joystick": d.last_joystick,     # LASK5 joystick {"x", "y"}
                 "status": d.status if d.status else None,   # vbat/pct/uptime/...
                 "status_age": status_age,
+                "reboot_count": d.reboot_count,
+                "last_reboot_age": (round(time.time() - d.last_reboot_at, 1)
+                                    if d.last_reboot_at else None),
+                "last_reset_cause": d.last_reset_cause,
             })
         rec = None
         if self.recording:

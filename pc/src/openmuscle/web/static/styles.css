@@ -176,6 +176,13 @@ main {
 .device-status .rssi.rssi-warn { color: var(--orange); }
 .device-status .rssi.rssi-bad  { color: var(--red); }
 
+/* Reboot indicator: any value here is bad news -- color it red so it
+   pops on the row. We don't want this to ever blend with normal status. */
+.device-status .reboots {
+    color: var(--red);
+    font-weight: 600;
+}
+
 /* ---- heatmap ---- */
 
 .heatmap-header {
