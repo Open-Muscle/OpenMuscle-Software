@@ -175,6 +175,33 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(status_code=404, detail="Capture not found")
         return {"deleted": name}
 
+    # ----- REST: capture metadata sidecars -----
+
+    @app.get("/api/captures/{name}/meta")
+    async def get_capture_meta(name: str):
+        if state.capture_path(name) is None:
+            raise HTTPException(status_code=404, detail="Capture not found")
+        return state.read_capture_meta(name)
+
+    @app.put("/api/captures/{name}/meta")
+    async def put_capture_meta(name: str, body: dict):
+        """Merge-update a capture's metadata sidecar.
+
+        Body is a plain dict; recognized user fields (arm, subject, gesture,
+        tags, notes) land at top level. Auto fields (sensor_device_id etc.)
+        land under `.auto`. Anything else goes under `.extras` so the schema
+        stays self-describing.
+        """
+        if state.capture_path(name) is None:
+            raise HTTPException(status_code=404, detail="Capture not found")
+        try:
+            merged = state.write_capture_meta(name, body or {})
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Could not write meta: {e}")
+        return merged
+
     # ----- REST: training + model registry -----
 
     class TrainBody(BaseModel):

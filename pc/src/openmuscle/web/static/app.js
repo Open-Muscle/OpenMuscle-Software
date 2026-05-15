@@ -439,7 +439,7 @@ function renderCaptures(list) {
     }
 
     if (!list.length) {
-        capturesBody.innerHTML = '<tr class="empty"><td colspan="5">No captures saved yet.</td></tr>';
+        capturesBody.innerHTML = '<tr class="empty"><td colspan="6">No captures saved yet.</td></tr>';
         updateSelectionStatus();
         return;
     }
@@ -447,12 +447,15 @@ function renderCaptures(list) {
         const date = new Date(c.mtime * 1000).toLocaleString();
         const kb = (c.size_bytes / 1024).toFixed(1);
         const checked = selectedCaptures.has(c.name) ? 'checked' : '';
+        const metaCell = renderCaptureMetaSummary(c.meta);
         return `<tr data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
             <td>${escapeHtml(c.name)}</td>
+            <td>${metaCell}</td>
             <td>${kb} KB</td>
             <td>${escapeHtml(date)}</td>
             <td class="actions">
+                <button class="link" data-edit="${escapeHtml(c.name)}">edit</button>
                 <a href="/api/captures/${encodeURIComponent(c.name)}/download" download>download</a>
                 <button class="link danger" data-del="${escapeHtml(c.name)}">delete</button>
             </td>
@@ -476,8 +479,124 @@ function renderCaptures(list) {
             updateSelectionStatus();
         };
     });
+    capturesBody.querySelectorAll('button[data-edit]').forEach(btn => {
+        btn.onclick = () => openMetaModal(btn.dataset.edit);
+    });
     updateSelectionStatus();
 }
+
+// Render the compact meta column on a capture row. Stays empty (italic
+// 'no meta') until the user fills it in via the edit modal.
+function renderCaptureMetaSummary(meta) {
+    if (!meta) return '<span class="cap-meta-summary empty">— click edit to annotate</span>';
+    const parts = [];
+    if (meta.arm) {
+        const cls = meta.arm === 'left' ? 'arm-left' : 'arm-right';
+        parts.push(`<span class="${cls}">${escapeHtml(meta.arm)}</span>`);
+    }
+    if (meta.gesture) {
+        parts.push(`<span class="gesture">${escapeHtml(meta.gesture)}</span>`);
+    }
+    if (meta.subject) {
+        parts.push(escapeHtml(meta.subject));
+    }
+    const inline = parts.join(' · ');
+    const tagBits = (meta.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+    const noteFlag = meta.has_notes ? ' <span class="tag">📝 notes</span>' : '';
+    const body = (inline || tagBits || noteFlag)
+        ? `${inline}${tagBits ? ' ' + tagBits : ''}${noteFlag}`
+        : '<span class="empty">— click edit to annotate</span>';
+    return `<span class="cap-meta-summary">${body}</span>`;
+}
+
+// ---------- capture metadata modal ----------
+
+const metaModal     = document.getElementById('meta-modal');
+const metaForm      = document.getElementById('meta-form');
+const metaNameEl    = document.getElementById('meta-name');
+const metaArmEl     = document.getElementById('meta-arm');
+const metaSubjectEl = document.getElementById('meta-subject');
+const metaGestureEl = document.getElementById('meta-gesture');
+const metaTagsEl    = document.getElementById('meta-tags');
+const metaNotesEl   = document.getElementById('meta-notes');
+const metaAutoEl    = document.getElementById('meta-auto');
+
+let editingCaptureName = null;
+
+async function openMetaModal(name) {
+    editingCaptureName = name;
+    metaNameEl.textContent = name;
+    // Default the form fields to empty before fetching, so a slow fetch
+    // doesn't show stale values from the previous capture briefly.
+    metaArmEl.value = '';
+    metaSubjectEl.value = '';
+    metaGestureEl.value = '';
+    metaTagsEl.value = '';
+    metaNotesEl.value = '';
+    metaAutoEl.textContent = '(loading...)';
+    metaModal.classList.add('open');
+    metaModal.setAttribute('aria-hidden', 'false');
+
+    try {
+        const r = await fetch(`/api/captures/${encodeURIComponent(name)}/meta`);
+        if (!r.ok) throw new Error(await readError(r));
+        const meta = await r.json();
+        metaArmEl.value     = meta.arm || '';
+        metaSubjectEl.value = meta.subject || '';
+        metaGestureEl.value = meta.gesture || '';
+        metaTagsEl.value    = Array.isArray(meta.tags) ? meta.tags.join(', ') : '';
+        metaNotesEl.value   = meta.notes || '';
+        const auto = meta.auto || {};
+        metaAutoEl.textContent = Object.keys(auto).length
+            ? JSON.stringify(auto, null, 2)
+            : '(none -- this capture predates auto-seeding)';
+    } catch (e) {
+        metaAutoEl.textContent = '(error loading: ' + (e.message || e) + ')';
+    }
+}
+
+function closeMetaModal() {
+    metaModal.classList.remove('open');
+    metaModal.setAttribute('aria-hidden', 'true');
+    editingCaptureName = null;
+}
+
+metaModal.querySelectorAll('[data-close]').forEach(el => {
+    el.addEventListener('click', closeMetaModal);
+});
+// Esc closes too
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && metaModal.classList.contains('open')) closeMetaModal();
+});
+
+metaForm.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!editingCaptureName) return;
+    const tagsRaw = metaTagsEl.value;
+    const tags = tagsRaw
+        .split(',')
+        .map(t => t.trim())
+        .filter(Boolean);
+    const body = {
+        arm:     metaArmEl.value || null,
+        subject: metaSubjectEl.value.trim(),
+        gesture: metaGestureEl.value.trim(),
+        tags:    tags,
+        notes:   metaNotesEl.value,
+    };
+    try {
+        const r = await fetch(`/api/captures/${encodeURIComponent(editingCaptureName)}/meta`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+        closeMetaModal();
+        await refreshCaptures();   // re-render the row summary
+    } catch (err) {
+        alert('Save failed: ' + (err.message || err));
+    }
+};
 
 function updateSelectionStatus() {
     const n = selectedCaptures.size;

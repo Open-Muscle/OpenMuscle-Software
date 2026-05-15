@@ -650,6 +650,25 @@ class AppState:
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(
                 name, sensor_device_id, label_device_id or "(none)", window_ms))
+
+        # Seed the meta sidecar with recording context so even a never-
+        # annotated capture has device + window provenance. User-facing
+        # fields (arm, gesture, notes) stay empty for them to fill in.
+        sensor_status = sensor_dev.status if sensor_dev.status else {}
+        label_dev_obj = self.devices.get(label_device_id) if label_device_id else None
+        label_status = (label_dev_obj.status if (label_dev_obj and label_dev_obj.status) else {})
+        self._seed_capture_meta(name, {
+            "sensor_device_id": sensor_device_id,
+            "label_device_id": label_device_id,
+            "window_ms": window_ms,
+            "sensor_shape": [sensor_dev.rows, sensor_dev.cols],
+            "started_at": self.recording.started_at,
+            "firmware": {
+                "sensor_reset_cause": sensor_status.get("reset_cause_name"),
+                "sensor_vbat_at_start": sensor_status.get("vbat"),
+            },
+        })
+
         return self.recording
 
     def stop_recording(self) -> Optional[dict]:
@@ -696,10 +715,23 @@ class AppState:
             return out
         for p in sorted(self.captures_dir.glob("*.csv"), key=lambda x: x.stat().st_mtime, reverse=True):
             stat = p.stat()
+            meta = self.read_capture_meta(p.name)
+            # Compact summary fields for the table view; full meta is fetched
+            # via /api/captures/{name}/meta when the user clicks edit.
+            meta_summary = None
+            if meta:
+                meta_summary = {
+                    "arm": meta.get("arm"),
+                    "subject": meta.get("subject") or None,
+                    "gesture": meta.get("gesture") or None,
+                    "tags": meta.get("tags") or [],
+                    "has_notes": bool(meta.get("notes")),
+                }
             out.append({
                 "name": p.name,
                 "size_bytes": stat.st_size,
                 "mtime": stat.st_mtime,
+                "meta": meta_summary,
             })
         return out
 
@@ -718,7 +750,7 @@ class AppState:
         p.unlink()
         # Also delete sidecars if present
         stem = p.with_suffix("")
-        for suffix in (".sensor.jsonl", ".label.jsonl"):
+        for suffix in (".sensor.jsonl", ".label.jsonl", ".meta.json"):
             sidecar = Path(str(stem) + suffix)
             if sidecar.exists():
                 try:
@@ -726,6 +758,102 @@ class AppState:
                 except OSError:
                     pass
         return True
+
+    # ----- capture metadata sidecars -----
+
+    # Top-level keys we expose for editing through the UI. Anything else the
+    # user PUTs lands under `extras` so the JSON stays self-describing but
+    # doesn't accidentally collide with reserved fields.
+    META_USER_KEYS = ("arm", "subject", "gesture", "tags", "notes")
+
+    def _meta_path(self, csv_name: str) -> Optional[Path]:
+        """Sidecar path for a capture's metadata JSON. Whitelist-guarded so
+        the caller can only address files inside captures_dir."""
+        p = self.capture_path(csv_name)
+        if p is None:
+            return None
+        return Path(str(p.with_suffix("")) + ".meta.json")
+
+    def read_capture_meta(self, name: str) -> dict:
+        """Read a capture's metadata sidecar. Returns {} if absent."""
+        path = self._meta_path(name)
+        if path is None or not path.exists():
+            return {}
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def write_capture_meta(self, name: str, partial: dict) -> dict:
+        """Merge `partial` into the capture's metadata sidecar and persist.
+
+        Existing keys are overwritten; missing ones are kept. The `auto`
+        sub-dict (machine-set, recording-context fields) is merge-updated
+        rather than replaced -- so a UI edit that only touches user fields
+        leaves auto.* alone, and vice versa.
+
+        Bumps `modified_at` automatically. Returns the full merged dict.
+        """
+        path = self._meta_path(name)
+        if path is None:
+            raise RuntimeError(f"Capture not found: {name}")
+
+        existing = self.read_capture_meta(name)
+
+        # Init scaffolding on first write
+        if not existing:
+            existing = {
+                "arm": None,
+                "subject": "",
+                "gesture": "",
+                "tags": [],
+                "notes": "",
+                "created_at": time.time(),
+                "auto": {},
+            }
+
+        # Merge the user-editable keys directly. `auto` and `extras` get a
+        # deep-ish merge so partial updates don't nuke whole sub-dicts.
+        for k, v in (partial or {}).items():
+            if k == "auto" and isinstance(v, dict):
+                if not isinstance(existing.get("auto"), dict):
+                    existing["auto"] = {}
+                existing["auto"].update(v)
+            elif k == "created_at":
+                # Don't let clients rewrite this
+                continue
+            elif k in self.META_USER_KEYS:
+                existing[k] = v
+            else:
+                # Land unknown keys under `extras` so user can attach arbitrary
+                # structured data without colliding with reserved fields.
+                if not isinstance(existing.get("extras"), dict):
+                    existing["extras"] = {}
+                existing["extras"][k] = v
+
+        existing["modified_at"] = time.time()
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(existing, f, indent=2)
+
+        self.log_buffer.info("meta",
+            "updated {} ({})".format(
+                name,
+                ", ".join("{}={}".format(k, partial.get(k)) for k in (partial or {})
+                          if k in self.META_USER_KEYS) or "auto-only"))
+
+        return existing
+
+    def _seed_capture_meta(self, name: str, auto_dict: dict) -> None:
+        """Called from start_recording to write the recording-context meta.
+        Won't overwrite user-edits if a sidecar already exists (shouldn't
+        be the case, but be defensive)."""
+        try:
+            self.write_capture_meta(name, {"auto": auto_dict})
+        except Exception as e:
+            self.log_buffer.warn("meta", "could not seed meta for {}: {}".format(name, e))
 
     # ----- training + model management -----
 

@@ -100,13 +100,14 @@
                     <tr>
                         <th class="captures-check"><input id="captures-check-all" type="checkbox"></th>
                         <th>Name</th>
+                        <th>Meta</th>
                         <th>Size</th>
                         <th>Modified</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody id="captures-body">
-                    <tr class="empty"><td colspan="5">No captures saved yet.</td></tr>
+                    <tr class="empty"><td colspan="6">No captures saved yet.</td></tr>
                 </tbody>
             </table>
             <div id="train-status" class="train-status"></div>
@@ -159,6 +160,59 @@
     <footer>
         <span>Open-Muscle · FlexGrid · <a href="https://github.com/Open-Muscle">github</a></span>
     </footer>
+
+    <!-- Capture metadata editor (vanilla modal -- shown by toggling .open class) -->
+    <div id="meta-modal" class="modal" aria-hidden="true">
+        <div class="modal-backdrop" data-close="1"></div>
+        <div class="modal-content" role="dialog" aria-labelledby="meta-modal-title">
+            <header class="modal-header">
+                <h3 id="meta-modal-title">Edit capture metadata</h3>
+                <button type="button" class="modal-close" data-close="1" aria-label="Close">×</button>
+            </header>
+            <form id="meta-form">
+                <div class="form-row">
+                    <label>Capture</label>
+                    <span id="meta-name" class="meta-readonly"></span>
+                </div>
+                <div class="form-row">
+                    <label for="meta-arm">Arm</label>
+                    <select id="meta-arm" name="arm">
+                        <option value="">(unspecified)</option>
+                        <option value="left">left</option>
+                        <option value="right">right</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label for="meta-subject">Subject</label>
+                    <input id="meta-subject" name="subject" type="text"
+                           placeholder="e.g. S001 / Alex / self">
+                </div>
+                <div class="form-row">
+                    <label for="meta-gesture">Gesture / motion</label>
+                    <input id="meta-gesture" name="gesture" type="text"
+                           placeholder="e.g. open-close fist, pinch, point">
+                </div>
+                <div class="form-row">
+                    <label for="meta-tags">Tags</label>
+                    <input id="meta-tags" name="tags" type="text"
+                           placeholder="comma-separated, e.g. training-set-A, good, fast">
+                </div>
+                <div class="form-row">
+                    <label for="meta-notes">Notes</label>
+                    <textarea id="meta-notes" name="notes" rows="4"
+                              placeholder="Free-form. Anything that future-you would want to know about this recording."></textarea>
+                </div>
+                <div class="form-row meta-auto-block">
+                    <label>Auto (recording-time)</label>
+                    <pre id="meta-auto" class="meta-readonly"></pre>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="modal-close" data-close="1">Cancel</button>
+                    <button type="submit" class="primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
