@@ -87,9 +87,23 @@
             <div id="record-status" class="rec-status"></div>
         </section>
 
+        <section class="panel sessions-panel">
+            <div class="captures-header">
+                <h2>Sessions</h2>
+                <div class="captures-actions">
+                    <button id="session-start-btn" class="primary">＋ New session</button>
+                </div>
+            </div>
+            <div id="active-session-area">
+                <div class="session-empty">No active session — recordings won't be grouped. Click "New session" to start one.</div>
+            </div>
+            <button id="past-sessions-toggle" class="past-sessions-toggle">▸ Past sessions</button>
+            <div id="past-sessions-list" class="hidden"></div>
+        </section>
+
         <section class="panel captures-panel">
             <div class="captures-header">
-                <h2>Captures</h2>
+                <h2>Captures <span id="captures-filter-label" class="captures-filter"></span></h2>
                 <div class="captures-actions">
                     <span id="captures-sel-status" class="sel-status">0 selected</span>
                     <button id="train-btn" class="primary" disabled>⚙ Train selected</button>
@@ -160,6 +174,51 @@
     <footer>
         <span>Open-Muscle · FlexGrid · <a href="https://github.com/Open-Muscle">github</a></span>
     </footer>
+
+    <!-- Session start modal -->
+    <div id="session-modal" class="modal" aria-hidden="true">
+        <div class="modal-backdrop" data-close="1"></div>
+        <div class="modal-content" role="dialog" aria-labelledby="session-modal-title">
+            <header class="modal-header">
+                <h3 id="session-modal-title">Start new session</h3>
+                <button type="button" class="modal-close" data-close="1" aria-label="Close">×</button>
+            </header>
+            <form id="session-form">
+                <div class="form-row">
+                    <label for="sess-name">Name</label>
+                    <input id="sess-name" type="text" placeholder="e.g. morning-left-arm-baseline">
+                </div>
+                <div class="form-row">
+                    <label for="sess-arm">Arm</label>
+                    <select id="sess-arm">
+                        <option value="">(unspecified)</option>
+                        <option value="left">left</option>
+                        <option value="right">right</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label for="sess-subject">Subject</label>
+                    <input id="sess-subject" type="text" placeholder="e.g. Tory / S001 / self">
+                </div>
+                <div class="form-row">
+                    <label for="sess-gestures">Planned gestures</label>
+                    <input id="sess-gestures" type="text" placeholder="comma-separated, e.g. open hand, fist, pinch, point, OK sign">
+                </div>
+                <div class="form-row">
+                    <label for="sess-tags">Tags</label>
+                    <input id="sess-tags" type="text" placeholder="comma-separated">
+                </div>
+                <div class="form-row">
+                    <label for="sess-notes">Notes</label>
+                    <textarea id="sess-notes" rows="3" placeholder="What's this session for? Anything future-you should know."></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="modal-close" data-close="1">Cancel</button>
+                    <button type="submit" class="primary">Start session</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Capture metadata editor (vanilla modal -- shown by toggling .open class) -->
     <div id="meta-modal" class="modal" aria-hidden="true">

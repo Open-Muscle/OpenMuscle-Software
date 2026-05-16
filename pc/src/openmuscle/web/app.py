@@ -297,6 +297,67 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "entries": entries,
         }
 
+    # ----- REST: sessions -----
+
+    class StartSessionBody(BaseModel):
+        name: Optional[str] = ""
+        subject: Optional[str] = ""
+        arm: Optional[str] = None       # "left" | "right" | None
+        gestures: Optional[list] = None  # planned gesture set, free-form strings
+        notes: Optional[str] = ""
+        tags: Optional[list] = None
+
+    @app.get("/api/sessions")
+    async def list_sessions_endpoint():
+        return state.list_sessions()
+
+    @app.get("/api/sessions/active")
+    async def get_active_session():
+        return state.active_session  # may be null
+
+    @app.post("/api/sessions")
+    async def start_session_endpoint(body: StartSessionBody):
+        try:
+            s = state.start_session(
+                name=body.name or "",
+                subject=body.subject or "",
+                arm=body.arm,
+                gestures=body.gestures,
+                notes=body.notes or "",
+                tags=body.tags,
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return s
+
+    @app.post("/api/sessions/end")
+    async def end_session_endpoint():
+        s = state.end_session()
+        if s is None:
+            raise HTTPException(status_code=404, detail="No active session")
+        return s
+
+    @app.get("/api/sessions/{session_id}")
+    async def get_session_endpoint(session_id: str):
+        s = state.get_session(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return s
+
+    @app.put("/api/sessions/{session_id}")
+    async def update_session_endpoint(session_id: str, body: dict):
+        s = state.update_session(session_id, body or {})
+        if s is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return s
+
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session_endpoint(session_id: str, unlink_captures: bool = True):
+        ok = state.delete_session(session_id, also_unlink_captures=unlink_captures)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"deleted": session_id}
+
     return app
 
 

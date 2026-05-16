@@ -202,6 +202,9 @@ class AppState:
         self.listener = UDPListener(port=udp_port)
         self.devices: dict[str, DeviceInfo] = {}
         self.recording: Optional[ActiveCapture] = None
+        # At most one active session at a time. Recordings made while a
+        # session is active get their meta.auto.session_id auto-populated.
+        self.active_session: Optional[dict] = None
         self.ws_clients: set = set()
         self._broadcast_task: Optional[asyncio.Task] = None
         self._started = False
@@ -483,6 +486,7 @@ class AppState:
             "devices": devices_out,
             "recording": rec,
             "inference": self._inference_snapshot(),
+            "active_session": self.active_session,
         }
 
     def _inference_snapshot(self) -> dict:
@@ -657,7 +661,8 @@ class AppState:
         sensor_status = sensor_dev.status if sensor_dev.status else {}
         label_dev_obj = self.devices.get(label_device_id) if label_device_id else None
         label_status = (label_dev_obj.status if (label_dev_obj and label_dev_obj.status) else {})
-        self._seed_capture_meta(name, {
+
+        auto = {
             "sensor_device_id": sensor_device_id,
             "label_device_id": label_device_id,
             "window_ms": window_ms,
@@ -667,7 +672,36 @@ class AppState:
                 "sensor_reset_cause": sensor_status.get("reset_cause_name"),
                 "sensor_vbat_at_start": sensor_status.get("vbat"),
             },
-        })
+        }
+        # Auto-link to active session if one is open. Also seed the user-
+        # editable arm/subject fields from the session so the operator
+        # doesn't have to retype them per capture (they can still override
+        # via the per-capture meta editor).
+        seed_user = {}
+        if self.active_session is not None:
+            sid = self.active_session.get("id")
+            auto["session_id"] = sid
+            auto["session_name"] = self.active_session.get("name")
+            if self.active_session.get("arm"):
+                seed_user["arm"] = self.active_session["arm"]
+            if self.active_session.get("subject"):
+                seed_user["subject"] = self.active_session["subject"]
+            # Tag with the session id so capture-search/filter UIs can find it
+            session_tag = "session:" + str(sid)
+            seed_user["tags"] = (self.active_session.get("tags") or []) + [session_tag]
+
+        # write_capture_meta routes 'auto' into the .auto sub-dict and
+        # user-fields (arm, subject, tags) into their top-level slots --
+        # so a single call seeds everything correctly.
+        try:
+            self.write_capture_meta(name, {"auto": auto, **seed_user})
+        except Exception as e:
+            self.log_buffer.warn("meta", "could not seed meta for {}: {}".format(name, e))
+
+        # Add this capture to the session's captures list and bump its
+        # capture_count so the Sessions panel reflects it live.
+        if self.active_session is not None:
+            self.link_capture_to_session(self.active_session["id"], name)
 
         return self.recording
 
@@ -747,6 +781,14 @@ class AppState:
         p = self.capture_path(name)
         if p is None:
             return False
+        # If this capture was part of a session, unlink it there too
+        meta = self.read_capture_meta(name)
+        sid = (meta.get("auto") or {}).get("session_id") if meta else None
+        if sid:
+            try:
+                self.unlink_capture_from_session(sid, name)
+            except Exception:
+                pass
         p.unlink()
         # Also delete sidecars if present
         stem = p.with_suffix("")
@@ -758,6 +800,191 @@ class AppState:
                 except OSError:
                     pass
         return True
+
+    # ----- sessions -----
+    #
+    # A session is a logical grouping of captures under one set of operator-
+    # level metadata (subject, arm, gesture set, notes). Storage is a JSON
+    # file per session at `<captures_dir>/../sessions/<id>.json`. Captures
+    # themselves stay flat in captures_dir; their .meta.json grows a
+    # `auto.session_id` field linking back. The training pipeline doesn't
+    # need to know about sessions -- it just consumes capture CSVs as
+    # before. This keeps the abstraction additive.
+    #
+    # There is at most ONE active session at a time, mirroring the
+    # already-existing "one recording at a time" invariant. Recordings
+    # made while a session is active get auto-tagged with the session id.
+
+    @property
+    def sessions_dir(self) -> Path:
+        d = self.captures_dir.parent / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _session_path(self, session_id: str) -> Optional[Path]:
+        """Whitelist-safe path inside sessions_dir."""
+        if not session_id:
+            return None
+        clean = Path(session_id).name  # strip any '..' / '/'
+        if not clean or clean.startswith("."):
+            return None
+        return self.sessions_dir / (clean + ".json")
+
+    def _new_session_id(self) -> str:
+        """Time-based id like '2026-05-16T08-42-13'. Local time so it's
+        readable on the filesystem; never collides at 1-second granularity."""
+        return time.strftime("%Y-%m-%dT%H-%M-%S", time.localtime())
+
+    def list_sessions(self) -> list:
+        """All sessions, newest first. Cheap: just reads the JSONs."""
+        out = []
+        if not self.sessions_dir.exists():
+            return out
+        for p in sorted(self.sessions_dir.glob("*.json"),
+                        key=lambda x: x.stat().st_mtime, reverse=True):
+            try:
+                with open(p, "r") as f:
+                    s = json.load(f)
+                # Inject filesystem hints
+                s["_path"] = p.name
+                out.append(s)
+            except Exception:
+                continue
+        return out
+
+    def get_session(self, session_id: str) -> Optional[dict]:
+        p = self._session_path(session_id)
+        if p is None or not p.exists():
+            return None
+        try:
+            with open(p, "r") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def _write_session(self, session: dict) -> None:
+        p = self._session_path(session["id"])
+        if p is None:
+            raise RuntimeError(f"Invalid session id: {session.get('id')!r}")
+        with open(p, "w") as f:
+            json.dump(session, f, indent=2)
+
+    def start_session(self, name: str = "", subject: str = "", arm: Optional[str] = None,
+                      gestures: Optional[list] = None, notes: str = "",
+                      tags: Optional[list] = None) -> dict:
+        """Start a new session and mark it active.
+
+        Refuses if another session is already active -- the operator should
+        explicitly end the prior one. (We could allow stacked sessions but
+        it's the kind of subtle UX bug that produces orphaned metadata.)
+        """
+        if self.active_session is not None:
+            raise RuntimeError(
+                "Another session is already active: {}. End it first.".format(
+                    self.active_session.get("id")))
+        sid = self._new_session_id()
+        now = time.time()
+        session = {
+            "id": sid,
+            "name": name or sid,
+            "subject": subject or "",
+            "arm": arm if arm in ("left", "right") else None,
+            "gestures": list(gestures or []),
+            "tags": list(tags or []),
+            "notes": notes or "",
+            "started_at": now,
+            "ended_at": None,
+            "captures": [],
+            "capture_count": 0,
+        }
+        self._write_session(session)
+        self.active_session = session
+        self.log_buffer.info("session",
+            "started: {} (subject={}, arm={})".format(
+                sid, subject or "-", arm or "-"))
+        return session
+
+    def end_session(self) -> Optional[dict]:
+        """Stamp ended_at on the active session and clear active state."""
+        if self.active_session is None:
+            return None
+        sid = self.active_session["id"]
+        # Re-read from disk in case someone updated meta concurrently
+        session = self.get_session(sid) or self.active_session
+        session["ended_at"] = time.time()
+        self._write_session(session)
+        self.log_buffer.info("session",
+            "ended: {} ({} captures, {:.0f}s)".format(
+                sid, session.get("capture_count", 0),
+                (session["ended_at"] - session.get("started_at", session["ended_at"]))))
+        self.active_session = None
+        return session
+
+    def update_session(self, session_id: str, partial: dict) -> Optional[dict]:
+        """Merge-update a session's metadata. Protected fields (id, started_at,
+        ended_at, captures, capture_count) are not overwritten."""
+        s = self.get_session(session_id)
+        if s is None:
+            return None
+        for k, v in (partial or {}).items():
+            if k in ("id", "started_at", "ended_at", "captures", "capture_count"):
+                continue
+            if k == "arm" and v not in ("left", "right", None, ""):
+                continue
+            s[k] = v
+        s["modified_at"] = time.time()
+        self._write_session(s)
+        # If this is the active session, keep our in-memory ref in sync
+        if self.active_session is not None and self.active_session.get("id") == session_id:
+            self.active_session = s
+        self.log_buffer.info("session", "updated: {}".format(session_id))
+        return s
+
+    def delete_session(self, session_id: str, also_unlink_captures: bool = True) -> bool:
+        p = self._session_path(session_id)
+        if p is None or not p.exists():
+            return False
+        if also_unlink_captures:
+            # Strip session_id from every capture that pointed here. Don't
+            # delete the captures themselves -- the data is the asset.
+            s = self.get_session(session_id) or {}
+            for name in s.get("captures", []):
+                try:
+                    self.write_capture_meta(name, {"auto": {"session_id": None}})
+                except Exception:
+                    pass
+        p.unlink()
+        if self.active_session is not None and self.active_session.get("id") == session_id:
+            self.active_session = None
+        self.log_buffer.info("session", "deleted: {}".format(session_id))
+        return True
+
+    def link_capture_to_session(self, session_id: str, capture_name: str) -> Optional[dict]:
+        """Add a capture to a session's `captures` list (idempotent) and
+        bump capture_count. Returns the updated session, or None if the
+        session doesn't exist."""
+        s = self.get_session(session_id)
+        if s is None:
+            return None
+        if capture_name not in s.get("captures", []):
+            s.setdefault("captures", []).append(capture_name)
+            s["capture_count"] = len(s["captures"])
+            self._write_session(s)
+            if self.active_session is not None and self.active_session.get("id") == session_id:
+                self.active_session = s
+        return s
+
+    def unlink_capture_from_session(self, session_id: str, capture_name: str) -> Optional[dict]:
+        s = self.get_session(session_id)
+        if s is None:
+            return None
+        if capture_name in s.get("captures", []):
+            s["captures"].remove(capture_name)
+            s["capture_count"] = len(s["captures"])
+            self._write_session(s)
+            if self.active_session is not None and self.active_session.get("id") == session_id:
+                self.active_session = s
+        return s
 
     # ----- capture metadata sidecars -----
 

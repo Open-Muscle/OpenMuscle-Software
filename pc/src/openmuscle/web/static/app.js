@@ -29,6 +29,8 @@ const selectedCaptures = new Set();
 let selectedDeviceId = null;
 let lastDevices = [];
 let recordingState = null;        // null when idle; {filename, rows, duration_s} when recording
+let activeSession = null;          // null when no session active; {id, name, arm, ...} otherwise
+let inferenceState = null;         // last inference snapshot, used for REC+LIVE detection
 
 // ---------- WebSocket ----------
 
@@ -60,6 +62,15 @@ function handleTick(msg) {
     if (msg.type !== 'tick') return;
     lastDevices = msg.devices || [];
     recordingState = msg.recording || null;
+    inferenceState = msg.inference || null;
+    const prevSessionId = activeSession ? activeSession.id : null;
+    activeSession = msg.active_session || null;
+    if (prevSessionId !== (activeSession ? activeSession.id : null)) {
+        // Session changed -> re-fetch captures (server-side meta seeding
+        // means the row list may show new session_id tags).
+        refreshCaptures();
+    }
+    renderActiveSession();
     renderDevices();
     renderRecordPickers();
     renderRecording();
@@ -329,6 +340,162 @@ labelSelect.addEventListener('change', () => {
     else localStorage.removeItem(STORE_LABEL);
 });
 
+// ---------- sessions panel ----------
+
+const sessionStartBtn      = document.getElementById('session-start-btn');
+const activeSessionArea    = document.getElementById('active-session-area');
+const pastSessionsToggle   = document.getElementById('past-sessions-toggle');
+const pastSessionsList     = document.getElementById('past-sessions-list');
+const sessionModal         = document.getElementById('session-modal');
+const sessionForm          = document.getElementById('session-form');
+const capturesFilterLabel  = document.getElementById('captures-filter-label');
+
+let pastSessions = [];
+
+function renderActiveSession() {
+    if (activeSession) {
+        const s = activeSession;
+        const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
+        const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
+        const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(s.arm)} arm</span>` : '<span class="empty">no arm set</span>';
+        const subj = s.subject ? ' · ' + escapeHtml(s.subject) : '';
+        const gestures = (s.gestures || []).length
+            ? ' · planned: ' + escapeHtml((s.gestures || []).join(', '))
+            : '';
+        activeSessionArea.innerHTML = `
+            <div class="session-card active">
+                <div class="session-head">
+                    <div>
+                        <span class="session-id">${escapeHtml(s.name || s.id)}</span>
+                        <span class="session-meta-line">${armBit}${subj} · ${s.capture_count || 0} captures · ${formatUptime(dur)}${gestures}</span>
+                    </div>
+                    <div class="session-actions">
+                        <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
+                        <button class="link danger" id="session-end-btn">■ End session</button>
+                    </div>
+                </div>
+                ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
+            </div>`;
+        document.getElementById('session-end-btn').onclick = endSession;
+        sessionStartBtn.disabled = true;
+        sessionStartBtn.title = 'End the current session before starting a new one';
+        capturesFilterLabel.textContent = `· filtered to ${s.name || s.id}`;
+    } else {
+        activeSessionArea.innerHTML = '<div class="session-empty">No active session — recordings won\'t be grouped. Click "New session" to start one.</div>';
+        sessionStartBtn.disabled = false;
+        sessionStartBtn.title = '';
+        capturesFilterLabel.textContent = '';
+    }
+}
+
+async function refreshPastSessions() {
+    try {
+        const r = await fetch('/api/sessions');
+        if (!r.ok) return;
+        const list = await r.json();
+        // Filter out the active one (already shown above)
+        const activeId = activeSession ? activeSession.id : null;
+        pastSessions = list.filter(s => s.id !== activeId);
+        renderPastSessions();
+    } catch (e) { /* best-effort */ }
+}
+
+function renderPastSessions() {
+    if (!pastSessions.length) {
+        pastSessionsList.innerHTML = '<div class="session-empty">No past sessions yet.</div>';
+        return;
+    }
+    pastSessionsList.innerHTML = pastSessions.map(s => {
+        const dur = (s.ended_at && s.started_at) ? Math.floor(s.ended_at - s.started_at) : null;
+        const armBit = s.arm ? escapeHtml(s.arm) + ' arm' : '—';
+        const captures = s.capture_count || (s.captures || []).length;
+        return `<div class="session-card">
+            <div class="session-head">
+                <div>
+                    <span class="session-id">${escapeHtml(s.name || s.id)}</span>
+                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.subject || '—')} · ${captures} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                </div>
+                <div class="session-actions">
+                    <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
+                    <button class="link danger" data-delete-session="${escapeHtml(s.id)}">delete</button>
+                </div>
+            </div>
+            ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
+        </div>`;
+    }).join('');
+    pastSessionsList.querySelectorAll('button[data-delete-session]').forEach(btn => {
+        btn.onclick = async () => {
+            const sid = btn.dataset.deleteSession;
+            if (!confirm(`Delete session ${sid}? Captures will remain (just unlinked).`)) return;
+            try {
+                const r = await fetch(`/api/sessions/${encodeURIComponent(sid)}?unlink_captures=true`, {method:'DELETE'});
+                if (!r.ok) throw new Error(await readError(r));
+                await refreshPastSessions();
+                await refreshCaptures();
+            } catch (e) { alert('Delete failed: ' + e.message); }
+        };
+    });
+}
+
+pastSessionsToggle.onclick = () => {
+    pastSessionsList.classList.toggle('hidden');
+    pastSessionsToggle.textContent = pastSessionsList.classList.contains('hidden')
+        ? '▸ Past sessions' : '▾ Past sessions';
+    if (!pastSessionsList.classList.contains('hidden')) refreshPastSessions();
+};
+
+sessionStartBtn.onclick = () => openSessionModal();
+
+function openSessionModal() {
+    sessionModal.classList.add('open');
+    sessionModal.setAttribute('aria-hidden', 'false');
+    document.getElementById('sess-name').focus();
+}
+function closeSessionModal() {
+    sessionModal.classList.remove('open');
+    sessionModal.setAttribute('aria-hidden', 'true');
+}
+sessionModal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeSessionModal));
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sessionModal.classList.contains('open')) closeSessionModal();
+});
+
+sessionForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = {
+        name:     document.getElementById('sess-name').value.trim(),
+        subject:  document.getElementById('sess-subject').value.trim(),
+        arm:      document.getElementById('sess-arm').value || null,
+        gestures: document.getElementById('sess-gestures').value.split(',').map(s=>s.trim()).filter(Boolean),
+        tags:     document.getElementById('sess-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+        notes:    document.getElementById('sess-notes').value,
+    };
+    try {
+        const r = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+        // Clear the form for next time
+        sessionForm.reset();
+        closeSessionModal();
+    } catch (e) {
+        alert('Could not start session: ' + e.message);
+    }
+};
+
+async function endSession() {
+    if (!confirm(`End session "${activeSession ? (activeSession.name || activeSession.id) : ''}"?`)) return;
+    try {
+        const r = await fetch('/api/sessions/end', {method: 'POST'});
+        if (!r.ok) throw new Error(await readError(r));
+        await refreshPastSessions();
+    } catch (e) {
+        alert('Could not end session: ' + e.message);
+    }
+}
+
 // ---------- recording UI ----------
 
 function renderRecording() {
@@ -431,6 +598,19 @@ async function refreshCaptures() {
     }
 }
 
+function captureIsInActiveSession(c) {
+    if (!activeSession) return true;            // no filter
+    const meta = c.meta;
+    if (!meta) return false;
+    // The active session_id lives in meta.auto.session_id, which the
+    // list_captures summary doesn't expose by default; tags carry a
+    // `session:<id>` tag we seed at recording time -- check both for
+    // robustness.
+    if ((meta.tags || []).some(t => t === 'session:' + activeSession.id)) return true;
+    if (meta.session_id === activeSession.id) return true;       // future-proof
+    return false;
+}
+
 function renderCaptures(list) {
     // Prune selection set down to captures that still exist
     const existing = new Set(list.map(c => c.name));
@@ -443,12 +623,19 @@ function renderCaptures(list) {
         updateSelectionStatus();
         return;
     }
+
+    // When a session is active, dim captures that aren't part of it
+    // rather than hiding them outright (less surprising; the operator
+    // can still see the full history but the "current session" rows
+    // pop visually).
     const rows = list.map(c => {
         const date = new Date(c.mtime * 1000).toLocaleString();
         const kb = (c.size_bytes / 1024).toFixed(1);
         const checked = selectedCaptures.has(c.name) ? 'checked' : '';
         const metaCell = renderCaptureMetaSummary(c.meta);
-        return `<tr data-name="${escapeHtml(c.name)}">
+        const outsideSession = !captureIsInActiveSession(c);
+        const trClass = outsideSession ? ' class="outside-session"' : '';
+        return `<tr${trClass} data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
             <td>${escapeHtml(c.name)}</td>
             <td>${metaCell}</td>
@@ -816,12 +1003,19 @@ function renderInference(inf) {
     // Controls state (button + hand input) regardless of bars
     renderInferenceControls(inf);
 
+    // REC+LIVE badge appears when BOTH a recording is in progress AND
+    // inference is running. This is the "proof of life" signal -- you
+    // can watch the prediction bars track the LASK5 ground-truth bars
+    // in real time while the recording writes the paired rows.
+    const recLiveOn = !!(recordingState && inf && inf.available);
+    const recLiveSpan = (recLiveOn ? ' <span class="rec-live-badge">REC + LIVE</span>' : '');
+
     if (!inf) {
-        inferenceMeta.textContent = 'no model loaded';
+        inferenceMeta.innerHTML = 'no model loaded' + recLiveSpan;
         return;
     }
     if (!inf.available || !Array.isArray(inf.piston_values)) {
-        inferenceMeta.textContent = inf.status || 'no model loaded';
+        inferenceMeta.innerHTML = escapeHtml(inf.status || 'no model loaded') + recLiveSpan;
         inferenceBars.classList.add('dimmed');
         inferenceBars.querySelectorAll('.piston').forEach(p => {
             p.querySelector('.piston-fill').style.height = '0%';
@@ -830,7 +1024,7 @@ function renderInference(inf) {
         return;
     }
     inferenceBars.classList.remove('dimmed');
-    inferenceMeta.textContent = inf.model || 'live';
+    inferenceMeta.innerHTML = escapeHtml(inf.model || 'live') + recLiveSpan;
     const vals = inf.piston_values;
     inferenceBars.querySelectorAll('.piston').forEach(p => {
         const i = parseInt(p.dataset.i, 10);
@@ -1024,12 +1218,14 @@ logClearBtn.onclick = () => {
     renderLogs();
 };
 
-// Refresh captures + models + logs on load and periodically
+// Refresh captures + models + logs + past sessions on load and periodically
 refreshCaptures();
 refreshModels();
 refreshLogs();
+refreshPastSessions();
 setInterval(refreshCaptures, 5000);
 setInterval(refreshModels, 10000);
 setInterval(refreshLogs, 2000);   // logs are the most "real-time" panel
+setInterval(refreshPastSessions, 15000);
 
 connectWS();
