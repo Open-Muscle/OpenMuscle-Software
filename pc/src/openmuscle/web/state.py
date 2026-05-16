@@ -307,6 +307,11 @@ class AppState:
                     if self.hand_target:
                         self._forward_to_hand(pred)
 
+    # Flush JSONL sidecars every N frames to bound crash-loss to ~3 s of
+    # data while keeping syscalls ~50× cheaper than line-buffered writes.
+    # At 33 Hz sensor + 25 Hz label rates, 100 ≈ 3 s.
+    JSONL_FLUSH_EVERY = 100
+
     def _record_packet(self, pkt: OpenMusclePacket):
         """Route a packet to the active capture: sidecars + matcher + paired CSV."""
         rec = self.recording
@@ -318,6 +323,13 @@ class AppState:
             rec.matcher.add_label(pkt)
             rec.label_packets_seen += 1
             self._write_jsonl(rec.label_jsonl, pkt)
+            # Bounded crash-loss flush
+            if (rec.label_packets_seen % self.JSONL_FLUSH_EVERY == 0
+                    and rec.label_jsonl is not None):
+                try:
+                    rec.label_jsonl.flush()
+                except Exception:
+                    pass
             return
 
         # --- Sensor stream: write JSONL sidecar always, paired CSV when matched ---
@@ -330,6 +342,12 @@ class AppState:
 
         rec.sensor_frames_seen += 1
         self._write_jsonl(rec.sensor_jsonl, pkt)
+        if (rec.sensor_frames_seen % self.JSONL_FLUSH_EVERY == 0
+                and rec.sensor_jsonl is not None):
+            try:
+                rec.sensor_jsonl.flush()
+            except Exception:
+                pass
 
         # Try to pair this sensor frame with the closest label in window
         if rec.label_device_id is None:
@@ -631,10 +649,19 @@ class AppState:
             label_count=effective_label_count,
         )
 
-        # Open sidecars line-buffered so a crash mid-recording still leaves
-        # readable JSONL on disk.
-        sensor_stream = open(sensor_sidecar, "w", buffering=1)
-        label_stream = open(label_sidecar, "w", buffering=1) if label_device_id else None
+        # Open sidecars block-buffered (4 KB). Earlier we used buffering=1
+        # (line-buffered) to maximize crash-safety, but at 33 Hz sensor +
+        # 25 Hz label that's ~60 syscalls/sec into the disk -- on Windows
+        # this is the most likely source of per-packet stalls if Defender /
+        # OS journaling hiccups, and a stall here propagates to the WS
+        # snapshot lag and looks like "model is slow." Block buffering
+        # cuts syscalls ~50x at the cost of losing up to ~4 KB of
+        # never-flushed JSONL on a hard crash. We mitigate by flushing
+        # every JSONL_FLUSH_EVERY frames in `_record_packet` (~3 s of
+        # crash-loss budget instead of 0 s). The paired CSV remains the
+        # authoritative training file; JSONL is debug/re-pair only.
+        sensor_stream = open(sensor_sidecar, "w", buffering=4096)
+        label_stream = open(label_sidecar, "w", buffering=4096) if label_device_id else None
 
         matcher = TemporalMatcher(window_s=window_ms / 1000.0)
 
