@@ -57,8 +57,16 @@ const MENU_BTN_GAP       = 0.012;
 const MENU_PAD           = 0.020;
 const MENU_W             = MENU_COLS * MENU_BTN_W + (MENU_COLS - 1) * MENU_BTN_GAP + 2 * MENU_PAD;
 const MENU_H             = MENU_ROWS * MENU_BTN_H + (MENU_ROWS - 1) * MENU_BTN_GAP + 2 * MENU_PAD;
-const MENU_OFFSET_DOWN   = 0.23;    // panel center this far below the heatmap
+const MENU_OFFSET_DOWN   = 0.28;    // panel center this far below the heatmap
 const MENU_TILT_DEG      = 18;      // tilt top of panel toward head so it's readable
+
+// REAL vs PREDICTED finger-curl comparison panel. Sits in the gap between
+// the heatmap bottom and the menu top. Per-finger pair of vertical bars
+// (REAL green, PRED amber) for index/middle/ring/pinky -- the four
+// forearm-driven fingers our model targets. Thumb intentionally omitted.
+const COMPARE_W            = HEATMAP_W;
+const COMPARE_H            = 0.05;
+const COMPARE_OFFSET_DOWN  = 0.14;
 
 const STATUS_ROW_DOWN    = 0.41;    // status strip sits below the menu
 const STATUS_W           = HEATMAP_W;
@@ -129,6 +137,11 @@ let scene, camera, renderer;
 let heatmapMesh, heatmapCanvas, heatmapCtx, heatmapTex;
 let headerCanvas, headerTex, headerMesh;
 let statusMesh, statusCanvas, statusTex;
+let compareMesh, compareCanvas, compareCtx, compareTex;
+// Per-finger max wrist->tip distance ever observed. We use this as the
+// "fully extended" reference so the curl normalization adapts to the
+// user's hand size without needing calibration. Starts conservative.
+const fingerMaxExtended = [0.105, 0.110, 0.105, 0.090];   // index, middle, ring, pinky
 let pinchIndicator;
 let armGroup;                                  // captured-hand joint spheres (blue)
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
@@ -256,6 +269,21 @@ function initScene() {
         controllers.push(ctrl);
         controllerRays.push(line);
     }
+
+    // REAL vs PRED comparison panel. Lives between the heatmap and the menu.
+    // Hidden until inference is running AND a captured hand is being tracked
+    // (otherwise we have nothing to compare). See drawCompare.
+    compareCanvas = document.createElement('canvas');
+    compareCanvas.width = 800; compareCanvas.height = 100;
+    compareCtx = compareCanvas.getContext('2d');
+    compareTex = new THREE.CanvasTexture(compareCanvas);
+    compareTex.colorSpace = THREE.SRGBColorSpace;
+    compareMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(COMPARE_W, COMPARE_H),
+        new THREE.MeshBasicMaterial({ map: compareTex, transparent: true }));
+    compareMesh.visible = false;
+    scene.add(compareMesh);
+    drawCompare(null, null);
 
     // Status strip below the buttons -- canvas-textured plane that shows
     // action feedback ("training...", "trained: R²=0.81", "session started").
@@ -520,6 +548,122 @@ function setStatus(text) {
     drawStatus(text);
 }
 
+// ---------------------------------------------------------------------------
+// Finger curl: derived from wrist <-> finger-tip distance, normalized to a
+// per-user [0..1] curl where 1 = fully curled (tip near wrist), 0 = fully
+// extended. Used both for REAL (computed from XRHand each frame) and PRED
+// (computed from the model's flat predicted-joint vector). Index/middle/
+// ring/pinky only -- the four fingers FlexGrid can actually see.
+// ---------------------------------------------------------------------------
+
+// Indices into the JOINT_NAMES order. Wrist is 0, then 4 thumb joints,
+// then 5 each for index/middle/ring/pinky -- so tips are at 9, 14, 19, 24.
+const TIP_INDICES_FMRP = [9, 14, 19, 24];
+
+function curlFromDistance(dist, fingerIdx) {
+    if (dist > fingerMaxExtended[fingerIdx]) fingerMaxExtended[fingerIdx] = dist;
+    const maxD = fingerMaxExtended[fingerIdx];
+    const minD = maxD * 0.45;   // empirical fully-curled estimate (~45% of extended)
+    const range = maxD - minD;
+    if (range <= 0) return 0;
+    return Math.max(0, Math.min(1, 1 - (dist - minD) / range));
+}
+
+function realCurls(frame, refSpace, hand) {
+    if (!hand) return null;
+    const wp = jointPose(frame, refSpace, hand, 'wrist');
+    if (!wp) return null;
+    const w = wp.transform.position;
+    const out = [];
+    const names = ['index-finger-tip', 'middle-finger-tip',
+                   'ring-finger-tip',  'pinky-finger-tip'];
+    for (let i = 0; i < 4; i++) {
+        const tp = jointPose(frame, refSpace, hand, names[i]);
+        if (!tp) { out.push(null); continue; }
+        const t = tp.transform.position;
+        const d = Math.hypot(t.x - w.x, t.y - w.y, t.z - w.z);
+        out.push(curlFromDistance(d, i));
+    }
+    return out;
+}
+
+function predictedCurls(values) {
+    // The inference engine emits the same flat joint vector format the Quest
+    // sends: 25 joints * 7 floats = 175 numbers. wrist = 0, finger tips at
+    // [9, 14, 19, 24]. Each joint is [px, py, pz, rx, ry, rz, rw] -- we only
+    // need positions for the curl metric.
+    if (!values || values.length < 25 * 7) return null;
+    const wx = values[0], wy = values[1], wz = values[2];
+    const out = [];
+    for (let i = 0; i < 4; i++) {
+        const base = TIP_INDICES_FMRP[i] * 7;
+        const tx = values[base], ty = values[base + 1], tz = values[base + 2];
+        const d = Math.hypot(tx - wx, ty - wy, tz - wz);
+        out.push(curlFromDistance(d, i));
+    }
+    return out;
+}
+
+function drawCompare(real, pred) {
+    const ctx = compareCtx;
+    const W = compareCanvas.width, H = compareCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Plate
+    ctx.fillStyle = 'rgba(20, 24, 32, 0.85)';
+    ctx.fillRect(0, 0, W, H);
+
+    // 4 columns, one per finger
+    const labels = ['INDEX', 'MIDDLE', 'RING', 'PINKY'];
+    const colW = W / 4;
+    const barAreaTop = 26;
+    const barAreaH   = 56;
+
+    for (let i = 0; i < 4; i++) {
+        const cx = i * colW;
+
+        // Column header
+        ctx.fillStyle = '#8b96a8';
+        ctx.font = 'bold 16px system-ui';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(labels[i], cx + colW / 2, 6);
+
+        // Two side-by-side bars (R then P)
+        const barW = (colW - 48) / 2;
+        const xR = cx + 16;
+        const xP = xR + barW + 16;
+
+        // Track backgrounds
+        ctx.fillStyle = '#1f2228';
+        ctx.fillRect(xR, barAreaTop, barW, barAreaH);
+        ctx.fillRect(xP, barAreaTop, barW, barAreaH);
+
+        // Real fill (green)
+        if (real && real[i] != null) {
+            const fh = barAreaH * real[i];
+            ctx.fillStyle = '#34d399';
+            ctx.fillRect(xR, barAreaTop + barAreaH - fh, barW, fh);
+        }
+        // Predicted fill (amber)
+        if (pred && pred[i] != null) {
+            const fh = barAreaH * pred[i];
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillRect(xP, barAreaTop + barAreaH - fh, barW, fh);
+        }
+
+        // Tiny letter under each bar so the colors stay legend-able
+        ctx.font = 'bold 11px system-ui';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = '#34d399';
+        ctx.fillText('R', xR + barW / 2, barAreaTop + barAreaH + 3);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText('P', xP + barW / 2, barAreaTop + barAreaH + 3);
+    }
+
+    compareTex.needsUpdate = true;
+}
+
 function placeAnchors(frame, refSpace) {
     // Use the headset's current pose to place panel + button in front of the
     // user at session start. After this they're world-anchored -- they don't
@@ -541,6 +685,14 @@ function placeAnchors(frame, refSpace) {
     // Header centered above the heatmap
     headerMesh.position.copy(heatPos).add(new THREE.Vector3(0, HEATMAP_H * 0.6, 0));
     headerMesh.lookAt(headPos);
+
+    // REAL vs PRED comparison panel sits between the heatmap and the menu.
+    // Same tilt as the menu so they look like one continuous surface tilted
+    // toward the head.
+    const comparePos = heatPos.clone().add(new THREE.Vector3(0, -COMPARE_OFFSET_DOWN, 0));
+    compareMesh.position.copy(comparePos);
+    compareMesh.lookAt(headPos);
+    compareMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
 
     // Menu panel sits below the heatmap. Tilted slightly toward the head so
     // the buttons are readable + ray-hits feel natural even when the user is
@@ -964,6 +1116,19 @@ function onXRFrame(timestamp, frame) {
         updateHandVisualizer(frame, refSpace, offHand, offHandJointMeshes);
     } else {
         hideHandVisualizer(offHandJointMeshes);
+    }
+
+    // REAL vs PRED comparison: visible only when we have something to compare
+    // (model loaded AND running AND captured hand tracked). The user explicitly
+    // wants to see model error after training, so show it the moment inference
+    // turns on -- not gated on minimum-error or any kind of "ready" signal.
+    const predValues = latestSnapshot?.inference?.piston_values || null;
+    const showCompare = capturedHand && uiState.inferenceEnabled && predValues;
+    compareMesh.visible = !!showCompare;
+    if (showCompare) {
+        const real = realCurls(frame, refSpace, capturedHand);
+        const pred = predictedCurls(predValues);
+        drawCompare(real, pred);
     }
 
     updateRaycast();
