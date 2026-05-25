@@ -9,6 +9,9 @@ Launch via the CLI: `openmuscle web --port 8000`
 # string and falls back to treating the param as a query string field).
 
 import asyncio
+import shutil
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -22,6 +25,48 @@ from openmuscle.web.state import AppState
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
+    """Open `path` in the OS file manager. If `select_file=True` and the
+    platform supports it, highlight the file inside its parent folder
+    rather than just opening the folder. Raises RuntimeError on failure.
+
+    Whitelist-guarded by the caller: this function does NOT verify that
+    `path` is inside captures_dir. That check happens in the route.
+    """
+    if not path.exists():
+        raise RuntimeError(f"Path does not exist: {path}")
+
+    # Explorer / Finder / xdg-open all need *absolute* paths -- they don't
+    # inherit our CWD predictably and a relative path like
+    # "data/raw/merged/foo.csv" silently fails with "location not found".
+    path = path.resolve()
+
+    try:
+        if sys.platform.startswith("win"):
+            if select_file and path.is_file():
+                # explorer /select,"C:\full\path\file.csv" -- highlights file
+                subprocess.Popen(["explorer", f"/select,{path}"])
+            else:
+                # Open the folder itself
+                folder = path if path.is_dir() else path.parent
+                subprocess.Popen(["explorer", str(folder)])
+        elif sys.platform == "darwin":
+            if select_file and path.is_file():
+                subprocess.Popen(["open", "-R", str(path)])
+            else:
+                folder = path if path.is_dir() else path.parent
+                subprocess.Popen(["open", str(folder)])
+        else:
+            # Linux / other -- xdg-open only opens directories cleanly
+            opener = shutil.which("xdg-open") or shutil.which("gio")
+            if opener is None:
+                raise RuntimeError("No file-manager opener found (xdg-open / gio)")
+            folder = path if path.is_dir() else path.parent
+            subprocess.Popen([opener, str(folder)])
+    except Exception as e:
+        raise RuntimeError(f"Failed to open file manager: {e}")
 
 
 def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
@@ -167,6 +212,31 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         if p is None:
             raise HTTPException(status_code=404, detail="Capture not found")
         return FileResponse(p, filename=p.name, media_type="text/csv")
+
+    class RevealBody(BaseModel):
+        # If empty/None -> just open captures_dir. Otherwise must be a
+        # capture name whitelisted by state.capture_path().
+        name: Optional[str] = None
+
+    @app.post("/api/reveal")
+    async def reveal_in_folder(body: RevealBody):
+        """Open the captures folder (and optionally highlight a specific
+        capture) in the OS file manager. Local-only convenience; the server
+        is intended for localhost use."""
+        if body.name:
+            p = state.capture_path(body.name)
+            if p is None:
+                raise HTTPException(status_code=404, detail="Capture not found")
+            target = p
+            select = True
+        else:
+            target = state.captures_dir
+            select = False
+        try:
+            _reveal_path_in_file_manager(target, select_file=select)
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        return {"opened": str(target), "selected": select}
 
     @app.delete("/api/captures/{name}")
     async def delete_capture(name: str):
@@ -357,6 +427,82 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         if not ok:
             raise HTTPException(status_code=404, detail="Session not found")
         return {"deleted": session_id}
+
+    # ----- REST: retroactive session<->capture linking -----
+    #
+    # A capture made *outside* an active session can be added to one
+    # afterwards, and vice versa removed. This is the "I forgot to start a
+    # session before recording" recovery path. We update both:
+    #   1. the session JSON's `captures` list (authoritative)
+    #   2. the capture's meta sidecar (tag `session:<id>` + auto.session_id)
+    # so the captures-panel filter, the past-sessions expansion, and any
+    # future export all agree on which session a capture belongs to.
+
+    class LinkCapturesBody(BaseModel):
+        capture_names: list[str]   # bulk add
+
+    @app.post("/api/sessions/{session_id}/captures")
+    async def add_captures_to_session(session_id: str, body: LinkCapturesBody):
+        s = state.get_session(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        tag = "session:" + session_id
+        added, skipped = [], []
+        for name in body.capture_names:
+            if state.capture_path(name) is None:
+                skipped.append({"name": name, "reason": "capture not found"})
+                continue
+            if name in s.get("captures", []):
+                skipped.append({"name": name, "reason": "already in session"})
+                continue
+            try:
+                state.link_capture_to_session(session_id, name)
+                # Update the capture's meta so the tag-based filter + any
+                # future export sees this capture as part of the session.
+                meta = state.read_capture_meta(name) or {}
+                tags = list(meta.get("tags") or [])
+                if tag not in tags:
+                    tags.append(tag)
+                state.write_capture_meta(name, {
+                    "tags": tags,
+                    "auto": {"session_id": session_id},
+                })
+                added.append(name)
+            except Exception as e:
+                skipped.append({"name": name, "reason": str(e)})
+
+        return {
+            "added": added,
+            "skipped": skipped,
+            "session": state.get_session(session_id),
+        }
+
+    @app.delete("/api/sessions/{session_id}/captures/{capture_name}")
+    async def remove_capture_from_session(session_id: str, capture_name: str):
+        s = state.get_session(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if capture_name not in s.get("captures", []):
+            raise HTTPException(status_code=404, detail="Capture not in session")
+        try:
+            state.unlink_capture_from_session(session_id, capture_name)
+            # Strip the session tag + clear auto.session_id, but ONLY for this
+            # session (leave any other 'session:xxx' tags alone -- though by
+            # the data model a capture should only ever belong to one session).
+            tag = "session:" + session_id
+            meta = state.read_capture_meta(capture_name) or {}
+            new_tags = [t for t in (meta.get("tags") or []) if t != tag]
+            state.write_capture_meta(capture_name, {
+                "tags": new_tags,
+                "auto": {"session_id": None},
+            })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "removed": capture_name,
+            "session": state.get_session(session_id),
+        }
 
     return app
 
