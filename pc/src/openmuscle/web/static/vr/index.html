@@ -42,6 +42,9 @@
         <p>If "Enter VR" stays disabled, the headset can't see WebXR on this URL. Check that you opened it in Quest Browser (not the Library / Phone-mirror window), and that the URL is HTTPS or http://localhost (via <code>adb reverse tcp:8000 tcp:8000</code>).</p>
     </footer>
 </div>
-<script type="module" src="/static/vr/app.js"></script>
+<!-- The ?v=N querystring is a cache-buster for Quest Browser, which can be
+     aggressive about caching ES modules even with no-cache response headers.
+     Bump N each time app.js changes. -->
+<script type="module" src="/static/vr/app.js?v=2"></script>
 </body>
 </html>

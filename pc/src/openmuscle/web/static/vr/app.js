@@ -40,20 +40,34 @@ const JOINT_NAMES = [
 const params = new URLSearchParams(location.search);
 const ARM = params.get('arm') === 'left' ? 'left' : 'right';   // FlexGrid-arm side
 const PINCH_THRESHOLD_M  = 0.025;   // 2.5 cm index-tip <-> thumb-tip
-const PINCH_HOLD_MS      = 1000;    // hold this long to toggle recording
-const BUTTON_TOUCH_M     = 0.04;    // 4 cm finger-tip proximity = "pressing"
+const PINCH_HOLD_MS      = 1000;    // hold this long to toggle recording (captured arm)
 const HEATMAP_FORWARD_M  = 0.70;    // panel placed 70cm in front at session start
 const HEATMAP_W          = 0.40;    // 40cm panel matches FlexGrid 15:4 aspect
 const HEATMAP_H          = 0.12;
-const BUTTON_RADIUS_M    = 0.04;
-const BUTTON_ROW_DOWN    = 0.20;    // button row sits 20cm below the heatmap center
-const BUTTON_SPACING_M   = 0.13;    // horizontal spacing between buttons
-const STATUS_ROW_DOWN    = 0.34;    // status strip sits 34cm below the heatmap
+
+// Menu panel sits below the heatmap. Flat plane with rectangular buttons,
+// hit-tested by raycast from the off-hand's pointing direction.
+const MENU_W             = 0.46;
+const MENU_H             = 0.20;
+const MENU_OFFSET_DOWN   = 0.23;    // panel center this far below the heatmap
+const MENU_TILT_DEG      = 18;      // tilt top of panel toward head so it's readable
+const MENU_BTN_W         = 0.20;
+const MENU_BTN_H         = 0.075;
+const MENU_BTN_GAP       = 0.012;
+
+const STATUS_ROW_DOWN    = 0.41;    // status strip sits below the menu
 const STATUS_W           = HEATMAP_W;
 const STATUS_H           = 0.045;
 const STATUS_FADE_MS     = 6000;    // status text fully fades after 6s of no update
+
 const REPORT_HZ          = 30;      // throttle /ws/quest sends (~30Hz is plenty)
-const BUTTON_COOLDOWN_MS = 800;     // min gap between two activations of the same button
+const BUTTON_COOLDOWN_MS = 600;     // min gap between two select-presses on a button
+
+// Ray pointer: thin line forward from each XR controller, shortened to the
+// hit point when it crosses a menu button. Standard WebXR pattern.
+const RAY_DEFAULT_LEN_M  = 3.0;
+const RAY_COLOR_IDLE     = 0x60a5fa;
+const RAY_COLOR_HOVER    = 0xfbbf24;
 
 // ---------------------------------------------------------------------------
 // Landing-page checks (run before VR session starts)
@@ -115,12 +129,20 @@ let armGroup;                                  // holds joint visualizer spheres
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
 let placed = false;                            // anchors set on first XRFrame
 
-// Three labeled buttons in a row: REC / TRAIN / SESSION. Each entry holds
-// its mesh group, material refs for color updates, hover state (to debounce
-// touch-enter from touch-stay), and an `onActivate` callback.
-const buttons = {};   // name -> { group, base, label, labelCanvas, labelCtx, labelTex,
-                      //            hover, lastActivateAt, isActive: () => bool,
-                      //            onActivate: () => void, color: int }
+// Menu panel + buttons. Each button is a rectangular Mesh (PlaneGeometry +
+// canvas texture) parented to menuPanel so they move together. Hit-tested
+// by raycast from the off-hand controller; activated by the pinch
+// (XRInputSource "select") event on the same hand.
+let menuPanel;
+const buttons = {};   // name -> { mesh, canvas, ctx, tex, label, isActive(),
+                      //            onActivate(), lastActivateAt }
+
+// One Three.js Object3D per XR controller (positioned by WebXR each frame).
+// We attach a thin line to each so the user sees where their hand is pointing.
+const controllers = [];          // controllers[i].userData.handedness = "left"|"right"
+const controllerRays = [];       // line meshes parallel to controllers[]
+const raycaster = new THREE.Raycaster();
+let hoveredButton = null;        // whichever button the off-hand ray is currently over
 
 // Server-derived state (mirrored into button visuals each frame from /ws/live)
 const uiState = {
@@ -181,19 +203,44 @@ function initScene() {
     scene.add(headerMesh);
     drawHeader('connecting…', false);
 
-    // Button row: REC / TRAIN / SESSION. Each button is a small sphere with
-    // a text-labeled plane just above it. Activation = off-hand index-tip
-    // proximity (BUTTON_TOUCH_M). The pinch-to-record gesture remains as a
-    // hands-free alternative for REC only.
-    createButton('REC',
-                 () => uiState.recording,
-                 toggleRecording);
-    createButton('TRAIN',
-                 () => uiState.training,
-                 runTrain);
-    createButton('SESSION',
-                 () => uiState.sessionActive,
-                 toggleSession);
+    // Menu panel + 2x2 grid of rectangular buttons. Hit-tested by raycast
+    // from the off-hand controller; activated by pinch (XRInputSource
+    // "select" event). Pinch-to-record on the captured arm still works
+    // independently (handled in detectPinchAndToggle).
+    createMenuPanel();
+    createMenuButton('REC',     'REC',     () => uiState.recording,     toggleRecording, 0, 0);
+    createMenuButton('SESSION', 'SESSION', () => uiState.sessionActive, toggleSession,   0, 1);
+    createMenuButton('TRAIN',   'TRAIN',   () => uiState.training,      runTrain,        1, 0);
+    createMenuButton('EXIT',    'EXIT VR', () => false,                 exitVR,          1, 1);
+
+    // Controller objects (one per hand). renderer.xr.getController(i) returns
+    // a Three.js Object3D whose transform is updated each frame by the XR
+    // system to match the corresponding XRInputSource's targetRaySpace.
+    // We attach a line to visualize the ray and listen for select (pinch).
+    for (let i = 0; i < 2; i++) {
+        const ctrl = renderer.xr.getController(i);
+        scene.add(ctrl);
+        ctrl.userData.handedness = null;
+        ctrl.addEventListener('connected', (event) => {
+            ctrl.userData.handedness = event.data?.handedness || null;
+        });
+        ctrl.addEventListener('disconnected', () => {
+            ctrl.userData.handedness = null;
+        });
+        ctrl.addEventListener('selectstart', () => onControllerSelect(ctrl));
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(0, 0, -1),
+        ]);
+        const lineMat = new THREE.LineBasicMaterial({
+            color: RAY_COLOR_IDLE, transparent: true, opacity: 0.75,
+        });
+        const line = new THREE.Line(lineGeo, lineMat);
+        line.scale.z = RAY_DEFAULT_LEN_M;
+        ctrl.add(line);
+        controllers.push(ctrl);
+        controllerRays.push(line);
+    }
 
     // Status strip below the buttons -- canvas-textured plane that shows
     // action feedback ("training...", "trained: R²=0.81", "session started").
@@ -236,55 +283,141 @@ function initScene() {
     });
 }
 
-function createButton(name, isActive, onActivate) {
-    // Body: small sphere. Color updated each frame from button state.
-    const baseMat = new THREE.MeshStandardMaterial({
-        color: 0x4d5566, metalness: 0.2, roughness: 0.6,
-        emissive: 0x000000, emissiveIntensity: 0.0,
-    });
-    const base = new THREE.Mesh(
-        new THREE.SphereGeometry(BUTTON_RADIUS_M, 24, 16), baseMat);
-
-    // Label: text on a canvas, projected onto a small plane just above the
-    // body. Kept billboard-style (lookAt camera each frame in updateButtonVisual)
-    // so the text is always readable from the user's POV.
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = 256; labelCanvas.height = 96;
-    const labelCtx = labelCanvas.getContext('2d');
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    labelTex.colorSpace = THREE.SRGBColorSpace;
-    const label = new THREE.Mesh(
-        new THREE.PlaneGeometry(BUTTON_RADIUS_M * 2.6, BUTTON_RADIUS_M * 1.0),
-        new THREE.MeshBasicMaterial({ map: labelTex, transparent: true,
-                                       depthWrite: false }));
-    label.position.set(0, BUTTON_RADIUS_M * 1.6, 0);
-
-    const group = new THREE.Group();
-    group.add(base);
-    group.add(label);
-    scene.add(group);
-
-    buttons[name] = {
-        group, base, baseMat, label, labelCanvas, labelCtx, labelTex,
-        name, hover: false, lastActivateAt: 0,
-        isActive, onActivate,
-    };
-    drawButtonLabel(buttons[name], name, false);
+function createMenuPanel() {
+    menuPanel = new THREE.Group();
+    // Translucent dark plate behind the buttons so the menu reads as one
+    // surface rather than four floating tiles.
+    const plate = new THREE.Mesh(
+        new THREE.PlaneGeometry(MENU_W, MENU_H),
+        new THREE.MeshBasicMaterial({
+            color: 0x0d1117, transparent: true, opacity: 0.55,
+            side: THREE.DoubleSide,
+        }));
+    plate.position.z = -0.001;   // sit just behind the buttons (which are at z=0)
+    menuPanel.add(plate);
+    scene.add(menuPanel);
 }
 
-function drawButtonLabel(btn, text, isActive) {
-    const ctx = btn.labelCtx;
-    const W = btn.labelCanvas.width, H = btn.labelCanvas.height;
+function createMenuButton(name, label, isActive, onActivate, row, col) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 384; canvas.height = 144;
+    const ctx = canvas.getContext('2d');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(MENU_BTN_W, MENU_BTN_H), mat);
+    // 2x2 grid centered on the panel
+    const cols = 2, rows = 2;
+    const xOffset = (col - (cols - 1) / 2) * (MENU_BTN_W + MENU_BTN_GAP);
+    const yOffset = -(row - (rows - 1) / 2) * (MENU_BTN_H + MENU_BTN_GAP);
+    mesh.position.set(xOffset, yOffset, 0);
+    mesh.userData.buttonName = name;  // raycaster will look this up
+    menuPanel.add(mesh);
+    buttons[name] = {
+        name, label, mesh, canvas, ctx, tex, mat,
+        isActive, onActivate, lastActivateAt: 0,
+    };
+    drawMenuButton(buttons[name], false);
+}
+
+function drawMenuButton(btn, hovered) {
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = isActive ? 'rgba(239, 68, 68, 0.85)'
-                              : 'rgba(20, 24, 32, 0.75)';
-    ctx.fillRect(0, 0, W, H);
+    const active = !!btn.isActive();
+
+    // Rounded-rect background. Color signals state: red=active, blue=hovered,
+    // gray=idle. Hover overrides idle but not active (active state matters more
+    // for "is recording right now" type questions).
+    let bg;
+    if (active)       bg = '#ef4444';
+    else if (hovered) bg = '#1f6feb';
+    else              bg = '#2a3142';
+    ctx.fillStyle = bg;
+    const r = 24;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(W - r, 0); ctx.arcTo(W, 0, W, r, r);
+    ctx.lineTo(W, H - r); ctx.arcTo(W, H, W - r, H, r);
+    ctx.lineTo(r, H);     ctx.arcTo(0, H, 0, H - r, r);
+    ctx.lineTo(0, r);     ctx.arcTo(0, 0, r, 0, r);
+    ctx.closePath();
+    ctx.fill();
+
+    // Label: REC <-> STOP swap so the button tells you what tapping it does next
+    const labelText = (btn.name === 'REC' && active) ? 'STOP' : btn.label;
     ctx.fillStyle = '#f0f4f8';
-    ctx.font = 'bold 48px system-ui';
+    ctx.font = 'bold 72px system-ui';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, W / 2, H / 2);
-    btn.labelTex.needsUpdate = true;
+    ctx.fillText(labelText, W / 2, H / 2);
+
+    btn.tex.needsUpdate = true;
+}
+
+function exitVR() {
+    const session = renderer.xr.getSession();
+    if (session) session.end();
+}
+
+// Pinch on a controller -> activate whichever button the ray is currently over,
+// IF that controller is the off-hand. The captured-arm pinch is handled by
+// detectPinchAndToggle (1-second hold required for record toggle) so we
+// don't double-fire here.
+function onControllerSelect(ctrl) {
+    const handedness = ctrl.userData?.handedness;
+    if (handedness === ARM) return;       // captured arm: handled elsewhere
+    if (!hoveredButton) return;
+    const now = performance.now();
+    if (now - hoveredButton.lastActivateAt < BUTTON_COOLDOWN_MS) return;
+    hoveredButton.lastActivateAt = now;
+    try { hoveredButton.onActivate(); }
+    catch (e) { console.error(`button ${hoveredButton.name} failed:`, e); }
+}
+
+// Per-frame: raycast each controller against the menu buttons, highlight the
+// hovered one, shorten the visible ray to the hit point. Only the off-hand's
+// ray is visible -- the captured arm's ray would clutter the view and risk
+// hovering buttons while you're trying to perform a gesture.
+const _tmpMat = new THREE.Matrix4();
+function updateRaycast() {
+    hoveredButton = null;
+    const buttonMeshes = Object.values(buttons).map(b => b.mesh);
+
+    for (let i = 0; i < controllers.length; i++) {
+        const ctrl = controllers[i];
+        const line = controllerRays[i];
+        const handedness = ctrl.userData?.handedness;
+        // Hide the captured-arm's ray + skip its raycast
+        if (!handedness || handedness === ARM) {
+            line.visible = false;
+            continue;
+        }
+        line.visible = true;
+
+        _tmpMat.identity().extractRotation(ctrl.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_tmpMat);
+
+        const hits = raycaster.intersectObjects(buttonMeshes, false);
+        if (hits.length > 0) {
+            const hit = hits[0];
+            const name = hit.object.userData.buttonName;
+            const btn = buttons[name];
+            if (btn) {
+                hoveredButton = btn;
+                line.scale.z = hit.distance;
+                line.material.color.setHex(RAY_COLOR_HOVER);
+                continue;
+            }
+        }
+        // No hit: restore default-length idle-colored ray
+        line.scale.z = RAY_DEFAULT_LEN_M;
+        line.material.color.setHex(RAY_COLOR_IDLE);
+    }
 }
 
 function drawStatus(text) {
@@ -341,27 +474,19 @@ function placeAnchors(frame, refSpace) {
     headerMesh.position.copy(heatPos).add(new THREE.Vector3(0, HEATMAP_H * 0.6, 0));
     headerMesh.lookAt(headPos);
 
-    // Button row sits below the heatmap. We lay the three buttons out along
-    // the panel's local-right axis (perpendicular to head-forward + world up)
-    // so they stay parallel to the heatmap even if the user wasn't looking
-    // straight down +Z at session start.
-    const worldUp = new THREE.Vector3(0, 1, 0);
-    const panelRight = new THREE.Vector3().crossVectors(worldUp, headFwd).normalize();
-    const rowCenter = heatPos.clone().add(new THREE.Vector3(0, -BUTTON_ROW_DOWN, 0));
-    const order = ['REC', 'TRAIN', 'SESSION'];
-    for (let i = 0; i < order.length; i++) {
-        const offset = (i - (order.length - 1) / 2) * BUTTON_SPACING_M;
-        const pos = rowCenter.clone().addScaledVector(panelRight, offset);
-        const btn = buttons[order[i]];
-        if (!btn) continue;
-        btn.group.position.copy(pos);
-        // Label plane faces the user (lookAt updated per-frame in
-        // updateButtonVisual so it stays readable as the user moves)
-    }
+    // Menu panel sits below the heatmap. Tilted slightly toward the head so
+    // the buttons are readable + ray-hits feel natural even when the user is
+    // looking down at it. The lookAt aims the +Z axis at the head; then a
+    // small extra X-axis rotation tilts the top edge toward the user.
+    const menuPos = heatPos.clone().add(new THREE.Vector3(0, -MENU_OFFSET_DOWN, 0));
+    menuPanel.position.copy(menuPos);
+    menuPanel.lookAt(headPos);
+    menuPanel.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
 
-    // Status strip below the buttons
+    // Status strip below the menu (also tilted to match for readability)
     statusMesh.position.copy(heatPos).add(new THREE.Vector3(0, -STATUS_ROW_DOWN, 0));
     statusMesh.lookAt(headPos);
+    statusMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
 
     placed = true;
 }
@@ -478,74 +603,11 @@ function detectPinchAndToggle(frame, refSpace, hand, timestampMs) {
     }
 }
 
-function checkButtonTouchByOffHand(frame, refSpace, session, timestampMs) {
-    // The OFF hand (not the captured one) is what taps the buttons. Pressing
-    // a button with the captured hand would smear the gesture you're trying
-    // to record. We iterate every off-hand input source -- on Quest 3S there's
-    // only one of each handedness so it's effectively a single check.
-    const offHands = [];
-    for (const input of session.inputSources) {
-        if (input.hand && input.handedness !== ARM) offHands.push(input.hand);
-    }
-    if (offHands.length === 0) {
-        // Tracking lost on the off-hand: reset all hovers so a re-touch
-        // re-triggers cleanly rather than being eaten by stale hover state.
-        for (const btn of Object.values(buttons)) btn.hover = false;
-        return;
-    }
-
-    for (const btn of Object.values(buttons)) {
-        let nearest = Infinity;
-        for (const hand of offHands) {
-            const tip = jointPose(frame, refSpace, hand, 'index-finger-tip');
-            if (!tip) continue;
-            const dx = tip.transform.position.x - btn.group.position.x;
-            const dy = tip.transform.position.y - btn.group.position.y;
-            const dz = tip.transform.position.z - btn.group.position.z;
-            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (d < nearest) nearest = d;
-        }
-        const insideR = BUTTON_RADIUS_M + BUTTON_TOUCH_M;
-        const releaseR = insideR + 0.02;
-        if (nearest < insideR && !btn.hover
-                && timestampMs - btn.lastActivateAt > BUTTON_COOLDOWN_MS) {
-            btn.lastActivateAt = timestampMs;
-            btn.hover = true;
-            try { btn.onActivate(); }
-            catch (e) { console.error(`button ${btn.name} activate failed:`, e); }
-        } else if (nearest > releaseR) {
-            btn.hover = false;
-        }
-    }
-}
-
 function updateButtonVisual() {
-    // Idle vs active colors per button. Active = the underlying state the
-    // button represents is "on" (e.g. recording in progress for REC, session
-    // open for SESSION, training in flight for TRAIN).
-    const head = renderer.xr.getCamera ? renderer.xr.getCamera() : camera;
+    // Repaint each button's canvas reflecting (a) the latest state and (b)
+    // whether it's currently the hovered target of the off-hand ray.
     for (const btn of Object.values(buttons)) {
-        const active = !!btn.isActive();
-        if (active) {
-            btn.baseMat.color.setHex(0xef4444);
-            btn.baseMat.emissive.setHex(0xef4444);
-            btn.baseMat.emissiveIntensity = 0.55;
-        } else if (btn.hover) {
-            btn.baseMat.color.setHex(0x7a8499);
-            btn.baseMat.emissive.setHex(0x1f6feb);
-            btn.baseMat.emissiveIntensity = 0.25;
-        } else {
-            btn.baseMat.color.setHex(0x4d5566);
-            btn.baseMat.emissive.setHex(0x000000);
-            btn.baseMat.emissiveIntensity = 0.0;
-        }
-        // Label text changes for REC (REC <-> STOP) so the user knows
-        // what tapping it again will do. TRAIN and SESSION keep their
-        // label but the body color signals state.
-        const labelText = (btn.name === 'REC' && active) ? 'STOP' : btn.name;
-        drawButtonLabel(btn, labelText, active);
-        // Billboard the label toward the user's head so it's readable.
-        btn.label.lookAt(head.position);
+        drawMenuButton(btn, btn === hoveredButton);
     }
 }
 
@@ -803,7 +865,7 @@ function onXRFrame(timestamp, frame) {
         pinchIndicator.visible = false;
     }
 
-    checkButtonTouchByOffHand(frame, refSpace, session, timestamp);
+    updateRaycast();
     updateButtonVisual();
     updateFromSnapshot(latestSnapshot, timestamp);
 
