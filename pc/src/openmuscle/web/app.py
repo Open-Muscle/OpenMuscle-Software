@@ -553,8 +553,16 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
 def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           captures_dir: Optional[str] = None,
           model_path: Optional[str] = None,
-          hand_target: Optional[tuple] = None):
-    """Run the web UI server (blocks)."""
+          hand_target: Optional[tuple] = None,
+          ssl_certfile: Optional[str] = None,
+          ssl_keyfile: Optional[str] = None):
+    """Run the web UI server (blocks).
+
+    Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
+    WebXR /vr page since Quest Browser refuses hand-tracking on plain
+    HTTP. Generate certs locally with mkcert and install the root CA
+    on the headset (see README).
+    """
     import uvicorn
     app = create_app(
         udp_port=udp_port,
@@ -562,4 +570,5 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         model_path=model_path,
         hand_target=hand_target,
     )
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info",
+                ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)

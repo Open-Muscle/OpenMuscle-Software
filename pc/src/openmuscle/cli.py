@@ -43,11 +43,25 @@ def receive(port, save_dir):
                    "10.0.0.55:3145). When set together with --model, inference "
                    "outputs are forwarded over UDP as 'PC,a1,a2,a3,a4,a5'. "
                    "Default port if omitted: 3145.")
-def web(host, port, udp_port, captures_dir, model_path, hand):
+@click.option("--ssl-certfile", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="Path to TLS cert (PEM). Required for WebXR over LAN -- Quest "
+                   "Browser refuses hand-tracking on plain HTTP. Generate with "
+                   "`mkcert <host-ip> <hostname>` and install the mkcert root CA "
+                   "on the headset (Settings -> Security -> Install a certificate).")
+@click.option("--ssl-keyfile", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="Path to TLS private key (PEM). Pair with --ssl-certfile.")
+def web(host, port, udp_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
-    click.echo(f"OpenMuscle web UI: http://{host if host != '0.0.0.0' else 'localhost'}:{port}")
+    # mkcert produces a cert AND key; we need both or neither.
+    if bool(ssl_certfile) != bool(ssl_keyfile):
+        raise click.BadParameter("--ssl-certfile and --ssl-keyfile must be used together")
+    scheme = "https" if ssl_certfile else "http"
+    click.echo(f"OpenMuscle web UI: {scheme}://{host if host != '0.0.0.0' else 'localhost'}:{port}")
     click.echo(f"Listening for devices on UDP {udp_port}")
+    if ssl_certfile:
+        click.echo(f"TLS: cert={ssl_certfile}  key={ssl_keyfile}")
+        click.echo(f"WebXR URL for the Quest: {scheme}://<your-LAN-ip>:{port}/vr")
     if model_path:
         click.echo(f"Inference model: {model_path}")
     hand_target = None
@@ -62,7 +76,8 @@ def web(host, port, udp_port, captures_dir, model_path, hand):
             hand_target = (hand, 3145)
         click.echo(f"Forwarding inference to robot hand at {hand_target[0]}:{hand_target[1]}")
     serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
-          model_path=model_path, hand_target=hand_target)
+          model_path=model_path, hand_target=hand_target,
+          ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
 
 
 @main.command()
