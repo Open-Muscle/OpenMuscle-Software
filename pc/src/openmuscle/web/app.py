@@ -114,6 +114,14 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def index():
         return FileResponse(STATIC_DIR / "index.html")
 
+    # WebXR companion page served at /vr. Quest Browser loads this URL,
+    # negotiates 'hand-tracking', opens /ws/quest, and streams XRHand frames.
+    # WebXR requires a secure context -- HTTPS over LAN (mkcert) or
+    # http://localhost via `adb reverse tcp:8000 tcp:8000` over USB.
+    @app.get("/vr")
+    async def vr_page():
+        return FileResponse(STATIC_DIR / "vr" / "index.html")
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # ----- live data over WebSocket -----
@@ -183,7 +191,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         sensor_device_id: Optional[str] = None
         label_device_id: Optional[str] = None
         filename: Optional[str] = None
-        window_ms: int = 100
+        # If None, AppState picks per-device-type (lask5=100, quest_hand=175).
+        window_ms: Optional[int] = None
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):

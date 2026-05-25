@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenMuscle VR — placeholder</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #111; color: #ddd;
+               margin: 0; display: flex; align-items: center; justify-content: center;
+               min-height: 100vh; }
+        main { max-width: 540px; padding: 32px; }
+        h1 { color: #fff; margin-top: 0; }
+        code { background: #222; padding: 2px 6px; border-radius: 3px; color: #fc6; }
+        .pill { display: inline-block; background: #2a4; color: #042;
+                padding: 2px 8px; border-radius: 10px; font-size: 12px;
+                font-weight: 600; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>OpenMuscle VR <span class="pill">scaffold</span></h1>
+    <p>The server side is wired. WebXR client lands next.</p>
+    <p>Endpoints already live:</p>
+    <ul>
+        <li><code>GET /vr</code> &mdash; this page</li>
+        <li><code>WS /ws/quest</code> &mdash; inbound XRHand frames</li>
+        <li><code>WS /ws/live</code> &mdash; outbound device snapshots (heatmap)</li>
+    </ul>
+    <p>When ready: open this URL in Quest Browser over HTTPS (or via <code>adb reverse tcp:8000 tcp:8000</code> for a localhost fallback), tap <em>Enter VR</em>, grant hand-tracking, point your hand at the camera.</p>
+</main>
+</body>
+</html>

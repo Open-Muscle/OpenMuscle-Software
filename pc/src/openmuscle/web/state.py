@@ -146,6 +146,13 @@ class ActiveCapture:
     matcher: TemporalMatcher
     sensor_jsonl: Optional[IO] = None
     label_jsonl: Optional[IO] = None
+    # Path for a per-capture labels-schema sidecar. Written on the first
+    # label packet (lazy, like the CSV header) so the schema reflects
+    # whatever the device actually sent rather than what we expected.
+    # Only populated for label sources whose label width / structure is
+    # not derivable from device_type alone -- e.g. quest_hand.
+    labels_schema_path: Optional[Path] = None
+    labels_schema_written: bool = False
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -392,6 +399,12 @@ class AppState:
             rec.matcher.add_label(pkt)
             rec.label_packets_seen += 1
             self._write_jsonl(rec.label_jsonl, pkt)
+            # Lazy: emit the labels-schema sidecar on the first label packet
+            # for label sources whose column layout is opaque from device_type
+            # alone. v1: quest_hand only. The sidecar gives consumers a map
+            # from the CSV's label_0..label_N columns back to (joint, channel).
+            if rec.labels_schema_path is not None and not rec.labels_schema_written:
+                self._write_labels_schema(rec, pkt)
             # Bounded crash-loss flush
             if (rec.label_packets_seen % self.JSONL_FLUSH_EVERY == 0
                     and rec.label_jsonl is not None):
@@ -437,6 +450,53 @@ class AppState:
         cols = len(mat)
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
         rec.writer.write_row(pkt.receive_time, flat, label_values)
+
+    def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
+        """Emit the per-capture labels-schema sidecar.
+
+        Maps the CSV's label_0..label_N columns back to the underlying
+        (joint, channel) coordinates for a quest_hand recording. Without
+        this a wide-label CSV is opaque -- you'd have to know the joint
+        ordering by convention. With it, any consumer can deserialize
+        label columns into named joint poses.
+        """
+        if rec.labels_schema_path is None:
+            return
+        joint_names = list(pkt.data.get("joint_names") or [])
+        handedness = pkt.data.get("handedness") or "unknown"
+        ordering = ["px", "py", "pz", "rx", "ry", "rz", "rw"]
+        n_floats = len(ordering)
+        # Build the explicit column->(joint, channel) map so consumers
+        # don't have to re-derive it from joint order.
+        columns = []
+        for ji, jn in enumerate(joint_names):
+            for ci, ch in enumerate(ordering):
+                columns.append({
+                    "name": f"label_{ji * n_floats + ci}",
+                    "joint": jn,
+                    "channel": ch,
+                })
+        schema = {
+            "label_source": "quest_hand",
+            "handedness": handedness,
+            "ordering": ordering,
+            "floats_per_joint": n_floats,
+            "n_joints": len(joint_names),
+            "n_label_columns": len(joint_names) * n_floats,
+            "joint_names": joint_names,
+            "columns": columns,
+        }
+        try:
+            with open(rec.labels_schema_path, "w") as f:
+                json.dump(schema, f, indent=2)
+            rec.labels_schema_written = True
+            self.log_buffer.info(
+                "recording",
+                f"labels-schema written: {rec.labels_schema_path.name} "
+                f"({len(joint_names)} joints, {len(columns)} columns)")
+        except OSError as e:
+            self.log_buffer.warn(
+                "recording", f"labels-schema write failed: {e}")
 
     @staticmethod
     def _write_jsonl(stream: Optional[IO], pkt: OpenMusclePacket):
@@ -676,18 +736,34 @@ class AppState:
                 return d.device_id
         return None
 
+    # Order in which auto-pick prefers label-producing device types when
+    # the operator doesn't pick one explicitly. Quest first because it's
+    # the richer ground-truth source -- if both are connected during a
+    # comparison session, we want the wider label vector by default.
+    AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5")
+
     def _auto_pick_label(self) -> Optional[str]:
-        """First connected label-producing device (LASK5), if any."""
-        for d in self.devices.values():
-            if d.device_type == "lask5":
-                return d.device_id
+        """First connected label-producing device, by type preference."""
+        for preferred_type in self.AUTO_LABEL_TYPE_PREFERENCE:
+            for d in self.devices.values():
+                if d.device_type == preferred_type:
+                    return d.device_id
         return None
+
+    # Default match windows per label-device family. Quest WebXR has higher
+    # end-to-end latency than LASK5's ESP-NOW path (browser -> WS -> server),
+    # so a tighter window would reject too many sensor frames as unpaired.
+    DEFAULT_WINDOW_MS_BY_TYPE = {
+        "lask5": 100,
+        "quest_hand": 175,
+    }
+    DEFAULT_WINDOW_MS_FALLBACK = 100
 
     def start_recording(self,
                         sensor_device_id: Optional[str] = None,
                         label_device_id: Optional[str] = None,
                         filename: Optional[str] = None,
-                        window_ms: int = 100,
+                        window_ms: Optional[int] = None,
                         label_count: int = 4) -> ActiveCapture:
         """Start a paired recording.
 
@@ -700,9 +776,13 @@ class AppState:
                               record sensor frames only (the paired CSV will
                               have no label columns).
             filename: CSV name. JSONL sidecars derived from it.
-            window_ms: temporal match window in milliseconds (default 100).
+            window_ms: temporal match window in milliseconds. If None, picked
+                       per-device-type from DEFAULT_WINDOW_MS_BY_TYPE
+                       (lask5=100, quest_hand=175, else 100).
             label_count: how many label_* columns to write per row (default 4
-                         for the standard LASK5 piston count).
+                         for the standard LASK5 piston count). Ignored when
+                         the label device is quest_hand -- in that case the
+                         writer infers from the first packet's values length.
         """
         if self.recording is not None:
             raise RuntimeError("Already recording -- stop the current capture first")
@@ -738,8 +818,16 @@ class AppState:
         # 182 per hand). Rather than hardcode it, pass None so CaptureWriter
         # derives the column count from the first label packet.
         label_dev_for_width = self.devices.get(label_device_id) if label_device_id else None
-        if label_dev_for_width and label_dev_for_width.device_type == "quest_hand":
+        label_device_type = label_dev_for_width.device_type if label_dev_for_width else None
+        if label_device_type == "quest_hand":
             effective_label_count = None
+
+        # Pick the match window: explicit arg wins; otherwise per-device-type
+        # default (Quest needs a wider window than LASK5 because WebXR
+        # latency is higher than ESP-NOW).
+        if window_ms is None:
+            window_ms = self.DEFAULT_WINDOW_MS_BY_TYPE.get(
+                label_device_type or "", self.DEFAULT_WINDOW_MS_FALLBACK)
 
         # Build paths
         name = filename or f"capture_{int(time.time())}.csv"
@@ -750,6 +838,12 @@ class AppState:
         stem = csv_path.with_suffix("")           # data/raw/merged/foo (no .csv)
         sensor_sidecar = stem.with_suffix(".sensor.jsonl")
         label_sidecar  = stem.with_suffix(".label.jsonl")
+        # Labels-schema sidecar is only written for label sources whose
+        # column meaning isn't obvious from device_type alone -- v1: Quest.
+        labels_schema_sidecar: Optional[Path] = (
+            Path(str(stem) + ".labels.schema.json")
+            if label_device_type == "quest_hand" else None
+        )
 
         writer = CaptureWriter(
             output_path=str(csv_path),
@@ -786,6 +880,7 @@ class AppState:
             matcher=matcher,
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
+            labels_schema_path=labels_schema_sidecar,
         )
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(
@@ -801,6 +896,7 @@ class AppState:
         auto = {
             "sensor_device_id": sensor_device_id,
             "label_device_id": label_device_id,
+            "label_source": label_device_type,   # "lask5" | "quest_hand" | None
             "window_ms": window_ms,
             "sensor_shape": [sensor_dev.rows, sensor_dev.cols],
             "started_at": self.recording.started_at,
@@ -872,6 +968,9 @@ class AppState:
             "sidecars": {
                 "sensor": str(rec.path.with_suffix("")) + ".sensor.jsonl",
                 "label": (str(rec.path.with_suffix("")) + ".label.jsonl") if rec.label_jsonl else None,
+                "labels_schema": (str(rec.labels_schema_path)
+                                  if (rec.labels_schema_path and rec.labels_schema_written)
+                                  else None),
             },
         }
         self.recording = None
@@ -928,7 +1027,7 @@ class AppState:
         p.unlink()
         # Also delete sidecars if present
         stem = p.with_suffix("")
-        for suffix in (".sensor.jsonl", ".label.jsonl", ".meta.json"):
+        for suffix in (".sensor.jsonl", ".label.jsonl", ".meta.json", ".labels.schema.json"):
             sidecar = Path(str(stem) + suffix)
             if sidecar.exists():
                 try:
