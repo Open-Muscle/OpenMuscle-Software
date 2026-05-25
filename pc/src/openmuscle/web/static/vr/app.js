@@ -77,10 +77,15 @@ const REPORT_HZ          = 30;      // throttle /ws/quest sends (~30Hz is plenty
 const BUTTON_COOLDOWN_MS = 600;     // min gap between two select-presses on a button
 
 // Ray pointer: thin line forward from each XR controller, shortened to the
-// hit point when it crosses a menu button. Standard WebXR pattern.
-const RAY_DEFAULT_LEN_M  = 3.0;
-const RAY_COLOR_IDLE     = 0x60a5fa;
-const RAY_COLOR_HOVER    = 0xfbbf24;
+// hit point when it crosses a menu button. Standard WebXR pattern. We keep
+// the idle ray short (0.8m) so it doesn't shoot off into the room and look
+// laser-pointer-y -- it should read more as "where my finger is aimed" than
+// "where this beam ends up." On hover, it extends to the hit point.
+const RAY_IDLE_LEN_M     = 0.8;
+const RAY_COLOR_IDLE     = 0x4a7ab8;     // muted blue
+const RAY_COLOR_HOVER    = 0xfbbf24;     // amber on hit
+
+const BUTTON_FLASH_MS    = 180;
 
 // ---------------------------------------------------------------------------
 // Landing-page checks (run before VR session starts)
@@ -264,7 +269,7 @@ function initScene() {
             color: RAY_COLOR_IDLE, transparent: true, opacity: 0.75,
         });
         const line = new THREE.Line(lineGeo, lineMat);
-        line.scale.z = RAY_DEFAULT_LEN_M;
+        line.scale.z = RAY_IDLE_LEN_M;
         ctrl.add(line);
         controllers.push(ctrl);
         controllerRays.push(line);
@@ -299,9 +304,12 @@ function initScene() {
 
     // Pinch progress ring (drawn on a small canvas, pinned to the captured hand's
     // wrist each frame; opacity scales with pinch hold time)
+    // Pinch progress ring -- pinned to the captured hand's index tip when the
+    // captured arm is pinching. Bigger + more saturated than v1.x so it's
+    // easy to spot at arm's length while you're focusing on the gesture.
     pinchIndicator = new THREE.Mesh(
-        new THREE.RingGeometry(0.025, 0.030, 24, 1, 0, Math.PI * 2),
-        new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true,
+        new THREE.RingGeometry(0.038, 0.046, 32, 1, 0, Math.PI * 2),
+        new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true,
                                        opacity: 0, side: THREE.DoubleSide }));
     pinchIndicator.visible = false;
     scene.add(pinchIndicator);
@@ -388,12 +396,16 @@ function drawMenuButton(btn, hovered) {
     const W = btn.canvas.width, H = btn.canvas.height;
     ctx.clearRect(0, 0, W, H);
     const active = !!btn.isActive();
+    const flashing = (btn.flashUntil || 0) > performance.now();
 
-    // Rounded-rect background. Color signals state: red=active, blue=hovered,
-    // gray=idle. Hover overrides idle but not active (active state matters more
-    // for "is recording right now" type questions).
+    // Rounded-rect background. Priority: flash > active > hovered > idle.
+    // Flash is the brief white burst right after a successful select; it
+    // overrides everything else so the user sees confirmation independent
+    // of whatever state-change the action triggers (which might be
+    // imperceptible if the server hasn't responded yet).
     let bg;
-    if (active)       bg = '#ef4444';
+    if (flashing)     bg = '#ffffff';
+    else if (active)  bg = '#ef4444';
     else if (hovered) bg = '#1f6feb';
     else              bg = '#2a3142';
     ctx.fillStyle = bg;
@@ -409,7 +421,7 @@ function drawMenuButton(btn, hovered) {
 
     // Label: REC <-> STOP swap so the button tells you what tapping it does next
     const labelText = (btn.name === 'REC' && active) ? 'STOP' : btn.label;
-    ctx.fillStyle = '#f0f4f8';
+    ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';   // dark text on white flash
     ctx.font = 'bold 72px system-ui';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -470,6 +482,9 @@ function onControllerSelect(ctrl) {
     const now = performance.now();
     if (now - hoveredButton.lastActivateAt < BUTTON_COOLDOWN_MS) return;
     hoveredButton.lastActivateAt = now;
+    // Brief white flash so the user gets visual confirmation that the press
+    // registered, separate from whatever state-change the action triggers.
+    hoveredButton.flashUntil = now + BUTTON_FLASH_MS;
     try { hoveredButton.onActivate(); }
     catch (e) { console.error(`button ${hoveredButton.name} failed:`, e); }
 }
@@ -511,7 +526,7 @@ function updateRaycast() {
             }
         }
         // No hit: restore default-length idle-colored ray
-        line.scale.z = RAY_DEFAULT_LEN_M;
+        line.scale.z = RAY_IDLE_LEN_M;
         line.material.color.setHex(RAY_COLOR_IDLE);
     }
 }
