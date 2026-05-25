@@ -104,7 +104,11 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def no_cache_static(request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if path == "/" or path.startswith("/static/"):
+        # Cache-bust the HTML entry points + every static asset. Without
+        # /vr in this list, Quest Browser cached the old VR HTML (which
+        # pointed at app.js without the version querystring), so refreshes
+        # kept loading stale JS even after the file changed on disk.
+        if path == "/" or path == "/vr" or path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"

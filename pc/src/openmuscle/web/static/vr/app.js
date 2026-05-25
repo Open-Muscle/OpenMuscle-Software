@@ -125,8 +125,10 @@ let heatmapMesh, heatmapCanvas, heatmapCtx, heatmapTex;
 let headerCanvas, headerTex, headerMesh;
 let statusMesh, statusCanvas, statusTex;
 let pinchIndicator;
-let armGroup;                                  // holds joint visualizer spheres
+let armGroup;                                  // captured-hand joint spheres (blue)
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
+let offHandGroup;                              // off-hand joint spheres (green)
+let offHandJointMeshes = new Map();            // joint-name -> sphere mesh
 let placed = false;                            // anchors set on first XRFrame
 
 // Menu panel + buttons. Each button is a rectangular Mesh (PlaneGeometry +
@@ -263,16 +265,33 @@ function initScene() {
     pinchIndicator.visible = false;
     scene.add(pinchIndicator);
 
-    // Group for the joint visualizer spheres (one per captured joint)
+    // Joint visualizer spheres for BOTH hands. Captured arm = blue (the
+    // hand whose pose we're recording). Off-hand = green (the hand that
+    // drives the menu). Distinct colors so the user can tell at a glance
+    // which finger spheres belong to which hand. Off-hand spheres are
+    // slightly larger so the pointing hand reads more solid even when
+    // most of the ray is hidden behind the fingertip.
+    const jointGeoSmall = new THREE.SphereGeometry(0.006, 8, 6);
+    const jointGeoBig   = new THREE.SphereGeometry(0.0085, 10, 8);
+
     armGroup = new THREE.Group();
     scene.add(armGroup);
-    const jointGeo = new THREE.SphereGeometry(0.006, 8, 6);
-    const jointMat = new THREE.MeshBasicMaterial({ color: 0x60a5fa });
+    const armJointMat = new THREE.MeshBasicMaterial({ color: 0x60a5fa });
     for (const name of JOINT_NAMES) {
-        const m = new THREE.Mesh(jointGeo, jointMat);
+        const m = new THREE.Mesh(jointGeoSmall, armJointMat);
         m.visible = false;
         armGroup.add(m);
         armJointMeshes.set(name, m);
+    }
+
+    offHandGroup = new THREE.Group();
+    scene.add(offHandGroup);
+    const offHandJointMat = new THREE.MeshBasicMaterial({ color: 0x34d399 });
+    for (const name of JOINT_NAMES) {
+        const m = new THREE.Mesh(jointGeoBig, offHandJointMat);
+        m.visible = false;
+        offHandGroup.add(m);
+        offHandJointMeshes.set(name, m);
     }
 
     window.addEventListener('resize', () => {
@@ -558,8 +577,8 @@ function captureAndSend(frame, refSpace, hand, timestampMs) {
     }));
 }
 
-function updateArmVisualizer(frame, refSpace, hand) {
-    for (const [name, mesh] of armJointMeshes) {
+function updateHandVisualizer(frame, refSpace, hand, meshesMap) {
+    for (const [name, mesh] of meshesMap) {
         const p = jointPose(frame, refSpace, hand, name);
         if (!p) { mesh.visible = false; continue; }
         mesh.visible = true;
@@ -567,6 +586,9 @@ function updateArmVisualizer(frame, refSpace, hand) {
                           p.transform.position.y,
                           p.transform.position.z);
     }
+}
+function hideHandVisualizer(meshesMap) {
+    for (const m of meshesMap.values()) m.visible = false;
 }
 
 function detectPinchAndToggle(frame, refSpace, hand, timestampMs) {
@@ -851,18 +873,24 @@ function onXRFrame(timestamp, frame) {
 
     if (!placed) placeAnchors(frame, refSpace);
 
-    let capturedHand = null;
+    let capturedHand = null, offHand = null;
     for (const input of session.inputSources) {
-        if (input.hand && input.handedness === ARM) { capturedHand = input.hand; break; }
+        if (!input.hand) continue;
+        if (input.handedness === ARM)            capturedHand = input.hand;
+        else if (input.handedness && !offHand)   offHand = input.hand;
     }
     if (capturedHand) {
         captureAndSend(frame, refSpace, capturedHand, timestamp);
-        updateArmVisualizer(frame, refSpace, capturedHand);
+        updateHandVisualizer(frame, refSpace, capturedHand, armJointMeshes);
         detectPinchAndToggle(frame, refSpace, capturedHand, timestamp);
     } else {
-        // Hide the joint spheres + pinch ring if the captured hand isn't tracked
-        for (const m of armJointMeshes.values()) m.visible = false;
+        hideHandVisualizer(armJointMeshes);
         pinchIndicator.visible = false;
+    }
+    if (offHand) {
+        updateHandVisualizer(frame, refSpace, offHand, offHandJointMeshes);
+    } else {
+        hideHandVisualizer(offHandJointMeshes);
     }
 
     updateRaycast();
