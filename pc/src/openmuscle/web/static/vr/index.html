@@ -3,30 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenMuscle VR — placeholder</title>
-    <style>
-        body { font-family: system-ui, sans-serif; background: #111; color: #ddd;
-               margin: 0; display: flex; align-items: center; justify-content: center;
-               min-height: 100vh; }
-        main { max-width: 540px; padding: 32px; }
-        h1 { color: #fff; margin-top: 0; }
-        code { background: #222; padding: 2px 6px; border-radius: 3px; color: #fc6; }
-        .pill { display: inline-block; background: #2a4; color: #042;
-                padding: 2px 8px; border-radius: 10px; font-size: 12px;
-                font-weight: 600; }
-    </style>
+    <title>OpenMuscle VR</title>
+    <link rel="stylesheet" href="/static/vr/styles.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "three":            "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/":    "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
 </head>
 <body>
-<main>
-    <h1>OpenMuscle VR <span class="pill">scaffold</span></h1>
-    <p>The server side is wired. WebXR client lands next.</p>
-    <p>Endpoints already live:</p>
-    <ul>
-        <li><code>GET /vr</code> &mdash; this page</li>
-        <li><code>WS /ws/quest</code> &mdash; inbound XRHand frames</li>
-        <li><code>WS /ws/live</code> &mdash; outbound device snapshots (heatmap)</li>
-    </ul>
-    <p>When ready: open this URL in Quest Browser over HTTPS (or via <code>adb reverse tcp:8000 tcp:8000</code> for a localhost fallback), tap <em>Enter VR</em>, grant hand-tracking, point your hand at the camera.</p>
-</main>
+<div id="landing">
+    <header>
+        <h1>OpenMuscle <span class="pill">VR</span></h1>
+        <p class="tag">FlexGrid heatmap in VR + Quest hand tracking as ML ground truth</p>
+    </header>
+    <section class="checklist">
+        <h2>Before you tap Enter VR</h2>
+        <ul>
+            <li><span class="ok" id="check-https">HTTPS or localhost</span></li>
+            <li><span class="ok" id="check-xr">WebXR + hand-tracking available</span></li>
+            <li><span class="ok" id="check-server">Server reachable (/api/devices)</span></li>
+        </ul>
+        <div class="row">
+            <label>Capture arm:
+                <select id="arm-select">
+                    <option value="right">right</option>
+                    <option value="left">left</option>
+                </select>
+            </label>
+            <span class="hint">The Quest hand on this side is the one whose joints we record. The other hand stays free for the record button.</span>
+        </div>
+    </section>
+    <div id="enter-vr-mount"><!-- VRButton inserts itself here --></div>
+    <footer>
+        <p>If "Enter VR" stays disabled, the headset can't see WebXR on this URL. Check that you opened it in Quest Browser (not the Library / Phone-mirror window), and that the URL is HTTPS or http://localhost (via <code>adb reverse tcp:8000 tcp:8000</code>).</p>
+    </footer>
+</div>
+<script type="module" src="/static/vr/app.js"></script>
 </body>
 </html>

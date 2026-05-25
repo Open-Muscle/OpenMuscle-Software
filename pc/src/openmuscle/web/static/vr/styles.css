@@ -1,0 +1,131 @@
+/* Landing page (pre-VR) only. Once VRButton hands off to the XR session,
+   none of this is rendered -- the headset paints Three.js directly. */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #0c0d10;
+    color: #d8dde6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    min-height: 100vh;
+}
+
+#landing {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 32px 24px 96px;
+}
+
+header h1 {
+    margin: 0;
+    font-size: 28px;
+    letter-spacing: -0.01em;
+}
+
+.pill {
+    display: inline-block;
+    background: #1f6feb;
+    color: #fff;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+.tag {
+    color: #8b96a8;
+    margin: 6px 0 28px;
+    font-size: 15px;
+}
+
+.checklist {
+    background: #16181d;
+    border: 1px solid #23262d;
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+}
+
+.checklist h2 {
+    margin: 0 0 12px;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #8b96a8;
+}
+
+.checklist ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 18px;
+}
+
+.checklist li {
+    padding: 6px 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+}
+
+.checklist .ok::before  { content: "✓ "; color: #3fb950; font-weight: 700; }
+.checklist .bad::before { content: "✗ "; color: #f85149; font-weight: 700; }
+.checklist .pending::before { content: "… "; color: #d29922; font-weight: 700; }
+
+.row {
+    border-top: 1px solid #23262d;
+    padding-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.row label {
+    font-size: 14px;
+    color: #d8dde6;
+}
+
+.row select {
+    background: #1f2228;
+    color: #d8dde6;
+    border: 1px solid #2d313a;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 14px;
+    margin-left: 6px;
+}
+
+.hint {
+    font-size: 12px;
+    color: #8b96a8;
+}
+
+#enter-vr-mount {
+    display: flex;
+    justify-content: center;
+    margin: 12px 0 32px;
+    min-height: 56px;
+}
+
+/* The VRButton from three.js addons injects an absolutely-positioned
+   element at the bottom of the page. Pin it into our mount instead. */
+#enter-vr-mount > button {
+    position: static !important;
+    margin: 0 !important;
+    bottom: auto !important;
+    left: auto !important;
+}
+
+footer p {
+    color: #6f7787;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+footer code {
+    background: #1f2228;
+    color: #d29922;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+}
