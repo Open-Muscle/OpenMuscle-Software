@@ -152,6 +152,8 @@ let armGroup;                                  // captured-hand joint spheres (b
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
 let offHandGroup;                              // off-hand joint spheres (green)
 let offHandJointMeshes = new Map();            // joint-name -> sphere mesh
+let ghostGroup;                                // model-predicted hand (amber, translucent)
+let ghostJointMeshes = new Map();              // joint-name -> sphere mesh
 let placed = false;                            // anchors set on first XRFrame
 
 // Menu panel + buttons. Each button is a rectangular Mesh (PlaneGeometry +
@@ -341,6 +343,24 @@ function initScene() {
         m.visible = false;
         offHandGroup.add(m);
         offHandJointMeshes.set(name, m);
+    }
+
+    // Ghost predicted-hand: amber, semi-transparent spheres at the joint
+    // positions the model predicts from the current FlexGrid frame. Aligned
+    // with the real wrist each frame so the visualization shows predicted
+    // SHAPE, not absolute model output (which would be in whatever world
+    // frame the recording was made in -- usually not where the user is now).
+    const ghostJointGeo = new THREE.SphereGeometry(0.0075, 10, 8);
+    const ghostJointMat = new THREE.MeshBasicMaterial({
+        color: 0xfbbf24, transparent: true, opacity: 0.7, depthWrite: false,
+    });
+    ghostGroup = new THREE.Group();
+    scene.add(ghostGroup);
+    for (const name of JOINT_NAMES) {
+        const m = new THREE.Mesh(ghostJointGeo, ghostJointMat);
+        m.visible = false;
+        ghostGroup.add(m);
+        ghostJointMeshes.set(name, m);
     }
 
     window.addEventListener('resize', () => {
@@ -807,6 +827,34 @@ function hideHandVisualizer(meshesMap) {
     for (const m of meshesMap.values()) m.visible = false;
 }
 
+function updateGhostHand(predValues, realWristPos) {
+    // Render the model's predicted joint positions as a ghost hand pinned
+    // to the user's actual wrist. Why offset: the model was trained on
+    // absolute world positions from whatever pose the user was in during
+    // recording, so the raw predicted positions float wherever those
+    // recordings were taken -- generally not where the user is right now.
+    // Anchoring predicted-wrist <-> real-wrist makes the visualization
+    // about the predicted SHAPE (which is what we care about) and ignores
+    // the absolute-position confound. (Rotation isn't aligned yet -- a
+    // future iteration could match wrist orientations too.)
+    if (!predValues || predValues.length < 25 * 7 || !realWristPos) {
+        for (const m of ghostJointMeshes.values()) m.visible = false;
+        return;
+    }
+    const ox = realWristPos.x - predValues[0];
+    const oy = realWristPos.y - predValues[1];
+    const oz = realWristPos.z - predValues[2];
+    let i = 0;
+    for (const [, mesh] of ghostJointMeshes) {
+        const base = i * 7;
+        mesh.position.set(predValues[base]     + ox,
+                          predValues[base + 1] + oy,
+                          predValues[base + 2] + oz);
+        mesh.visible = true;
+        i++;
+    }
+}
+
 function detectPinchAndToggle(frame, refSpace, hand, timestampMs) {
     const ip = jointPose(frame, refSpace, hand, 'index-finger-tip');
     const tp = jointPose(frame, refSpace, hand, 'thumb-tip');
@@ -1133,10 +1181,10 @@ function onXRFrame(timestamp, frame) {
         hideHandVisualizer(offHandJointMeshes);
     }
 
-    // REAL vs PRED comparison: visible only when we have something to compare
-    // (model loaded AND running AND captured hand tracked). The user explicitly
-    // wants to see model error after training, so show it the moment inference
-    // turns on -- not gated on minimum-error or any kind of "ready" signal.
+    // REAL vs PRED comparison + ghost hand: visible only when we have
+    // something to compare (model loaded AND running AND captured hand
+    // tracked). The user explicitly wants to see model error after
+    // training, so both pop in the moment PREDICT turns on.
     const predValues = latestSnapshot?.inference?.piston_values || null;
     const showCompare = capturedHand && uiState.inferenceEnabled && predValues;
     compareMesh.visible = !!showCompare;
@@ -1144,6 +1192,12 @@ function onXRFrame(timestamp, frame) {
         const real = realCurls(frame, refSpace, capturedHand);
         const pred = predictedCurls(predValues);
         drawCompare(real, pred);
+        // Ghost hand pinned to the real wrist so the user sees the model's
+        // shape prediction overlaid on their actual hand.
+        const wp = jointPose(frame, refSpace, capturedHand, 'wrist');
+        updateGhostHand(predValues, wp ? wp.transform.position : null);
+    } else {
+        for (const m of ghostJointMeshes.values()) m.visible = false;
     }
 
     updateRaycast();
