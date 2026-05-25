@@ -400,24 +400,22 @@ class AppState:
     def _forward_to_hand(self, pred: list):
         """Send the prediction to the robot hand as a `PC,...` UDP datagram.
 
-        Builds 5 servo angles in 0..179 from the 4 piston predictions (assumed
-        normalized 0..1; clamped) plus the most recent LASK5 joystick X as the
-        5th. The hand's `'PC'` device config uses linear 0..179 -> 0..179
-        mapping, so values land directly on servo angles.
-        """
-        # Pistons -> 0..179, assuming model output is normalized 0..1.
-        # Anything else gets clamped, which is the right failure mode --
-        # bracelet finger goes to extreme rather than 4000-degree angle.
-        angles = []
-        for v in pred[:4]:
-            try:
-                v = max(0.0, min(1.0, float(v)))
-            except Exception:
-                v = 0.0
-            angles.append(int(v * 179))
+        Builds 5 servo angles in 0..179. Channel order on the hand
+        (FINGER_CHANNELS = [1, 3, 5, 7, 9]) is anatomically:
+            channel 1 -> thumb
+            channel 3 -> index
+            channel 5 -> middle
+            channel 7 -> ring
+            channel 9 -> pinky
 
-        # 5th finger = joystick X from the most recent LASK5 packet. Range
-        # 0..4095 -> 0..179. Default to center (90) if no LASK5 has been seen.
+        The LASK5 has 4 pistons (the 4 closing fingers) and a joystick.
+        We map joystick X -> thumb, pistons 0..3 -> index..pinky.
+        The hand's 'PC' device config uses linear 0..179 -> 0..179, so values
+        land directly on servo angles.
+        """
+        # Thumb (channel 1) = joystick X from the most recent LASK5 packet.
+        # Range 0..4095 -> 0..179. Default to center (90) if no LASK5 has been
+        # seen yet (so the thumb sits in a neutral pose instead of slamming open).
         joy_x = None
         for d in self.devices.values():
             if d.device_type == "lask5" and d.last_joystick:
@@ -425,23 +423,57 @@ class AppState:
                 if isinstance(jx, (int, float)):
                     joy_x = jx
                     break
-        if joy_x is None:
-            angles.append(90)
-        else:
-            angles.append(max(0, min(179, int((joy_x / 4095.0) * 179))))
+        thumb_angle = 90 if joy_x is None else max(0, min(179, int((joy_x / 4095.0) * 179)))
+
+        # Index..pinky (channels 3, 5, 7, 9) from pistons 0..3.
+        # Model output is assumed normalized 0..1; anything else gets clamped,
+        # which is the right failure mode -- finger goes to extreme rather
+        # than commanding a 4000-degree servo angle.
+        finger_angles = []
+        for v in pred[:4]:
+            try:
+                v = max(0.0, min(1.0, float(v)))
+            except Exception:
+                v = 0.0
+            finger_angles.append(int(v * 179))
+
+        # The hand's 'PC' device config has reverse=False, but the LASK5's
+        # native ESPNow path uses the 'default' / 'L5' config (reverse=True)
+        # which flips the piston order before mapping to FINGER_CHANNELS.
+        # To match that mapping from our PC path, we reverse the pistons
+        # ourselves: P1 -> index, P2 -> middle, P3 -> ring, P4 -> pinky.
+        # (Documented in DEVICES of the hand firmware, archived 2026-05-14.)
+        angles = [thumb_angle] + finger_angles[::-1]   # [thumb, P4, P3, P2, P1]
 
         # Build the CSV the hand expects: 'PC,a1,a2,a3,a4,a5'
         payload = ("PC," + ",".join(str(a) for a in angles)).encode("utf-8")
 
+        # Rate-limited log so we can SEE whether forwarding is working.
+        # First time + every 500th packet: log success/failure to the buffer
+        # so the operator can debug without strace.
+        self._hand_forward_count = getattr(self, "_hand_forward_count", 0) + 1
+        log_now = (self._hand_forward_count == 1
+                   or self._hand_forward_count % 500 == 0)
         try:
             if self._hand_sock is None:
                 self._hand_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self._hand_sock.setblocking(False)
-            self._hand_sock.sendto(payload, self.hand_target)
-        except Exception:
-            # Non-fatal: hand might be offline / on a different subnet.
-            # We don't spam logs since this fires per FlexGrid packet.
-            pass
+            n = self._hand_sock.sendto(payload, self.hand_target)
+            if log_now:
+                self.log_buffer.info("inference",
+                    "hand forward #{}: sent {} bytes to {}:{} -> {!r}".format(
+                        self._hand_forward_count, n,
+                        self.hand_target[0], self.hand_target[1],
+                        payload.decode("utf-8", errors="replace")))
+        except Exception as e:
+            # Always log the first failure so the operator sees it; rate-limit
+            # subsequent ones (every 500) so we don't spam.
+            if log_now or not getattr(self, "_hand_forward_error_logged", False):
+                self.log_buffer.warn("inference",
+                    "hand forward #{} FAILED: {} ({!r}) -> target={}".format(
+                        self._hand_forward_count, type(e).__name__, str(e),
+                        self.hand_target))
+                self._hand_forward_error_logged = True
 
     async def _broadcast_latest_frames(self):
         """Push the latest frame for each device to all WS clients."""
