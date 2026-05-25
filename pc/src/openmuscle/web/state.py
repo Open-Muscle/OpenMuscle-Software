@@ -664,6 +664,14 @@ class AppState:
 
         effective_label_count = label_count if label_device_id else 0
 
+        # Quest hand tracking sends a wide joint vector whose width depends on
+        # the headset / WebXR implementation (Quest 3S = 26 joints * 7 floats =
+        # 182 per hand). Rather than hardcode it, pass None so CaptureWriter
+        # derives the column count from the first label packet.
+        label_dev_for_width = self.devices.get(label_device_id) if label_device_id else None
+        if label_dev_for_width and label_dev_for_width.device_type == "quest_hand":
+            effective_label_count = None
+
         # Build paths
         name = filename or f"capture_{int(time.time())}.csv"
         if not name.endswith(".csv"):
