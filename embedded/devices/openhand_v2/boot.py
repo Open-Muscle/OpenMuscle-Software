@@ -348,20 +348,36 @@ def espnow_listen():
         pass
     frint('ESP-NOW ready')
     frint('SEL=exit')
-    while True:
-        # Non-blocking recv with 100ms timeout so buttons stay responsive
-        msg = e.recv(100)
-        if msg and msg[1]:
-            print(f'msg[1]:{msg[1]}')
-            result = parse_packet(msg[1])
-            if result:
-                device_id, values = result
-                apply_packet(device_id, values)
-        if select_btn.value() == 0:
-            time.sleep(0.2)  # debounce
-            break
-    e.active(False)
+    try:
+        while True:
+            # Non-blocking recv with 100ms timeout so buttons stay responsive
+            msg = e.recv(100)
+            if msg and msg[1]:
+                print('msg[1]:' + str(msg[1]))
+                result = parse_packet(msg[1])
+                if result:
+                    device_id, values = result
+                    apply_packet(device_id, values)
+            if select_btn.value() == 0:
+                time.sleep(0.2)  # debounce
+                break
+    except KeyboardInterrupt:
+        frint('ESPNow -> REPL')
+        try: release_all()
+        except Exception: pass
+        raise
+    finally:
+        try: e.active(False)
+        except Exception: pass
     frint('ESP-NOW stopped')
+
+
+# Idle-sleep threshold: after this many seconds with no incoming UDP packet
+# we release all servos. They stop humming/holding torque, and the OLED
+# shows "Sleeping..." so the operator knows the hand is intentionally
+# limp (not crashed). The next packet wakes it up — set_finger() implicitly
+# re-energizes the servo, so wake is just "go back to applying packets".
+UDP_IDLE_SLEEP_S = 30
 
 
 def udp_listen():
@@ -382,20 +398,62 @@ def udp_listen():
     s.setblocking(False)
     frint('UDP :' + str(UDP_PORT))
     frint('SEL=exit')
-    while True:
-        try:
-            data, addr = s.recvfrom(256)
-            if data:
-                result = parse_packet(data)
-                if result:
-                    device_id, values = result
-                    apply_packet(device_id, values)
-        except OSError:
-            pass  # no data available (non-blocking)
-        if select_btn.value() == 0:
-            time.sleep(0.2)  # debounce
-            break
-    s.close()
+
+    last_packet_t = time.time()  # grace period: 30s before first sleep
+    is_asleep = False
+
+    # KeyboardInterrupt-aware loop: a Ctrl-C from the REPL (mpremote, Thonny,
+    # serial monitor) now exits this loop cleanly so the operator can land
+    # in the REPL and edit settings / firmware without having to power-cycle.
+    try:
+        while True:
+            got_packet = False
+            try:
+                data, addr = s.recvfrom(256)
+                if data:
+                    got_packet = True
+                    result = parse_packet(data)
+                    if result:
+                        device_id, values = result
+                        apply_packet(device_id, values)
+            except OSError:
+                pass  # no data available (non-blocking)
+
+            if got_packet:
+                last_packet_t = time.time()
+                if is_asleep:
+                    # Wake transition: brief OLED note, then resume listening.
+                    # apply_packet() above already drove this packet's values,
+                    # which implicitly re-energized the servos -- no extra work.
+                    is_asleep = False
+                    frint('Awake')
+            else:
+                # No packet this iteration -- check idle timeout.
+                if not is_asleep and (time.time() - last_packet_t) > UDP_IDLE_SLEEP_S:
+                    release_all()           # stop all 16 channels (servos go limp)
+                    is_asleep = True
+                    frint('Sleeping')
+
+            if select_btn.value() == 0:
+                time.sleep(0.2)  # debounce
+                break
+
+            # Small yield so the non-blocking recv loop doesn't peg the CPU
+            # (also lets the REPL Ctrl-C have a chance to interrupt).
+            if is_asleep:
+                time.sleep(0.05)        # asleep: be lazy, 20 Hz wake-check
+            else:
+                time.sleep(0.002)       # awake: tight loop, ~500 Hz
+    except KeyboardInterrupt:
+        frint('UDP -> REPL')
+        try: release_all()
+        except Exception: pass
+        # Re-raise so the outer boot-sequence handler can also drop cleanly.
+        raise
+    finally:
+        try: s.close()
+        except Exception: pass
+
     # Keep STA connected on exit so ESPNow still has its channel locked.
     frint('UDP stopped')
 
@@ -485,20 +543,26 @@ def run_menu():
     selected = 0
     n_items = len(MENU_ITEMS)
     draw_menu(selected)
-    while True:
-        if up_btn.value() == 0:
-            selected = (selected - 1) % n_items
-            draw_menu(selected)
-            time.sleep(0.25)
-        if down_btn.value() == 0:
-            selected = (selected + 1) % n_items
-            draw_menu(selected)
-            time.sleep(0.25)
-        if start_btn.value() == 0:
-            time.sleep(0.2)  # debounce
-            MENU_ACTIONS[selected]()
-            draw_menu(selected)
-        time.sleep(0.05)
+    try:
+        while True:
+            if up_btn.value() == 0:
+                selected = (selected - 1) % n_items
+                draw_menu(selected)
+                time.sleep(0.25)
+            if down_btn.value() == 0:
+                selected = (selected + 1) % n_items
+                draw_menu(selected)
+                time.sleep(0.25)
+            if start_btn.value() == 0:
+                time.sleep(0.2)  # debounce
+                MENU_ACTIONS[selected]()
+                draw_menu(selected)
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        frint('Menu -> REPL')
+        try: release_all()
+        except Exception: pass
+        raise
 
 
 # =============================================================================
@@ -518,19 +582,33 @@ connect_wifi_boot()
 
 # Hold Select at boot to force the menu, regardless of auto_mode -- escape
 # hatch in case auto-mode is set to something that crashes or hangs.
-if select_btn.value() == 0:
-    frint('Auto skipped')
-    time.sleep(0.5)
-else:
-    mode = settings.get('auto_mode', 'menu')
-    if mode == 'espnow':
-        frint('Auto: ESP-NOW')
-        time.sleep(0.4)
-        espnow_listen()  # returns when Select pressed
-    elif mode == 'udp':
-        frint('Auto: UDP')
-        time.sleep(0.4)
-        udp_listen()     # returns when Select pressed
+#
+# The whole runtime is wrapped in try/except KeyboardInterrupt so a Ctrl-C
+# from the REPL (mpremote, Thonny, serial monitor) drops back to an
+# interactive prompt cleanly. Without this, the device locks out the host
+# while a listen loop is running and we can't edit firmware/settings
+# without a physical power-cycle. Servos are released on the way out so
+# fingers don't hold torque while you're hacking.
+try:
+    if select_btn.value() == 0:
+        frint('Auto skipped')
+        time.sleep(0.5)
+    else:
+        mode = settings.get('auto_mode', 'menu')
+        if mode == 'espnow':
+            frint('Auto: ESP-NOW')
+            time.sleep(0.4)
+            espnow_listen()  # returns when Select pressed
+        elif mode == 'udp':
+            frint('Auto: UDP')
+            time.sleep(0.4)
+            udp_listen()     # returns when Select pressed
 
-blink(2)
-run_menu()
+    blink(2)
+    run_menu()
+except KeyboardInterrupt:
+    try: release_all()
+    except Exception: pass
+    frint('REPL')
+    print('\nCtrl-C received -- dropped to REPL.')
+    print('To resume: run_menu()  or  exec(open("boot.py").read())')
