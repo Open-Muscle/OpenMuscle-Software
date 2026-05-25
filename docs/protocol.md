@@ -56,6 +56,32 @@ All OpenMuscle devices communicate over **UDP port 3141** using **JSON-encoded U
 
 4 piston sensor values. Joystick is optional.
 
+### Quest hand tracking (`type: "quest_hand"`)
+
+Synthesized server-side from WebSocket frames sent by the WebXR client at `/vr` (browsers can't speak UDP). The payload represents one tracked hand sampled from `XRHand` each XRFrame:
+
+```json
+{
+    "values":     [px,py,pz, rx,ry,rz,rw,  ...]    // flat, 7 floats per joint
+    "handedness": "left" | "right",
+    "joint_names": ["wrist", "thumb-metacarpal", ...],
+    "hands": {
+        "handedness": "left" | "right",
+        "joints": [
+            {"name": "wrist", "pos": [x,y,z], "rot": [x,y,z,w], "radius": 0.02},
+            ...
+        ]
+    }
+}
+```
+
+- `values` follows the same convention as LASK5 — flat, in canonical joint × channel order — so the recorder and matcher pair `quest_hand` frames with FlexGrid frames identically to LASK5. The order is `[px, py, pz, rx, ry, rz, rw] × N joints`.
+- `joint_names` lists the joints in the same order they're flattened into `values`. The standard set is the W3C WebXR Hand Input spec (25 joints: wrist + 4 thumb + 5 each for index/middle/ring/pinky).
+- `hands` is the structured per-joint form, kept in the JSONL sidecar for offline analysis. It's redundant with `values` + `joint_names` but easier to diff by eye.
+- Empty payloads (the headset reports tracking-lost for the whole hand this frame) are dropped silently by the server — they'd otherwise produce zero-rows that mislead training.
+
+A per-capture `<name>.labels.schema.json` sidecar is written on the first `quest_hand` packet of a recording. It maps `label_0..label_N` columns in the CSV back to `(joint, channel)`, so the wide label vector is self-describing.
+
 ### Adding a New Device Type
 
 Define a new `type` string and document the `data` shape. The PC-side parser auto-discovers devices by their `type` field.
