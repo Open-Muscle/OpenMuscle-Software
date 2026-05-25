@@ -46,8 +46,14 @@ const HEATMAP_FORWARD_M  = 0.70;    // panel placed 70cm in front at session sta
 const HEATMAP_W          = 0.40;    // 40cm panel matches FlexGrid 15:4 aspect
 const HEATMAP_H          = 0.12;
 const BUTTON_RADIUS_M    = 0.04;
-const BUTTON_OFFSET_DOWN = 0.18;    // button sits 18cm below the heatmap center
+const BUTTON_ROW_DOWN    = 0.20;    // button row sits 20cm below the heatmap center
+const BUTTON_SPACING_M   = 0.13;    // horizontal spacing between buttons
+const STATUS_ROW_DOWN    = 0.34;    // status strip sits 34cm below the heatmap
+const STATUS_W           = HEATMAP_W;
+const STATUS_H           = 0.045;
+const STATUS_FADE_MS     = 6000;    // status text fully fades after 6s of no update
 const REPORT_HZ          = 30;      // throttle /ws/quest sends (~30Hz is plenty)
+const BUTTON_COOLDOWN_MS = 800;     // min gap between two activations of the same button
 
 // ---------------------------------------------------------------------------
 // Landing-page checks (run before VR session starts)
@@ -103,20 +109,33 @@ async function preflightChecks() {
 let scene, camera, renderer;
 let heatmapMesh, heatmapCanvas, heatmapCtx, heatmapTex;
 let headerCanvas, headerTex, headerMesh;
-let recordButton, recordButtonMaterial;
+let statusMesh, statusCanvas, statusTex;
 let pinchIndicator;
 let armGroup;                                  // holds joint visualizer spheres
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
 let placed = false;                            // anchors set on first XRFrame
 
-const recordingState = {
-    on: false,
+// Three labeled buttons in a row: REC / TRAIN / SESSION. Each entry holds
+// its mesh group, material refs for color updates, hover state (to debounce
+// touch-enter from touch-stay), and an `onActivate` callback.
+const buttons = {};   // name -> { group, base, label, labelCanvas, labelCtx, labelTex,
+                      //            hover, lastActivateAt, isActive: () => bool,
+                      //            onActivate: () => void, color: int }
+
+// Server-derived state (mirrored into button visuals each frame from /ws/live)
+const uiState = {
+    recording: false,
+    sessionActive: false,
+    sessionId: null,
+    training: false,
+    // pinch is the hands-free fallback for REC only
     pinchStart: 0,
-    buttonHover: false,
-    lastToggleAt: 0,
+    lastPinchToggleAt: 0,
 };
 
 let lastReportAt = 0;
+let lastStatusAt = 0;
+let lastStatusText = '';
 
 function initScene() {
     scene = new THREE.Scene();
@@ -162,14 +181,31 @@ function initScene() {
     scene.add(headerMesh);
     drawHeader('connecting…', false);
 
-    // Record button (sphere; red when recording, gray when idle)
-    recordButtonMaterial = new THREE.MeshStandardMaterial({
-        color: 0x4d5566, metalness: 0.2, roughness: 0.6,
-        emissive: 0x000000, emissiveIntensity: 0.0,
-    });
-    recordButton = new THREE.Mesh(new THREE.SphereGeometry(BUTTON_RADIUS_M, 24, 16),
-                                   recordButtonMaterial);
-    scene.add(recordButton);
+    // Button row: REC / TRAIN / SESSION. Each button is a small sphere with
+    // a text-labeled plane just above it. Activation = off-hand index-tip
+    // proximity (BUTTON_TOUCH_M). The pinch-to-record gesture remains as a
+    // hands-free alternative for REC only.
+    createButton('REC',
+                 () => uiState.recording,
+                 toggleRecording);
+    createButton('TRAIN',
+                 () => uiState.training,
+                 runTrain);
+    createButton('SESSION',
+                 () => uiState.sessionActive,
+                 toggleSession);
+
+    // Status strip below the buttons -- canvas-textured plane that shows
+    // action feedback ("training...", "trained: R²=0.81", "session started").
+    statusCanvas = document.createElement('canvas');
+    statusCanvas.width = 800; statusCanvas.height = 90;
+    statusTex = new THREE.CanvasTexture(statusCanvas);
+    statusTex.colorSpace = THREE.SRGBColorSpace;
+    statusMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(STATUS_W, STATUS_H),
+        new THREE.MeshBasicMaterial({ map: statusTex, transparent: true }));
+    scene.add(statusMesh);
+    drawStatus('');
 
     // Pinch progress ring (drawn on a small canvas, pinned to the captured hand's
     // wrist each frame; opacity scales with pinch hold time)
@@ -200,6 +236,89 @@ function initScene() {
     });
 }
 
+function createButton(name, isActive, onActivate) {
+    // Body: small sphere. Color updated each frame from button state.
+    const baseMat = new THREE.MeshStandardMaterial({
+        color: 0x4d5566, metalness: 0.2, roughness: 0.6,
+        emissive: 0x000000, emissiveIntensity: 0.0,
+    });
+    const base = new THREE.Mesh(
+        new THREE.SphereGeometry(BUTTON_RADIUS_M, 24, 16), baseMat);
+
+    // Label: text on a canvas, projected onto a small plane just above the
+    // body. Kept billboard-style (lookAt camera each frame in updateButtonVisual)
+    // so the text is always readable from the user's POV.
+    const labelCanvas = document.createElement('canvas');
+    labelCanvas.width = 256; labelCanvas.height = 96;
+    const labelCtx = labelCanvas.getContext('2d');
+    const labelTex = new THREE.CanvasTexture(labelCanvas);
+    labelTex.colorSpace = THREE.SRGBColorSpace;
+    const label = new THREE.Mesh(
+        new THREE.PlaneGeometry(BUTTON_RADIUS_M * 2.6, BUTTON_RADIUS_M * 1.0),
+        new THREE.MeshBasicMaterial({ map: labelTex, transparent: true,
+                                       depthWrite: false }));
+    label.position.set(0, BUTTON_RADIUS_M * 1.6, 0);
+
+    const group = new THREE.Group();
+    group.add(base);
+    group.add(label);
+    scene.add(group);
+
+    buttons[name] = {
+        group, base, baseMat, label, labelCanvas, labelCtx, labelTex,
+        name, hover: false, lastActivateAt: 0,
+        isActive, onActivate,
+    };
+    drawButtonLabel(buttons[name], name, false);
+}
+
+function drawButtonLabel(btn, text, isActive) {
+    const ctx = btn.labelCtx;
+    const W = btn.labelCanvas.width, H = btn.labelCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = isActive ? 'rgba(239, 68, 68, 0.85)'
+                              : 'rgba(20, 24, 32, 0.75)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#f0f4f8';
+    ctx.font = 'bold 48px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, W / 2, H / 2);
+    btn.labelTex.needsUpdate = true;
+}
+
+function drawStatus(text) {
+    if (text !== lastStatusText) {
+        lastStatusText = text;
+        lastStatusAt = performance.now();
+    }
+    const ctx = statusCanvas.getContext('2d');
+    const W = statusCanvas.width, H = statusCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    if (!text) { statusTex.needsUpdate = true; return; }
+    // Fade alpha over STATUS_FADE_MS
+    const age = performance.now() - lastStatusAt;
+    const alpha = Math.max(0, 1 - age / STATUS_FADE_MS);
+    if (alpha <= 0) { statusTex.needsUpdate = true; return; }
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(20, 24, 32, 0.80)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#d8dde6';
+    ctx.font = '30px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, W / 2, H / 2);
+    ctx.globalAlpha = 1;
+    statusTex.needsUpdate = true;
+}
+
+function setStatus(text) {
+    // Update text + restart fade timer
+    lastStatusText = text;
+    lastStatusAt = performance.now();
+    drawStatus(text);
+}
+
 function placeAnchors(frame, refSpace) {
     // Use the headset's current pose to place panel + button in front of the
     // user at session start. After this they're world-anchored -- they don't
@@ -222,9 +341,27 @@ function placeAnchors(frame, refSpace) {
     headerMesh.position.copy(heatPos).add(new THREE.Vector3(0, HEATMAP_H * 0.6, 0));
     headerMesh.lookAt(headPos);
 
-    // Record button sits below the heatmap, reachable
-    const btnPos = heatPos.clone().add(new THREE.Vector3(0, -BUTTON_OFFSET_DOWN, 0));
-    recordButton.position.copy(btnPos);
+    // Button row sits below the heatmap. We lay the three buttons out along
+    // the panel's local-right axis (perpendicular to head-forward + world up)
+    // so they stay parallel to the heatmap even if the user wasn't looking
+    // straight down +Z at session start.
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const panelRight = new THREE.Vector3().crossVectors(worldUp, headFwd).normalize();
+    const rowCenter = heatPos.clone().add(new THREE.Vector3(0, -BUTTON_ROW_DOWN, 0));
+    const order = ['REC', 'TRAIN', 'SESSION'];
+    for (let i = 0; i < order.length; i++) {
+        const offset = (i - (order.length - 1) / 2) * BUTTON_SPACING_M;
+        const pos = rowCenter.clone().addScaledVector(panelRight, offset);
+        const btn = buttons[order[i]];
+        if (!btn) continue;
+        btn.group.position.copy(pos);
+        // Label plane faces the user (lookAt updated per-frame in
+        // updateButtonVisual so it stays readable as the user moves)
+    }
+
+    // Status strip below the buttons
+    statusMesh.position.copy(heatPos).add(new THREE.Vector3(0, -STATUS_ROW_DOWN, 0));
+    statusMesh.lookAt(headPos);
 
     placed = true;
 }
@@ -310,7 +447,7 @@ function updateArmVisualizer(frame, refSpace, hand) {
 function detectPinchAndToggle(frame, refSpace, hand, timestampMs) {
     const ip = jointPose(frame, refSpace, hand, 'index-finger-tip');
     const tp = jointPose(frame, refSpace, hand, 'thumb-tip');
-    if (!ip || !tp) { recordingState.pinchStart = 0; pinchIndicator.visible = false; return; }
+    if (!ip || !tp) { uiState.pinchStart = 0; pinchIndicator.visible = false; return; }
     const dx = ip.transform.position.x - tp.transform.position.x;
     const dy = ip.transform.position.y - tp.transform.position.y;
     const dz = ip.transform.position.z - tp.transform.position.z;
@@ -321,58 +458,94 @@ function detectPinchAndToggle(frame, refSpace, hand, timestampMs) {
     pinchIndicator.position.set(ip.transform.position.x,
                                 ip.transform.position.y,
                                 ip.transform.position.z);
-    pinchIndicator.lookAt(camera.position);
+    const head = renderer.xr.getCamera ? renderer.xr.getCamera() : camera;
+    pinchIndicator.lookAt(head.position);
 
     if (isPinching) {
-        if (recordingState.pinchStart === 0) recordingState.pinchStart = timestampMs;
-        const held = timestampMs - recordingState.pinchStart;
+        if (uiState.pinchStart === 0) uiState.pinchStart = timestampMs;
+        const held = timestampMs - uiState.pinchStart;
         const progress = Math.min(1.0, held / PINCH_HOLD_MS);
         pinchIndicator.visible = true;
         pinchIndicator.material.opacity = 0.3 + 0.7 * progress;
-        if (held >= PINCH_HOLD_MS && timestampMs - recordingState.lastToggleAt > 1500) {
+        if (held >= PINCH_HOLD_MS && timestampMs - uiState.lastPinchToggleAt > 1500) {
             toggleRecording();
-            recordingState.lastToggleAt = timestampMs;
-            recordingState.pinchStart = -Infinity;  // require release before next
+            uiState.lastPinchToggleAt = timestampMs;
+            uiState.pinchStart = -Infinity;  // require release before next
         }
     } else {
-        recordingState.pinchStart = 0;
+        uiState.pinchStart = 0;
         pinchIndicator.visible = false;
     }
 }
 
 function checkButtonTouchByOffHand(frame, refSpace, session, timestampMs) {
-    // The OTHER hand (not the captured one) can tap the record button.
-    // This avoids the "press the button with the same fingers you're trying
-    // to capture" smear, and gives a clean tactile-feeling toggle.
+    // The OFF hand (not the captured one) is what taps the buttons. Pressing
+    // a button with the captured hand would smear the gesture you're trying
+    // to record. We iterate every off-hand input source -- on Quest 3S there's
+    // only one of each handedness so it's effectively a single check.
+    const offHands = [];
     for (const input of session.inputSources) {
-        if (!input.hand || input.handedness === ARM) continue;
-        const tip = jointPose(frame, refSpace, input.hand, 'index-finger-tip');
-        if (!tip) continue;
-        const dx = tip.transform.position.x - recordButton.position.x;
-        const dy = tip.transform.position.y - recordButton.position.y;
-        const dz = tip.transform.position.z - recordButton.position.z;
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        const inside = d < BUTTON_RADIUS_M + BUTTON_TOUCH_M;
-        if (inside && !recordingState.buttonHover
-                && timestampMs - recordingState.lastToggleAt > 800) {
-            toggleRecording();
-            recordingState.lastToggleAt = timestampMs;
-            recordingState.buttonHover = true;
-        } else if (!inside && d > BUTTON_RADIUS_M + BUTTON_TOUCH_M + 0.02) {
-            recordingState.buttonHover = false;
+        if (input.hand && input.handedness !== ARM) offHands.push(input.hand);
+    }
+    if (offHands.length === 0) {
+        // Tracking lost on the off-hand: reset all hovers so a re-touch
+        // re-triggers cleanly rather than being eaten by stale hover state.
+        for (const btn of Object.values(buttons)) btn.hover = false;
+        return;
+    }
+
+    for (const btn of Object.values(buttons)) {
+        let nearest = Infinity;
+        for (const hand of offHands) {
+            const tip = jointPose(frame, refSpace, hand, 'index-finger-tip');
+            if (!tip) continue;
+            const dx = tip.transform.position.x - btn.group.position.x;
+            const dy = tip.transform.position.y - btn.group.position.y;
+            const dz = tip.transform.position.z - btn.group.position.z;
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (d < nearest) nearest = d;
+        }
+        const insideR = BUTTON_RADIUS_M + BUTTON_TOUCH_M;
+        const releaseR = insideR + 0.02;
+        if (nearest < insideR && !btn.hover
+                && timestampMs - btn.lastActivateAt > BUTTON_COOLDOWN_MS) {
+            btn.lastActivateAt = timestampMs;
+            btn.hover = true;
+            try { btn.onActivate(); }
+            catch (e) { console.error(`button ${btn.name} activate failed:`, e); }
+        } else if (nearest > releaseR) {
+            btn.hover = false;
         }
     }
 }
 
 function updateButtonVisual() {
-    if (recordingState.on) {
-        recordButtonMaterial.color.setHex(0xef4444);
-        recordButtonMaterial.emissive.setHex(0xef4444);
-        recordButtonMaterial.emissiveIntensity = 0.6;
-    } else {
-        recordButtonMaterial.color.setHex(0x4d5566);
-        recordButtonMaterial.emissive.setHex(0x000000);
-        recordButtonMaterial.emissiveIntensity = 0.0;
+    // Idle vs active colors per button. Active = the underlying state the
+    // button represents is "on" (e.g. recording in progress for REC, session
+    // open for SESSION, training in flight for TRAIN).
+    const head = renderer.xr.getCamera ? renderer.xr.getCamera() : camera;
+    for (const btn of Object.values(buttons)) {
+        const active = !!btn.isActive();
+        if (active) {
+            btn.baseMat.color.setHex(0xef4444);
+            btn.baseMat.emissive.setHex(0xef4444);
+            btn.baseMat.emissiveIntensity = 0.55;
+        } else if (btn.hover) {
+            btn.baseMat.color.setHex(0x7a8499);
+            btn.baseMat.emissive.setHex(0x1f6feb);
+            btn.baseMat.emissiveIntensity = 0.25;
+        } else {
+            btn.baseMat.color.setHex(0x4d5566);
+            btn.baseMat.emissive.setHex(0x000000);
+            btn.baseMat.emissiveIntensity = 0.0;
+        }
+        // Label text changes for REC (REC <-> STOP) so the user knows
+        // what tapping it again will do. TRAIN and SESSION keep their
+        // label but the body color signals state.
+        const labelText = (btn.name === 'REC' && active) ? 'STOP' : btn.name;
+        drawButtonLabel(btn, labelText, active);
+        // Billboard the label toward the user's head so it's readable.
+        btn.label.lookAt(head.position);
     }
 }
 
@@ -470,33 +643,138 @@ function updateFromSnapshot(snap, timestampMs) {
     const rec = snap.recording;
     if (rec) {
         drawHeader(`REC · ${rec.rows} rows · match ${(rec.match_rate * 100).toFixed(0)}%`, true);
-        recordingState.on = true;
+        uiState.recording = true;
     } else {
         const fgHz = fg ? `${fg.hz?.toFixed?.(0) || '0'} Hz` : 'no FlexGrid';
         const questDev = (snap.devices || []).find(d => d.device_type === 'quest_hand');
         const questHz = questDev ? `${questDev.hz?.toFixed?.(0) || '0'} Hz` : 'no Quest';
         drawHeader(`${fgHz} · ${questHz}`, false);
-        recordingState.on = false;
+        uiState.recording = false;
     }
+    // Session state mirrors the server's active_session field
+    uiState.sessionActive = !!snap.active_session;
+    uiState.sessionId = snap.active_session?.id || null;
+    // Re-render the status strip every frame so its fade animates without
+    // needing a separate timer.
+    drawStatus(lastStatusText);
 }
 
 // ---------------------------------------------------------------------------
-// Recording control (REST)
+// Button actions: each REST call surfaces success/failure in the status strip
+// so the user doesn't have to take the headset off to know what happened.
 // ---------------------------------------------------------------------------
 
 async function toggleRecording() {
     try {
-        if (recordingState.on) {
-            await fetch('/api/recording', { method: 'DELETE' });
+        if (uiState.recording) {
+            const r = await fetch('/api/recording', { method: 'DELETE' });
+            if (r.ok) {
+                const data = await r.json();
+                setStatus(`saved: ${data.filename} (${data.rows} rows, match ${(data.match_rate * 100).toFixed(0)}%)`);
+            } else {
+                setStatus(`stop failed: HTTP ${r.status}`);
+            }
         } else {
-            await fetch('/api/recording', {
+            const r = await fetch('/api/recording', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),     // server picks Quest as label + window=175
             });
+            if (r.ok) {
+                const data = await r.json();
+                setStatus(`recording: ${data.filename} (window ${data.window_ms}ms)`);
+            } else {
+                const err = await r.text();
+                setStatus(`start failed: ${err.slice(0, 60)}`);
+            }
         }
     } catch (e) {
-        console.error('toggleRecording failed:', e);
+        setStatus(`record toggle failed: ${e.message}`);
+    }
+}
+
+async function toggleSession() {
+    try {
+        if (uiState.sessionActive) {
+            const r = await fetch('/api/sessions/end', { method: 'POST' });
+            if (r.ok) {
+                const s = await r.json();
+                setStatus(`session ended: ${s.id} (${s.capture_count} captures)`);
+            } else {
+                setStatus(`end session failed: HTTP ${r.status}`);
+            }
+        } else {
+            const r = await fetch('/api/sessions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: 'vr-' + new Date().toISOString().slice(0, 19) }),
+            });
+            if (r.ok) {
+                const s = await r.json();
+                setStatus(`session started: ${s.id}`);
+            } else {
+                const err = await r.text();
+                setStatus(`start session failed: ${err.slice(0, 60)}`);
+            }
+        }
+    } catch (e) {
+        setStatus(`session toggle failed: ${e.message}`);
+    }
+}
+
+async function runTrain() {
+    if (uiState.training) {
+        setStatus('training already in flight — wait for it to finish');
+        return;
+    }
+    if (uiState.recording) {
+        setStatus('stop recording before training');
+        return;
+    }
+    // Pick captures to train on: active session's captures if any, else
+    // fall back to the most recent capture only. The fallback keeps the
+    // "tap TRAIN right after a recording" flow alive even without sessions.
+    let captureNames = [];
+    try {
+        if (uiState.sessionActive) {
+            const r = await fetch(`/api/sessions/${uiState.sessionId}`);
+            if (r.ok) {
+                const s = await r.json();
+                captureNames = s.captures || [];
+            }
+        }
+        if (captureNames.length === 0) {
+            const r = await fetch('/api/captures');
+            if (r.ok) {
+                const caps = await r.json();
+                if (caps.length > 0) captureNames = [caps[0].name];
+            }
+        }
+        if (captureNames.length === 0) {
+            setStatus('no captures to train on -- record something first');
+            return;
+        }
+
+        uiState.training = true;
+        setStatus(`training on ${captureNames.length} capture(s)…`);
+        const r = await fetch('/api/train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ captures: captureNames, activate: true }),
+        });
+        if (r.ok) {
+            const result = await r.json();
+            const r2 = result.metrics?.r2;
+            const r2str = (typeof r2 === 'number') ? r2.toFixed(3) : '?';
+            setStatus(`trained: R²=${r2str}` + (result.active ? ' · model loaded ✓' : ' (saved only)'));
+        } else {
+            const err = await r.text();
+            setStatus(`train failed: ${err.slice(0, 80)}`);
+        }
+    } catch (e) {
+        setStatus(`train error: ${e.message}`);
+    } finally {
+        uiState.training = false;
     }
 }
 
