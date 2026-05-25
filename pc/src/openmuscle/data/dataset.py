@@ -19,8 +19,12 @@ def detect_columns(df: pd.DataFrame) -> tuple[list[str], list[str]]:
     Returns:
         (sensor_columns, label_columns)
     """
-    sensor_cols = [c for c in df.columns if c.startswith("R") or c.startswith("Sensor_")]
-    label_cols = [c for c in df.columns if c.startswith("label_") or c.startswith("Label_")]
+    sensor_cols = [c for c in df.columns
+                   if (c.startswith("R") or c.startswith("Sensor_"))
+                   and "Timestamp" not in c]
+    label_cols = [c for c in df.columns
+                  if (c.startswith("label_") or c.startswith("Label_"))
+                  and "Timestamp" not in c]
 
     if not sensor_cols:
         raise ValueError("No sensor columns found (expected R*C* or Sensor_* prefix)")
