@@ -22,7 +22,7 @@ from typing import IO, Optional
 import socket
 
 from openmuscle.data.storage import CaptureWriter
-from openmuscle.protocol.schema import OpenMusclePacket
+from openmuscle.protocol.schema import CURRENT_VERSION, OpenMusclePacket
 from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.web.inference import InferenceEngine
@@ -306,6 +306,75 @@ class AppState:
                     self._last_inference_ts = time.time()
                     if self.hand_target:
                         self._forward_to_hand(pred)
+
+    def ingest_quest_packet(self, payload: dict) -> None:
+        """Synthesize an OpenMusclePacket from a Quest WebSocket frame and
+        route it through the standard packet path.
+
+        From the recorder's perspective the Quest is just another device:
+        once we build an OpenMusclePacket with `device_type="quest_hand"`
+        and hand it to `_handle_packet`, the DeviceInfo registry, the
+        TemporalMatcher, the JSONL sidecars, and the WS snapshot all
+        treat it identically to LASK5. This is why the Quest never needs
+        to learn UDP -- the JS in the headset only has WebSocket.
+
+        Expected payload shape (one hand for v1, per the team's
+        "FlexGrid-arm only" decision):
+
+            {
+                "device_id":   "quest-01",          # optional
+                "ts":          12345,               # device-local ms (optional)
+                "handedness":  "left" | "right",    # which hand this frame is for
+                "joints": [
+                    {"name": "wrist",          "pos": [x,y,z], "rot": [x,y,z,w], "radius": 0.02},
+                    {"name": "thumb-metacarpal", "pos": [...], "rot": [...]},
+                    ... 26 entries total, in OpenXR canonical order
+                ],
+                "meta": {...}                       # optional, e.g. tracking confidence
+            }
+
+        We flatten joints into `data.values = [px,py,pz, rx,ry,rz,rw] * N`
+        so it matches LASK5's `data.values` convention (the recorder pulls
+        from this field). The structured per-joint form is preserved under
+        `data.hands` for the JSONL sidecar -- if you later want to know
+        WHICH joint a column corresponds to, the sidecar tells you, while
+        the trainable CSV stays a plain matrix of floats.
+
+        Empty payloads (e.g. headset reports tracking lost this frame)
+        are silently dropped -- we want gaps in the data, not zero rows
+        that would mislead the model.
+        """
+        joints = payload.get("joints") or []
+        if not joints:
+            return
+
+        flat: list[float] = []
+        joint_names: list[str] = []
+        for j in joints:
+            pos = j.get("pos") or [0.0, 0.0, 0.0]
+            rot = j.get("rot") or [0.0, 0.0, 0.0, 1.0]
+            flat.extend(float(v) for v in pos)
+            flat.extend(float(v) for v in rot)
+            joint_names.append(j.get("name", ""))
+
+        pkt = OpenMusclePacket(
+            version=CURRENT_VERSION,
+            device_type="quest_hand",
+            device_id=payload.get("device_id") or "quest-01",
+            timestamp_ms=int(payload.get("ts") or 0),
+            data={
+                "values": flat,
+                "handedness": payload.get("handedness") or "unknown",
+                "joint_names": joint_names,
+                "hands": {
+                    "handedness": payload.get("handedness") or "unknown",
+                    "joints": joints,
+                },
+            },
+            metadata=payload.get("meta") or {},
+            receive_time=time.time(),
+        )
+        self._handle_packet(pkt)
 
     # Flush JSONL sidecars every N frames to bound crash-loss to ~3 s of
     # data while keeping syscalls ~50× cheaper than line-buffered writes.

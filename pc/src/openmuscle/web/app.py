@@ -134,6 +134,40 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         finally:
             state.ws_clients.discard(websocket)
 
+    # Inbound WS from the Quest headset. Browsers can't speak UDP so the
+    # WebXR client opens this socket and pushes XRHand joint frames as
+    # JSON. We feed each frame through ingest_quest_packet, which
+    # synthesizes a device_type="quest_hand" OpenMusclePacket and routes
+    # it through the same _handle_packet path as UDP devices. Net effect:
+    # the Quest looks like any other label-producing device to the
+    # recorder, matcher, snapshot, and meta-sidecar code.
+    @app.websocket("/ws/quest")
+    async def ws_quest(websocket: WebSocket):
+        await websocket.accept()
+        client = (f"{websocket.client.host}:{websocket.client.port}"
+                  if websocket.client else "unknown")
+        state.log_buffer.info("quest", f"connected: {client}")
+        frame_count = 0
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                try:
+                    state.ingest_quest_packet(payload)
+                    frame_count += 1
+                except Exception as e:
+                    # Per-frame errors shouldn't kill the socket -- a single
+                    # malformed frame happens; the next one is usually fine.
+                    state.log_buffer.warn(
+                        "quest", f"ingest failed at frame {frame_count}: "
+                                 f"{type(e).__name__}: {e}")
+        except WebSocketDisconnect:
+            state.log_buffer.info(
+                "quest", f"disconnected: {client} after {frame_count} frames")
+        except Exception as e:
+            state.log_buffer.error(
+                "quest", f"socket error from {client}: "
+                         f"{type(e).__name__}: {e}")
+
     # ----- REST: devices -----
 
     @app.get("/api/devices")
