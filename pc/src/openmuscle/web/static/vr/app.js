@@ -45,15 +45,20 @@ const HEATMAP_FORWARD_M  = 0.70;    // panel placed 70cm in front at session sta
 const HEATMAP_W          = 0.40;    // 40cm panel matches FlexGrid 15:4 aspect
 const HEATMAP_H          = 0.12;
 
-// Menu panel sits below the heatmap. Flat plane with rectangular buttons,
-// hit-tested by raycast from the off-hand's pointing direction.
-const MENU_W             = 0.46;
-const MENU_H             = 0.20;
+// Menu panel sits below the heatmap. Flat plane with rectangular buttons in
+// a 3-wide x 2-tall grid, hit-tested by raycast from the off-hand. Top row
+// = "what's running right now" toggles (REC / SESSION / PREDICT). Bottom
+// row = actions and system (TRAIN / RECENTER / EXIT VR).
+const MENU_COLS          = 3;
+const MENU_ROWS          = 2;
+const MENU_BTN_W         = 0.16;
+const MENU_BTN_H         = 0.07;
+const MENU_BTN_GAP       = 0.012;
+const MENU_PAD           = 0.020;
+const MENU_W             = MENU_COLS * MENU_BTN_W + (MENU_COLS - 1) * MENU_BTN_GAP + 2 * MENU_PAD;
+const MENU_H             = MENU_ROWS * MENU_BTN_H + (MENU_ROWS - 1) * MENU_BTN_GAP + 2 * MENU_PAD;
 const MENU_OFFSET_DOWN   = 0.23;    // panel center this far below the heatmap
 const MENU_TILT_DEG      = 18;      // tilt top of panel toward head so it's readable
-const MENU_BTN_W         = 0.20;
-const MENU_BTN_H         = 0.075;
-const MENU_BTN_GAP       = 0.012;
 
 const STATUS_ROW_DOWN    = 0.41;    // status strip sits below the menu
 const STATUS_W           = HEATMAP_W;
@@ -152,6 +157,9 @@ const uiState = {
     sessionActive: false,
     sessionId: null,
     training: false,
+    inferenceLoaded: false,        // a model is loaded on the server
+    inferenceEnabled: false,       // and predictions are actively flowing
+    inferenceModel: null,          // model name string for status
     // pinch is the hands-free fallback for REC only
     pinchStart: 0,
     lastPinchToggleAt: 0,
@@ -205,15 +213,20 @@ function initScene() {
     scene.add(headerMesh);
     drawHeader('connecting…', false);
 
-    // Menu panel + 2x2 grid of rectangular buttons. Hit-tested by raycast
-    // from the off-hand controller; activated by pinch (XRInputSource
-    // "select" event). Pinch-to-record on the captured arm still works
-    // independently (handled in detectPinchAndToggle).
+    // Menu panel + 3x2 grid of rectangular buttons. Top row = toggles for
+    // active state (recording / session / inference). Bottom row = actions
+    // and system. Hit-tested by raycast from the off-hand controller;
+    // activated by pinch (XRInputSource "select" event). Pinch-to-record
+    // on the captured arm still works independently.
     createMenuPanel();
-    createMenuButton('REC',     'REC',     () => uiState.recording,     toggleRecording, 0, 0);
-    createMenuButton('SESSION', 'SESSION', () => uiState.sessionActive, toggleSession,   0, 1);
-    createMenuButton('TRAIN',   'TRAIN',   () => uiState.training,      runTrain,        1, 0);
-    createMenuButton('EXIT',    'EXIT VR', () => false,                 exitVR,          1, 1);
+    // Row 0: state toggles
+    createMenuButton('REC',     'REC',     () => uiState.recording,        toggleRecording, 0, 0);
+    createMenuButton('SESSION', 'SESSION', () => uiState.sessionActive,    toggleSession,   0, 1);
+    createMenuButton('PREDICT', 'PREDICT', () => uiState.inferenceEnabled, togglePredict,   0, 2);
+    // Row 1: actions
+    createMenuButton('TRAIN',   'TRAIN',    () => uiState.training, runTrain,    1, 0);
+    createMenuButton('RECENTER','RECENTER', () => false,            recenterUI,  1, 1);
+    createMenuButton('EXIT',    'EXIT VR',  () => false,            exitVR,      1, 2);
 
     // Controller objects (one per hand). renderer.xr.getController(i) returns
     // a Three.js Object3D whose transform is updated each frame by the XR
@@ -328,10 +341,10 @@ function createMenuButton(name, label, isActive, onActivate, row, col) {
     });
     const mesh = new THREE.Mesh(
         new THREE.PlaneGeometry(MENU_BTN_W, MENU_BTN_H), mat);
-    // 2x2 grid centered on the panel
-    const cols = 2, rows = 2;
-    const xOffset = (col - (cols - 1) / 2) * (MENU_BTN_W + MENU_BTN_GAP);
-    const yOffset = -(row - (rows - 1) / 2) * (MENU_BTN_H + MENU_BTN_GAP);
+    // Grid laid out centered on the panel using the MENU_COLS/MENU_ROWS
+    // constants so adding/removing a row stays cheap.
+    const xOffset = (col - (MENU_COLS - 1) / 2) * (MENU_BTN_W + MENU_BTN_GAP);
+    const yOffset = -(row - (MENU_ROWS - 1) / 2) * (MENU_BTN_H + MENU_BTN_GAP);
     mesh.position.set(xOffset, yOffset, 0);
     mesh.userData.buttonName = name;  // raycaster will look this up
     menuPanel.add(mesh);
@@ -380,6 +393,42 @@ function drawMenuButton(btn, hovered) {
 function exitVR() {
     const session = renderer.xr.getSession();
     if (session) session.end();
+}
+
+// Toggle live inference on/off. Server-side: POST /api/inference/enabled
+// {enabled: bool}. We mirror inferenceEnabled from /ws/live snapshot so
+// the button's active color reflects whatever the server actually thinks.
+async function togglePredict() {
+    if (!uiState.inferenceLoaded) {
+        setStatus('no model loaded -- train one first (TRAIN button)');
+        return;
+    }
+    const next = !uiState.inferenceEnabled;
+    try {
+        const r = await fetch('/api/inference/enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: next }),
+        });
+        if (r.ok) {
+            const data = await r.json();
+            setStatus(`predict ${data.enabled ? 'ON' : 'paused'}` +
+                      (data.model ? ` (${data.model})` : ''));
+        } else {
+            setStatus(`predict toggle failed: HTTP ${r.status}`);
+        }
+    } catch (e) {
+        setStatus(`predict toggle error: ${e.message}`);
+    }
+}
+
+// Re-anchor the menu + heatmap to wherever the head is right now. Useful
+// when the user has shifted in their chair or moved around the room since
+// session start. Setting `placed = false` makes the next XRFrame call
+// placeAnchors with the current viewer pose.
+function recenterUI() {
+    placed = false;
+    setStatus('UI re-centered to your current view');
 }
 
 // Pinch on a controller -> activate whichever button the ray is currently over,
@@ -738,6 +787,12 @@ function updateFromSnapshot(snap, timestampMs) {
     // Session state mirrors the server's active_session field
     uiState.sessionActive = !!snap.active_session;
     uiState.sessionId = snap.active_session?.id || null;
+    // Inference state: drives the PREDICT button's color + label, and the
+    // togglePredict button's "no model loaded" precheck.
+    const inf = snap.inference || {};
+    uiState.inferenceLoaded  = !!inf.model;
+    uiState.inferenceEnabled = !!inf.enabled;
+    uiState.inferenceModel   = inf.model || null;
     // Re-render the status strip every frame so its fade animates without
     // needing a separate timer.
     drawStatus(lastStatusText);
@@ -850,7 +905,25 @@ async function runTrain() {
             const result = await r.json();
             const r2 = result.metrics?.r2;
             const r2str = (typeof r2 === 'number') ? r2.toFixed(3) : '?';
-            setStatus(`trained: R²=${r2str}` + (result.active ? ' · model loaded ✓' : ' (saved only)'));
+            // After a successful train+activate, kick inference on so the
+            // user sees predictions immediately. Server's default policy
+            // (from commit bd1b68a) is paused-on-load, but in VR there's
+            // no obvious second click to enable it -- TRAIN already implies
+            // "I want this model running".
+            let predictTail = '';
+            if (result.active) {
+                try {
+                    const er = await fetch('/api/inference/enabled', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: true }),
+                    });
+                    if (er.ok) predictTail = ' · predict ON';
+                } catch (e) { /* non-fatal */ }
+            }
+            setStatus(`trained: R²=${r2str}` +
+                      (result.active ? ' · model loaded ✓' : ' (saved only)') +
+                      predictTail);
         } else {
             const err = await r.text();
             setStatus(`train failed: ${err.slice(0, 80)}`);
