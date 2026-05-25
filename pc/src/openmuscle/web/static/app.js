@@ -18,10 +18,31 @@ const selStatus   = document.getElementById('captures-sel-status');
 const checkAll    = document.getElementById('captures-check-all');
 const modelsBody  = document.getElementById('models-body');
 const modelsCount = document.getElementById('models-count');
+const openFolderBtn = document.getElementById('captures-open-folder');
+
+// Ask the server to open the captures folder in the OS file manager.
+// If `name` is given, highlight that capture file inside the folder.
+async function revealCaptureFolder(name) {
+    try {
+        const r = await fetch('/api/reveal', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name || null}),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+    } catch (e) {
+        alert('Could not open folder: ' + e.message);
+    }
+}
+
+if (openFolderBtn) {
+    openFolderBtn.onclick = () => revealCaptureFolder(null);
+}
 
 // Per-user pick preferences that survive a refresh
 const STORE_SENSOR = 'om.sensor_device_id';
 const STORE_LABEL  = 'om.label_device_id';
+const STORE_HAND   = 'om.hand_target';      // last successfully-applied "host:port" — auto-restored on next launch
 
 // Set of capture filenames currently checked in the table
 const selectedCaptures = new Set();
@@ -41,6 +62,11 @@ function connectWS() {
     ws.onopen = () => {
         wsStatus.textContent = 'connected';
         wsStatus.className = 'badge online';
+        // Re-arm the hand-target auto-restore: every fresh WS connect (which
+        // includes server restarts) gets a chance to re-apply the saved hand
+        // target. Otherwise the operator has to remember to click Apply
+        // after every `openmuscle web` restart.
+        handTargetRestoreAttempted = false;
     };
     ws.onclose = () => {
         wsStatus.textContent = 'disconnected';
@@ -84,6 +110,11 @@ function handleTick(msg) {
     const lask = lastDevices.find(d => d.device_type === 'lask5');
     renderLask(lask);
     renderInference(msg.inference);
+    // Comparator + top-bar pipeline strip are Studio-shell additions.
+    // They derive everything from the per-tick snapshot, so they update
+    // in lockstep with the underlying bars and the WS message.
+    renderResiduals(lask, msg.inference);
+    renderPipelinePills(msg, lask);
 }
 
 // ---------- device list ----------
@@ -370,6 +401,7 @@ function renderActiveSession() {
                         <span class="session-meta-line">${armBit}${subj} · ${s.capture_count || 0} captures · ${formatUptime(dur)}${gestures}</span>
                     </div>
                     <div class="session-actions">
+                        <button class="link" id="active-session-add-btn" title="Retroactively add past captures to this session">＋ Add</button>
                         <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
                         <button class="link danger" id="session-end-btn">■ End session</button>
                     </div>
@@ -377,6 +409,8 @@ function renderActiveSession() {
                 ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
             </div>`;
         document.getElementById('session-end-btn').onclick = endSession;
+        const addBtn = document.getElementById('active-session-add-btn');
+        if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
         sessionStartBtn.disabled = true;
         sessionStartBtn.title = 'End the current session before starting a new one';
         capturesFilterLabel.textContent = `· filtered to ${s.name || s.id}`;
@@ -400,6 +434,137 @@ async function refreshPastSessions() {
     } catch (e) { /* best-effort */ }
 }
 
+// Sessions whose capture list is currently expanded in the UI. Persisted
+// across re-renders (refreshPastSessions can fire on its own) so a poll
+// doesn't collapse what the user just opened.
+const expandedSessions = new Set();
+
+// ---------- Add-captures-to-session picker modal ----------
+//
+// Lets the operator retroactively assign past recordings (made without an
+// active session) to a session. The picker shows every capture NOT
+// currently linked to the target session, with checkboxes for bulk add.
+//
+// Wires up:
+//   - "+ Add captures" button in each past-session card
+//   - "×" remove button on each capture in the expanded view
+
+const linkModal       = document.getElementById('link-modal');
+const linkSessionName = document.getElementById('link-session-name');
+const linkCaptureList = document.getElementById('link-capture-list');
+const linkAddBtn      = document.getElementById('link-add-btn');
+let linkSessionId     = null;            // current session being edited
+const linkSelected    = new Set();       // capture names currently checked
+
+function openLinkModal(session) {
+    linkSessionId = session.id;
+    linkSelected.clear();
+    linkSessionName.textContent = session.name || session.id;
+    linkAddBtn.disabled = true;
+    linkAddBtn.textContent = 'Add 0 captures';
+    linkCaptureList.innerHTML = '<div class="empty">Loading captures…</div>';
+    linkModal.classList.add('open');
+    linkModal.setAttribute('aria-hidden', 'false');
+
+    // Fetch the full capture list, filter out ones already in this session.
+    fetch('/api/captures')
+        .then(r => r.ok ? r.json() : Promise.reject('fetch failed'))
+        .then(list => {
+            const alreadyLinked = new Set(session.captures || []);
+            const candidates = list.filter(c => !alreadyLinked.has(c.name));
+            if (!candidates.length) {
+                linkCaptureList.innerHTML = '<div class="empty">All captures are already in this session.</div>';
+                return;
+            }
+            // Render rows with checkbox + name + meta summary + (if linked
+            // to a different session) an annotation so the operator doesn't
+            // accidentally yank a capture out of another session.
+            linkCaptureList.innerHTML = candidates.map(c => {
+                const meta = c.meta || {};
+                const otherSession = (meta.tags || []).find(t => t.startsWith('session:'));
+                const otherNote = otherSession
+                    ? `<span class="link-other-session" title="Linked to ${escapeHtml(otherSession.slice(8))}">⚠ ${escapeHtml(otherSession)}</span>`
+                    : '';
+                const kb = (c.size_bytes / 1024).toFixed(1);
+                return `<label class="link-capture-row">
+                    <input type="checkbox" data-name="${escapeHtml(c.name)}">
+                    <span class="link-capture-name">${escapeHtml(c.name)}</span>
+                    <span class="link-capture-size">${kb} KB</span>
+                    ${otherNote}
+                </label>`;
+            }).join('');
+            linkCaptureList.querySelectorAll('input[type=checkbox]').forEach(cb => {
+                cb.onchange = () => {
+                    if (cb.checked) linkSelected.add(cb.dataset.name);
+                    else            linkSelected.delete(cb.dataset.name);
+                    const n = linkSelected.size;
+                    linkAddBtn.disabled = (n === 0);
+                    linkAddBtn.textContent = `Add ${n} capture${n === 1 ? '' : 's'}`;
+                };
+            });
+        })
+        .catch(err => {
+            linkCaptureList.innerHTML = '<div class="empty">Could not load captures.</div>';
+            console.warn('link picker fetch:', err);
+        });
+}
+
+function closeLinkModal() {
+    linkModal.classList.remove('open');
+    linkModal.setAttribute('aria-hidden', 'true');
+    linkSessionId = null;
+    linkSelected.clear();
+}
+
+linkModal.querySelectorAll('[data-close]').forEach(el => {
+    el.addEventListener('click', closeLinkModal);
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && linkModal.classList.contains('open')) closeLinkModal();
+});
+
+linkAddBtn.onclick = async () => {
+    if (!linkSessionId || linkSelected.size === 0) return;
+    linkAddBtn.disabled = true;
+    linkAddBtn.textContent = 'Adding…';
+    try {
+        const r = await fetch(`/api/sessions/${encodeURIComponent(linkSessionId)}/captures`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({capture_names: [...linkSelected]}),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+        const result = await r.json();
+        if ((result.skipped || []).length) {
+            // Surface skips inline -- e.g. "already in another session"
+            console.warn('some captures skipped:', result.skipped);
+        }
+        closeLinkModal();
+        await refreshPastSessions();
+        await refreshCaptures();
+    } catch (e) {
+        alert('Add failed: ' + (e.message || e));
+        linkAddBtn.disabled = false;
+        const n = linkSelected.size;
+        linkAddBtn.textContent = `Add ${n} capture${n === 1 ? '' : 's'}`;
+    }
+};
+
+async function removeCaptureFromSession(sessionId, captureName) {
+    if (!confirm(`Remove ${captureName} from this session?\n(The capture file itself stays — just the link is cleared.)`)) return;
+    try {
+        const r = await fetch(
+            `/api/sessions/${encodeURIComponent(sessionId)}/captures/${encodeURIComponent(captureName)}`,
+            {method: 'DELETE'}
+        );
+        if (!r.ok) throw new Error(await readError(r));
+        await refreshPastSessions();
+        await refreshCaptures();
+    } catch (e) {
+        alert('Remove failed: ' + (e.message || e));
+    }
+}
+
 function renderPastSessions() {
     if (!pastSessions.length) {
         pastSessionsList.innerHTML = '<div class="session-empty">No past sessions yet.</div>';
@@ -408,21 +573,59 @@ function renderPastSessions() {
     pastSessionsList.innerHTML = pastSessions.map(s => {
         const dur = (s.ended_at && s.started_at) ? Math.floor(s.ended_at - s.started_at) : null;
         const armBit = s.arm ? escapeHtml(s.arm) + ' arm' : '—';
-        const captures = s.capture_count || (s.captures || []).length;
-        return `<div class="session-card">
-            <div class="session-head">
+        const captureList = Array.isArray(s.captures) ? s.captures : [];
+        const captureCount = s.capture_count != null ? s.capture_count : captureList.length;
+        const isOpen = expandedSessions.has(s.id);
+        const caret = captureList.length ? (isOpen ? '▾' : '▸') : '·';
+        // The captures sub-list is a sibling div, toggled by .hidden. We
+        // render it eagerly (with .hidden if closed) so the open/close
+        // animation isn't required and so screen readers can find it.
+        const capturesInner = captureList.length
+            ? captureList.map(name => `
+                <li class="session-capture-row" data-name="${escapeHtml(name)}">
+                    <span class="session-capture-name">${escapeHtml(name)}</span>
+                    <span class="session-capture-actions">
+                        <button class="link" data-reveal-cap="${escapeHtml(name)}" title="Show in file manager">📂</button>
+                        <button class="link" data-edit-cap="${escapeHtml(name)}">edit</button>
+                        <a href="/api/captures/${encodeURIComponent(name)}/download" download>download</a>
+                        <button class="link danger" data-unlink-cap="${escapeHtml(name)}" data-from-session="${escapeHtml(s.id)}" title="Remove from this session (file stays)">×</button>
+                    </span>
+                </li>`).join('')
+            : '<li class="session-capture-empty">No captures linked to this session.</li>';
+
+        return `<div class="session-card" data-session="${escapeHtml(s.id)}">
+            <div class="session-head session-head-clickable" data-toggle-session="${escapeHtml(s.id)}">
                 <div>
+                    <span class="session-caret">${caret}</span>
                     <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.subject || '—')} · ${captures} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.subject || '—')} · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
                 </div>
                 <div class="session-actions">
+                    <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
                     <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
                     <button class="link danger" data-delete-session="${escapeHtml(s.id)}">delete</button>
                 </div>
             </div>
             ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
+            <ul class="session-captures-list ${isOpen ? '' : 'hidden'}">${capturesInner}</ul>
         </div>`;
     }).join('');
+
+    // Stop session-action buttons from triggering the row-toggle handler
+    pastSessionsList.querySelectorAll('.session-actions button').forEach(btn => {
+        btn.addEventListener('click', e => e.stopPropagation());
+    });
+
+    // Toggle expand/collapse when the session header row is clicked
+    pastSessionsList.querySelectorAll('[data-toggle-session]').forEach(head => {
+        head.onclick = () => {
+            const sid = head.dataset.toggleSession;
+            if (expandedSessions.has(sid)) expandedSessions.delete(sid);
+            else expandedSessions.add(sid);
+            renderPastSessions();
+        };
+    });
+
     pastSessionsList.querySelectorAll('button[data-delete-session]').forEach(btn => {
         btn.onclick = async () => {
             const sid = btn.dataset.deleteSession;
@@ -433,6 +636,34 @@ function renderPastSessions() {
                 await refreshPastSessions();
                 await refreshCaptures();
             } catch (e) { alert('Delete failed: ' + e.message); }
+        };
+    });
+
+    // Per-capture actions inside the expanded list
+    pastSessionsList.querySelectorAll('button[data-reveal-cap]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            revealCaptureFolder(btn.dataset.revealCap);
+        };
+    });
+    pastSessionsList.querySelectorAll('button[data-edit-cap]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            openMetaModal(btn.dataset.editCap);
+        };
+    });
+    pastSessionsList.querySelectorAll('button[data-unlink-cap]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            removeCaptureFromSession(btn.dataset.fromSession, btn.dataset.unlinkCap);
+        };
+    });
+    pastSessionsList.querySelectorAll('button[data-add-to-session]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            const sid = btn.dataset.addToSession;
+            const session = pastSessions.find(s => s.id === sid);
+            if (session) openLinkModal(session);
         };
     });
 }
@@ -643,6 +874,7 @@ function renderCaptures(list) {
             <td>${escapeHtml(date)}</td>
             <td class="actions">
                 <button class="link" data-edit="${escapeHtml(c.name)}">edit</button>
+                <button class="link" data-reveal="${escapeHtml(c.name)}" title="Show this file in your file manager">📂</button>
                 <a href="/api/captures/${encodeURIComponent(c.name)}/download" download>download</a>
                 <button class="link danger" data-del="${escapeHtml(c.name)}">delete</button>
             </td>
@@ -668,6 +900,9 @@ function renderCaptures(list) {
     });
     capturesBody.querySelectorAll('button[data-edit]').forEach(btn => {
         btn.onclick = () => openMetaModal(btn.dataset.edit);
+    });
+    capturesBody.querySelectorAll('button[data-reveal]').forEach(btn => {
+        btn.onclick = () => revealCaptureFolder(btn.dataset.reveal);
     });
     updateSelectionStatus();
 }
@@ -1035,7 +1270,43 @@ function renderInference(inf) {
     });
 }
 
+// One-shot: if the server has no hand_target on first snapshot but we have
+// one saved in localStorage, auto-apply it so launching `openmuscle web`
+// doesn't lose the address every time. UDP-only (the only protocol we
+// support); port defaults to 3145.
+let handTargetRestoreAttempted = false;
+function maybeRestoreHandTarget(inf) {
+    if (handTargetRestoreAttempted) return;
+    if (!inf) return;                           // wait for first inference snapshot
+    handTargetRestoreAttempted = true;          // one-shot regardless of outcome
+    if (inf.hand_target) return;                // server already has one (e.g. --hand on CLI)
+    const saved = localStorage.getItem(STORE_HAND);
+    if (!saved) return;
+    autoApplyHandTarget(saved);
+}
+
+async function autoApplyHandTarget(raw) {
+    let host = raw, port = 3145;
+    if (raw.includes(':')) {
+        const idx = raw.lastIndexOf(':');
+        host = raw.slice(0, idx);
+        const portN = parseInt(raw.slice(idx + 1), 10);
+        if (Number.isFinite(portN) && portN > 0 && portN < 65536) port = portN;
+    }
+    try {
+        await fetch('/api/inference/hand', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ host, port }),
+        });
+    } catch (e) {
+        console.warn('hand target auto-restore failed', e);
+    }
+}
+
 function renderInferenceControls(inf) {
+    maybeRestoreHandTarget(inf);
+
     const hasModel = !!(inf && inf.model);
     const enabled  = !!(inf && inf.enabled);
 
@@ -1111,6 +1382,10 @@ async function applyHandTarget() {
             body: JSON.stringify({ host, port }),
         });
         if (!r.ok) throw new Error(await readError(r));
+        // Persist so next launch auto-restores. Clear on explicit empty
+        // so the operator can "forget" the target deliberately.
+        if (host) localStorage.setItem(STORE_HAND, raw);
+        else      localStorage.removeItem(STORE_HAND);
         // Force the snapshot side to refresh by clearing the cache so the
         // next tick syncs the (possibly normalized) value back into the input.
         lastSnapshotHand = undefined;
@@ -1123,6 +1398,110 @@ inferHandApply.onclick = applyHandTarget;
 inferHandInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') applyHandTarget();
 });
+
+// ---------- Studio shell: comparator residuals (Δ) ----------
+
+// Compute per-piston residual (predicted - ground_truth) and write it into
+// the .delta-row elements in the comparator. Color-codes by direction so
+// the operator can see at a glance whether the model is over- or under-
+// shooting each finger.
+//
+// CLOSE_THRESHOLD picked at 0.05 (5% of the 0..1 scale) — below that, the
+// difference is below the noise floor of the LASK5 measurement itself.
+const RESIDUAL_CLOSE_THRESHOLD = 0.05;
+
+function renderResiduals(laskDev, inf) {
+    const deltaRows = document.querySelectorAll('#comparator-deltas .delta-row');
+    if (!deltaRows.length) return;
+    const gt   = laskDev && Array.isArray(laskDev.values) ? laskDev.values : null;
+    const pred = inf && Array.isArray(inf.piston_values)  ? inf.piston_values : null;
+
+    deltaRows.forEach((row, i) => {
+        const valEl = row.querySelector('.delta-val');
+        row.classList.remove('over', 'under', 'close');
+        if (!gt || !pred || i >= gt.length || i >= pred.length) {
+            if (valEl) valEl.textContent = '--';
+            return;
+        }
+        const g = pistonFraction(gt[i]);
+        const p = pistonFraction(pred[i]);
+        const d = p - g;
+        valEl.textContent = (d >= 0 ? '+' : '') + d.toFixed(2);
+        if (Math.abs(d) < RESIDUAL_CLOSE_THRESHOLD) row.classList.add('close');
+        else if (d > 0)                              row.classList.add('over');
+        else                                          row.classList.add('under');
+    });
+}
+
+// ---------- Studio shell: top-bar pipeline status strip ----------
+
+// Set a pipe-pill's status + value text. State controls colour:
+//   'live'  -- blue accent (data flowing)
+//   'ok'    -- green (idle but healthy)
+//   'warn'  -- orange
+//   'bad'   -- red
+//   ''      -- neutral grey
+function setPipePill(id, state, valText) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('ok', 'warn', 'bad', 'live');
+    if (state) el.classList.add(state);
+    const valEl = el.querySelector('.pipe-val');
+    if (valEl) valEl.textContent = valText;
+}
+
+function renderPipelinePills(msg, laskDev) {
+    // SENSOR pill = the active flexgrid (the one driving the heatmap)
+    const dev = selectedDevice();
+    if (dev && dev.device_type === 'flexgrid') {
+        const stale = dev.last_seen_age > 2.0;
+        setPipePill('pipe-sensor', stale ? 'warn' : 'live', `${dev.hz.toFixed(0)}Hz`);
+    } else {
+        setPipePill('pipe-sensor', '', '--');
+    }
+
+    // LABEL pill = LASK5 stream
+    if (laskDev) {
+        const stale = laskDev.last_seen_age > 2.0;
+        setPipePill('pipe-label', stale ? 'warn' : 'live', `${laskDev.hz.toFixed(0)}Hz`);
+    } else {
+        setPipePill('pipe-label', '', '--');
+    }
+
+    // CAPTURE pill
+    if (recordingState) {
+        const matchRate = recordingState.match_rate ?? 0;
+        const cls = matchRate < 0.5 ? 'bad' : (matchRate < 0.9 ? 'warn' : 'live');
+        setPipePill('pipe-capture', cls, `REC ${recordingState.rows ?? 0}r`);
+    } else if (activeSession) {
+        setPipePill('pipe-capture', 'ok', `session: ${activeSession.name || activeSession.id}`);
+    } else {
+        setPipePill('pipe-capture', '', 'idle');
+    }
+
+    // MODEL pill
+    const inf = msg.inference;
+    if (inf && inf.model && inf.enabled)        setPipePill('pipe-model', 'live', inf.model);
+    else if (inf && inf.model && !inf.enabled)  setPipePill('pipe-model', 'ok', inf.model + ' (paused)');
+    else                                         setPipePill('pipe-model', '', 'none');
+
+    // HAND pill = UDP forwarding target
+    if (inf && inf.hand_target) setPipePill('pipe-hand', 'live', inf.hand_target);
+    else                        setPipePill('pipe-hand', '', 'off');
+}
+
+// ---------- Studio shell: diagnostics drawer ----------
+
+const diagToggle = document.getElementById('diag-toggle');
+const diagBody   = document.getElementById('diag-body');
+if (diagToggle && diagBody) {
+    diagToggle.onclick = () => {
+        const isHidden = diagBody.classList.toggle('hidden');
+        diagToggle.setAttribute('aria-expanded', isHidden ? 'false' : 'true');
+        diagToggle.textContent = (isHidden ? '▸' : '▾') + ' Diagnostics & logs';
+        // Logs poll runs unconditionally; we just hide the DOM. Cheap.
+    };
+}
 
 // ---------- utils ----------
 

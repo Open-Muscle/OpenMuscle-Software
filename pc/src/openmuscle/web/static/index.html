@@ -3,179 +3,292 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenMuscle Live</title>
+    <title>OpenMuscle Studio</title>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <header>
-        <h1>OpenMuscle <span class="subtitle">Live</span></h1>
-        <div class="status">
+    <header class="topbar">
+        <div class="brand">
+            <h1>OpenMuscle <span class="subtitle">Studio</span></h1>
+        </div>
+
+        <!-- Pipeline status strip: glance-tells "this is a pipeline tool".
+             Each pill is click-to-scroll to its stage. Updated every WS tick
+             by renderPipelinePills() in app.js. -->
+        <nav class="pipeline-strip" aria-label="pipeline status">
+            <a href="#stage-live"    class="pipe-pill" id="pipe-sensor">SENSOR  <span class="pipe-val">--</span></a>
+            <span class="pipe-arrow">→</span>
+            <a href="#stage-live"    class="pipe-pill" id="pipe-label">LABEL   <span class="pipe-val">--</span></a>
+            <span class="pipe-arrow">→</span>
+            <a href="#stage-capture" class="pipe-pill" id="pipe-capture">CAPTURE <span class="pipe-val">idle</span></a>
+            <span class="pipe-arrow">→</span>
+            <a href="#stage-models"  class="pipe-pill" id="pipe-model">MODEL   <span class="pipe-val">none</span></a>
+            <span class="pipe-arrow">→</span>
+            <a href="#stage-output"  class="pipe-pill" id="pipe-hand">HAND    <span class="pipe-val">off</span></a>
+        </nav>
+
+        <div class="topbar-right">
             <span id="ws-status" class="badge offline">disconnected</span>
         </div>
     </header>
 
-    <main>
-        <section class="panel devices">
-            <h2>Devices</h2>
-            <ul id="device-list">
-                <li class="empty">Waiting for a device to send a packet…</li>
-            </ul>
+    <main class="studio">
+
+        <!-- ============================================================
+             STAGE 1 — LIVE (hero)
+             Heatmap + GT-vs-Predicted comparator + joystick.
+             Devices collapse into a thin rail on the left.
+             ============================================================ -->
+        <section id="stage-live" class="stage stage-live">
+            <header class="stage-head">
+                <h2 class="stage-title"><span class="stage-num">1</span> Live</h2>
+                <span class="stage-sub">what the band feels · what the model thinks</span>
+            </header>
+
+            <div class="live-grid">
+                <!-- Devices rail (left, collapsible by clicking the header) -->
+                <aside class="devices-rail">
+                    <h3 class="rail-head">Devices</h3>
+                    <ul id="device-list" class="devices-compact">
+                        <li class="empty">Waiting for a device to send a packet…</li>
+                    </ul>
+                </aside>
+
+                <!-- Heatmap (center, the hero) -->
+                <div class="heatmap-hero">
+                    <div class="heatmap-header">
+                        <span id="heatmap-meta" class="meta-line"></span>
+                    </div>
+                    <canvas id="heatmap" width="900" height="240"></canvas>
+                </div>
+
+                <!-- GT-vs-Predicted comparator (right). Keeps the two existing
+                     piston containers (#lask-bars + #inference-bars) intact so
+                     renderLask/renderInference don't change; adds a residual Δ
+                     column between them computed by renderResiduals(). -->
+                <div class="comparator">
+                    <div class="comparator-head">
+                        <h3>Ground truth <span class="vs">vs</span> Predicted</h3>
+                        <div class="comparator-sublabels">
+                            <span class="meta-line">GT: <span id="lask-meta">no device</span></span>
+                            <span class="meta-line">MODEL: <span id="inference-meta">no model loaded</span></span>
+                        </div>
+                    </div>
+
+                    <div class="comparator-row">
+                        <!-- LEFT: ground-truth piston bars (rendered by renderLask) -->
+                        <div id="lask-bars" class="piston-bars">
+                            <div class="piston" data-i="0"><div class="piston-label">P1</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                            <div class="piston" data-i="1"><div class="piston-label">P2</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                            <div class="piston" data-i="2"><div class="piston-label">P3</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                            <div class="piston" data-i="3"><div class="piston-label">P4</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                        </div>
+
+                        <!-- CENTER: live residual Δ per piston (pred - gt) -->
+                        <div id="comparator-deltas" class="comparator-deltas">
+                            <div class="delta-row" data-i="0">Δ<span class="delta-val">--</span></div>
+                            <div class="delta-row" data-i="1">Δ<span class="delta-val">--</span></div>
+                            <div class="delta-row" data-i="2">Δ<span class="delta-val">--</span></div>
+                            <div class="delta-row" data-i="3">Δ<span class="delta-val">--</span></div>
+                        </div>
+
+                        <!-- RIGHT: predicted piston bars (rendered by renderInference) -->
+                        <div id="inference-bars" class="piston-bars dimmed">
+                            <div class="piston" data-i="0"><div class="piston-label">P1̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                            <div class="piston" data-i="1"><div class="piston-label">P2̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                            <div class="piston" data-i="2"><div class="piston-label">P3̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                            <div class="piston" data-i="3"><div class="piston-label">P4̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Joystick stays as a small inset; LASK5 sends the
+                         operator's joystick state for free, useful as a
+                         signal-of-life indicator. -->
+                    <div id="lask-joystick" class="joystick-inset">
+                        <canvas id="joystick-canvas" width="64" height="64"></canvas>
+                        <span id="joystick-vals" class="joy-vals">--, --</span>
+                    </div>
+
+                    <!-- Inference run/pause toggle lives here because it
+                         literally controls the right-half bars above. -->
+                    <div class="comparator-controls">
+                        <button id="infer-toggle" disabled>▶ Start</button>
+                        <span class="comparator-hint">predictions to a robot hand: see Stage 4</span>
+                    </div>
+                </div>
+            </div>
         </section>
 
-        <section class="panel heatmap-panel">
-            <div class="heatmap-header">
-                <h2>Heatmap</h2>
-                <span id="heatmap-meta"></span>
+        <!-- ============================================================
+             STAGE 2 — CAPTURE
+             Active session + record controls in one strip.
+             Past sessions collapsible below.
+             ============================================================ -->
+        <section id="stage-capture" class="stage stage-capture">
+            <header class="stage-head">
+                <h2 class="stage-title"><span class="stage-num">2</span> Capture</h2>
+                <span class="stage-sub">session + record · paired sensor/label rows go to disk</span>
+            </header>
+
+            <div class="capture-strip">
+                <!-- Session block (left) -->
+                <div class="capture-session">
+                    <div class="capture-session-head">
+                        <span class="capture-section-label">Session</span>
+                        <button id="session-start-btn" class="link">＋ New session</button>
+                    </div>
+                    <div id="active-session-area">
+                        <div class="session-empty">No active session — recordings won't be grouped. Click "New session" to start one.</div>
+                    </div>
+                </div>
+
+                <!-- Record block (right) -->
+                <div class="capture-record">
+                    <div class="capture-session-head">
+                        <span class="capture-section-label">Record</span>
+                    </div>
+                    <div class="record-controls">
+                        <label class="rec-pick"><span>Sensor</span><select id="sensor-select"></select></label>
+                        <label class="rec-pick"><span>Label</span><select id="label-select"></select></label>
+                        <input id="capture-name" type="text" placeholder="capture filename (optional)">
+                        <button id="record-btn" class="primary">● Start recording</button>
+                    </div>
+                    <div id="record-status" class="rec-status"></div>
+                </div>
             </div>
-            <canvas id="heatmap" width="900" height="240"></canvas>
+
+            <!-- Past sessions: still collapsible per existing behaviour -->
+            <button id="past-sessions-toggle" class="past-sessions-toggle">▸ Past sessions</button>
+            <div id="past-sessions-list" class="hidden"></div>
         </section>
 
-        <section class="panel lask-panel">
-            <div class="lask-header">
-                <h2>LASK5 — Ground Truth</h2>
-                <span id="lask-meta" class="meta-line">no device</span>
-            </div>
-            <div id="lask-bars" class="piston-bars">
-                <div class="piston" data-i="0"><div class="piston-label">P1</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                <div class="piston" data-i="1"><div class="piston-label">P2</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                <div class="piston" data-i="2"><div class="piston-label">P3</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                <div class="piston" data-i="3"><div class="piston-label">P4</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-            </div>
-            <div id="lask-joystick" class="joystick">
-                <span class="joy-label">joystick</span>
-                <canvas id="joystick-canvas" width="80" height="80"></canvas>
-                <span id="joystick-vals" class="joy-vals">--, --</span>
+        <!-- ============================================================
+             STAGE 3 — DATA & MODELS
+             Captures table | Train arrow | Models table.
+             Future: honest-metric columns + adaptive card (PR #3).
+             ============================================================ -->
+        <section id="stage-models" class="stage stage-data">
+            <header class="stage-head">
+                <h2 class="stage-title"><span class="stage-num">3</span> Data &amp; Models</h2>
+                <span class="stage-sub">captures become models · audit honestly · iterate</span>
+            </header>
+
+            <div class="data-grid">
+                <!-- LEFT: captures -->
+                <div class="captures-col">
+                    <div class="captures-header">
+                        <h3>Captures <span id="captures-filter-label" class="captures-filter"></span></h3>
+                        <div class="captures-actions">
+                            <span id="captures-sel-status" class="sel-status">0 selected</span>
+                            <button id="captures-open-folder" class="link" title="Open the captures folder in your file manager">📂 Open folder</button>
+                        </div>
+                    </div>
+                    <table id="captures-table">
+                        <thead>
+                            <tr>
+                                <th class="captures-check"><input id="captures-check-all" type="checkbox"></th>
+                                <th>Name</th>
+                                <th>Meta</th>
+                                <th>Size</th>
+                                <th>Modified</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="captures-body">
+                            <tr class="empty"><td colspan="6">No captures saved yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- CENTER: train bridge (visual arrow between cols) -->
+                <div class="train-bridge">
+                    <button id="train-btn" class="primary" disabled>⚙ Train →</button>
+                    <div id="train-status" class="train-status"></div>
+                </div>
+
+                <!-- RIGHT: models -->
+                <div class="models-col">
+                    <div class="captures-header">
+                        <h3>Models</h3>
+                        <span id="models-count" class="sel-status"></span>
+                    </div>
+                    <table id="models-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Created</th>
+                                <th>R²</th>
+                                <th>MSE</th>
+                                <th>Features × Labels</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="models-body">
+                            <tr class="empty"><td colspan="6">No models trained yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </section>
 
-        <section class="panel inference-panel">
-            <div class="lask-header">
-                <h2>LASK Inference — Predicted</h2>
-                <span id="inference-meta" class="meta-line">no model loaded</span>
-            </div>
-            <div id="inference-bars" class="piston-bars dimmed">
-                <div class="piston" data-i="0"><div class="piston-label">P1̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-                <div class="piston" data-i="1"><div class="piston-label">P2̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-                <div class="piston" data-i="2"><div class="piston-label">P3̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-                <div class="piston" data-i="3"><div class="piston-label">P4̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-            </div>
-            <div class="inference-controls">
-                <button id="infer-toggle" disabled>▶ Start</button>
+        <!-- ============================================================
+             STAGE 4 — OUTPUT
+             Where do the predictions go? Hand UDP target controls.
+             The predicted bars themselves live in Stage 1's comparator.
+             ============================================================ -->
+        <section id="stage-output" class="stage stage-output">
+            <header class="stage-head">
+                <h2 class="stage-title"><span class="stage-num">4</span> Output</h2>
+                <span class="stage-sub">where the predictions are sent</span>
+            </header>
+            <div class="output-strip">
                 <label class="rec-pick">
                     <span>→ Hand</span>
                     <input id="infer-hand" type="text" placeholder="10.0.0.17:3145" spellcheck="false">
                 </label>
                 <button id="infer-hand-apply">Apply</button>
-                <span id="infer-hand-state" class="sel-status"></span>
+                <span id="infer-hand-state" class="sel-status">no hand target</span>
             </div>
         </section>
 
-        <section class="panel record-panel">
-            <h2>Record</h2>
-            <div class="record-controls">
-                <label class="rec-pick">
-                    <span>Sensor</span>
-                    <select id="sensor-select"></select>
-                </label>
-                <label class="rec-pick">
-                    <span>Label</span>
-                    <select id="label-select"></select>
-                </label>
-                <input id="capture-name" type="text" placeholder="capture filename (optional)">
-                <button id="record-btn" class="primary">● Start recording</button>
+        <!-- ============================================================
+             DIAGNOSTICS DRAWER (collapsed by default)
+             Logs + future telemetry detail + future tuning sliders.
+             ============================================================ -->
+        <aside class="diag-drawer">
+            <button id="diag-toggle" class="diag-toggle" aria-expanded="false">▸ Diagnostics &amp; logs</button>
+            <div id="diag-body" class="diag-body hidden">
+                <section class="diag-panel">
+                    <div class="captures-header">
+                        <h4>Logs</h4>
+                        <div class="captures-actions">
+                            <select id="log-level-filter" class="rec-pick">
+                                <option value="">all levels</option>
+                                <option value="WARN">warn + error</option>
+                                <option value="ERROR">errors only</option>
+                            </select>
+                            <button id="log-clear-btn" class="link" title="Clear visible logs (server buffer keeps history)">clear view</button>
+                            <label class="rec-pick" style="font-size:11px">
+                                <input type="checkbox" id="log-autoscroll" checked>
+                                <span>auto-scroll</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="log-list" class="log-list">
+                        <div class="log-empty">No log entries yet.</div>
+                    </div>
+                </section>
+                <!-- future: per-device telemetry detail panel; heatmap tuning sliders -->
             </div>
-            <div id="record-status" class="rec-status"></div>
-        </section>
+        </aside>
 
-        <section class="panel sessions-panel">
-            <div class="captures-header">
-                <h2>Sessions</h2>
-                <div class="captures-actions">
-                    <button id="session-start-btn" class="primary">＋ New session</button>
-                </div>
-            </div>
-            <div id="active-session-area">
-                <div class="session-empty">No active session — recordings won't be grouped. Click "New session" to start one.</div>
-            </div>
-            <button id="past-sessions-toggle" class="past-sessions-toggle">▸ Past sessions</button>
-            <div id="past-sessions-list" class="hidden"></div>
-        </section>
-
-        <section class="panel captures-panel">
-            <div class="captures-header">
-                <h2>Captures <span id="captures-filter-label" class="captures-filter"></span></h2>
-                <div class="captures-actions">
-                    <span id="captures-sel-status" class="sel-status">0 selected</span>
-                    <button id="train-btn" class="primary" disabled>⚙ Train selected</button>
-                </div>
-            </div>
-            <table id="captures-table">
-                <thead>
-                    <tr>
-                        <th class="captures-check"><input id="captures-check-all" type="checkbox"></th>
-                        <th>Name</th>
-                        <th>Meta</th>
-                        <th>Size</th>
-                        <th>Modified</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="captures-body">
-                    <tr class="empty"><td colspan="6">No captures saved yet.</td></tr>
-                </tbody>
-            </table>
-            <div id="train-status" class="train-status"></div>
-        </section>
-
-        <section class="panel models-panel">
-            <div class="captures-header">
-                <h2>Models</h2>
-                <span id="models-count" class="sel-status"></span>
-            </div>
-            <table id="models-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Created</th>
-                        <th>R²</th>
-                        <th>MSE</th>
-                        <th>Features × Labels</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="models-body">
-                    <tr class="empty"><td colspan="6">No models trained yet.</td></tr>
-                </tbody>
-            </table>
-        </section>
-
-        <section class="panel logs-panel">
-            <div class="captures-header">
-                <h2>Logs</h2>
-                <div class="captures-actions">
-                    <select id="log-level-filter" class="rec-pick">
-                        <option value="">all levels</option>
-                        <option value="WARN">warn + error</option>
-                        <option value="ERROR">errors only</option>
-                    </select>
-                    <button id="log-clear-btn" class="link" title="Clear visible logs (server buffer keeps history)">clear view</button>
-                    <label class="rec-pick" style="font-size:11px">
-                        <input type="checkbox" id="log-autoscroll" checked>
-                        <span>auto-scroll</span>
-                    </label>
-                </div>
-            </div>
-            <div id="log-list" class="log-list">
-                <div class="log-empty">No log entries yet.</div>
-            </div>
-        </section>
     </main>
 
     <footer>
-        <span>Open-Muscle · FlexGrid · <a href="https://github.com/Open-Muscle">github</a></span>
+        <span>Open-Muscle · FlexGrid Studio · <a href="https://github.com/Open-Muscle">github</a></span>
     </footer>
 
-    <!-- Session start modal -->
+    <!-- ===== Session-start modal (unchanged) ===== -->
     <div id="session-modal" class="modal" aria-hidden="true">
         <div class="modal-backdrop" data-close="1"></div>
         <div class="modal-content" role="dialog" aria-labelledby="session-modal-title">
@@ -220,7 +333,32 @@
         </div>
     </div>
 
-    <!-- Capture metadata editor (vanilla modal -- shown by toggling .open class) -->
+    <!-- ===== Add-captures-to-session picker modal ===== -->
+    <div id="link-modal" class="modal" aria-hidden="true">
+        <div class="modal-backdrop" data-close="1"></div>
+        <div class="modal-content" role="dialog" aria-labelledby="link-modal-title">
+            <header class="modal-header">
+                <h3 id="link-modal-title">Add captures to session</h3>
+                <button type="button" class="modal-close" data-close="1" aria-label="Close">×</button>
+            </header>
+            <div class="form-row">
+                <label>Session</label>
+                <span id="link-session-name" class="meta-readonly"></span>
+            </div>
+            <div class="form-row" style="grid-template-columns: 1fr;">
+                <label>Captures (not yet linked to this session)</label>
+                <div id="link-capture-list" class="link-capture-list">
+                    <div class="empty">No unlinked captures available.</div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="modal-close" data-close="1">Cancel</button>
+                <button id="link-add-btn" class="primary" disabled>Add 0 captures</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== Capture metadata modal (unchanged) ===== -->
     <div id="meta-modal" class="modal" aria-hidden="true">
         <div class="modal-backdrop" data-close="1"></div>
         <div class="modal-content" role="dialog" aria-labelledby="meta-modal-title">
