@@ -827,29 +827,51 @@ function hideHandVisualizer(meshesMap) {
     for (const m of meshesMap.values()) m.visible = false;
 }
 
-function updateGhostHand(predValues, realWristPos) {
+// Reused per-frame so we don't churn allocations in the XR loop.
+const _ghostTmpVec = new THREE.Vector3();
+const _ghostPredWristPos = new THREE.Vector3();
+const _ghostRealWristPos = new THREE.Vector3();
+const _ghostPredQuat = new THREE.Quaternion();
+const _ghostRealQuat = new THREE.Quaternion();
+const _ghostDeltaQuat = new THREE.Quaternion();
+
+function updateGhostHand(predValues, realWristPos, realWristQuat) {
     // Render the model's predicted joint positions as a ghost hand pinned
-    // to the user's actual wrist. Why offset: the model was trained on
-    // absolute world positions from whatever pose the user was in during
-    // recording, so the raw predicted positions float wherever those
-    // recordings were taken -- generally not where the user is right now.
-    // Anchoring predicted-wrist <-> real-wrist makes the visualization
-    // about the predicted SHAPE (which is what we care about) and ignores
-    // the absolute-position confound. (Rotation isn't aligned yet -- a
-    // future iteration could match wrist orientations too.)
+    // to the user's actual wrist + orientation. The model was trained on
+    // absolute world poses from wherever the recordings happened to be, so
+    // the raw predicted positions float in that recording-time world frame
+    // rather than the user's current frame. To make the visualization show
+    // predicted SHAPE rather than absolute position, we transform each
+    // predicted joint from "predicted wrist frame" into "real wrist frame":
+    //   pos_in_real_frame = real_wrist_pos + delta_quat * (pred_pos - pred_wrist_pos)
+    //   where delta_quat = real_wrist_quat * inverse(pred_wrist_quat)
+    // Position-only alignment was the v1.7 default; v1.8 adds the rotation
+    // so the ghost hand actually faces the same way as your real hand.
     if (!predValues || predValues.length < 25 * 7 || !realWristPos) {
         for (const m of ghostJointMeshes.values()) m.visible = false;
         return;
     }
-    const ox = realWristPos.x - predValues[0];
-    const oy = realWristPos.y - predValues[1];
-    const oz = realWristPos.z - predValues[2];
+    _ghostPredWristPos.set(predValues[0], predValues[1], predValues[2]);
+    _ghostRealWristPos.set(realWristPos.x, realWristPos.y, realWristPos.z);
+
+    let useRotation = false;
+    if (realWristQuat) {
+        _ghostPredQuat.set(predValues[3], predValues[4], predValues[5], predValues[6]);
+        _ghostRealQuat.set(realWristQuat.x, realWristQuat.y, realWristQuat.z, realWristQuat.w);
+        // delta = real * inverse(pred). Apply to (pred_pos - pred_wrist_pos)
+        // to land in the real-wrist's frame.
+        _ghostDeltaQuat.copy(_ghostRealQuat).multiply(_ghostPredQuat.clone().invert());
+        useRotation = true;
+    }
+
     let i = 0;
     for (const [, mesh] of ghostJointMeshes) {
         const base = i * 7;
-        mesh.position.set(predValues[base]     + ox,
-                          predValues[base + 1] + oy,
-                          predValues[base + 2] + oz);
+        _ghostTmpVec.set(predValues[base], predValues[base + 1], predValues[base + 2])
+                    .sub(_ghostPredWristPos);
+        if (useRotation) _ghostTmpVec.applyQuaternion(_ghostDeltaQuat);
+        _ghostTmpVec.add(_ghostRealWristPos);
+        mesh.position.copy(_ghostTmpVec);
         mesh.visible = true;
         i++;
     }
@@ -1192,10 +1214,13 @@ function onXRFrame(timestamp, frame) {
         const real = realCurls(frame, refSpace, capturedHand);
         const pred = predictedCurls(predValues);
         drawCompare(real, pred);
-        // Ghost hand pinned to the real wrist so the user sees the model's
-        // shape prediction overlaid on their actual hand.
+        // Ghost hand pinned to the real wrist (position AND orientation as
+        // of v1.8) so the user sees the model's shape prediction in the
+        // same frame as their actual hand.
         const wp = jointPose(frame, refSpace, capturedHand, 'wrist');
-        updateGhostHand(predValues, wp ? wp.transform.position : null);
+        updateGhostHand(predValues,
+                        wp ? wp.transform.position : null,
+                        wp ? wp.transform.orientation : null);
     } else {
         for (const m of ghostJointMeshes.values()) m.visible = false;
     }
