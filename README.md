@@ -58,6 +58,23 @@ openmuscle predict -m data/models/random_forest_*/model.pkl
 openmuscle simulate --device-type flexgrid
 ```
 
+### VR companion (Meta Quest 3)
+
+A WebXR client lets you use a Quest 3's hand tracking as ML ground truth (richer than the LASK5 4-piston labeler) and visualize the model's predictions live as a ghost hand overlaid on your real hand.
+
+```bash
+# Windows one-click launcher: starts the server, sets up adb-reverse,
+# opens Quest Browser to /vr automatically
+pc/start-vr.bat                 # right arm (default)
+pc/start-vr.bat left            # left arm
+
+# Or manually: openmuscle web, then in Quest Browser go to
+# http://localhost:8000/vr   (via `adb reverse tcp:8000 tcp:8000`)
+# https://<lan-ip>:8000/vr   (via `openmuscle web --ssl-certfile cert.pem --ssl-keyfile key.pem`)
+```
+
+Full setup + per-session walkthrough: [`docs/vr-setup.md`](docs/vr-setup.md).
+
 ### Firmware (ESP32-S3 + MicroPython)
 
 ```bash
@@ -80,8 +97,9 @@ mpremote cp embedded/devices/flexgrid_v1/config/defaults.json :/config/
 | Command | Description |
 |---------|-------------|
 | `openmuscle receive` | Live heatmap of sensor data (matplotlib) |
-| `openmuscle web` | Browser UI: live heatmap, LASK5 piston bars, ML inference panel, recording, captures management — see [`pc/src/openmuscle/web/README.md`](pc/src/openmuscle/web/README.md) |
+| `openmuscle web` | Browser UI: live heatmap, LASK5 piston bars, ML inference panel, recording, captures management. Also serves the VR companion at `/vr` (see [`docs/vr-setup.md`](docs/vr-setup.md)). Full docs: [`pc/src/openmuscle/web/README.md`](pc/src/openmuscle/web/README.md) |
 | `openmuscle web --model M.pkl --hand IP` | Same UI plus live inference, with optional UDP forwarding of predictions to an OpenHand device |
+| `openmuscle web --ssl-certfile cert.pem --ssl-keyfile key.pem` | Same UI over HTTPS (required for the VR `/vr` page over LAN, since Quest Browser refuses WebXR hand-tracking on plain HTTP) |
 | `openmuscle record -o file.csv` | Record paired data to CSV |
 | `openmuscle train data.csv` | Train ML model (RandomForest) |
 | `openmuscle predict -m model.pkl` | Real-time inference (matplotlib) |
@@ -91,9 +109,10 @@ mpremote cp embedded/devices/flexgrid_v1/config/defaults.json :/config/
 ## Documentation
 
 - [Architecture Overview](docs/architecture.md)
-- [Packet Protocol Spec](docs/protocol.md)
+- [Packet Protocol Spec](docs/protocol.md) — includes the `quest_hand` device type
 - [Adding a New Device](docs/adding-a-device.md)
 - [CLI Usage Guide](docs/pc-cli.md)
+- [VR Setup & Operation](docs/vr-setup.md) — mkcert + Quest cert install + per-session walkthrough
 
 ## Adding a New Device
 

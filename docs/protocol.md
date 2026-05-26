@@ -86,6 +86,10 @@ A per-capture `<name>.labels.schema.json` sidecar is written on the first `quest
 
 Define a new `type` string and document the `data` shape. The PC-side parser auto-discovers devices by their `type` field.
 
+## Versioning policy
+
+Adding a new `type` string (e.g. `quest_hand`) is **non-breaking under v1.0** — existing parsers ignore unknown types, the schema envelope is unchanged, and devices that don't speak the new type are unaffected. Bump the `"v"` field to `"1.1"` (or beyond) only when changing the envelope itself (required-field set, semantics of `ts`/`id`, etc.).
+
 ## Backward Compatibility
 
 The PC parser (`openmuscle.protocol.parser`) auto-detects three formats:

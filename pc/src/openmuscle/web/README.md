@@ -207,12 +207,55 @@ The WS snapshot already exposes `matrix`, `values`, and `joystick` for any devic
 
 Today there's exactly one `UDPListener` per `AppState`, on `--udp-port`. If you need to listen on more (e.g. legacy LASK5 on 3145 while keeping FlexGrid on 3141), the cleanest extension is to instantiate multiple `UDPListener`s in `AppState.__init__` and merge their queues in `run_broadcaster`. As of v0.2.0 we've standardized everything on 3141 instead, so this hasn't been needed yet.
 
+## VR companion (`/vr`)
+
+The same FastAPI process also serves a WebXR client that turns a Meta Quest 3 into a labeling rig and live demo for the muscle→finger model. Operator guide: [`docs/vr-setup.md`](../../../../../docs/vr-setup.md). Wire format for the new device type: [`docs/protocol.md`](../../../../../docs/protocol.md#quest-hand-tracking-type-quest_hand).
+
+### What's added vs the bare web UI
+
+| Surface | Purpose |
+|---|---|
+| `GET /vr` | Serves `static/vr/index.html` — landing page + WebXR client (Three.js + XRHand). |
+| `WS /ws/quest` | Inbound — accepts XRHand joint frames from the headset. Each frame is synthesized in-process into an `OpenMusclePacket(device_type="quest_hand")` and fed through the same `_handle_packet` UDP devices use. From the recorder/matcher/snapshot's view the Quest is just another device. |
+| `start-vr.bat` (in `pc/`) | One-click launcher: ADB sanity check → start server → poll until up → `adb reverse` → open Quest Browser to `/vr`. Optional arm arg (`right`\|`left`). |
+| `--ssl-certfile` / `--ssl-keyfile` | Serve HTTPS so the headset can hit `/vr` over LAN. WebXR refuses hand-tracking on plain HTTP (localhost is the only exception, via `adb reverse`). |
+
+### Why a WebSocket inbound (when everything else is UDP)
+
+Browsers can't speak UDP. WebXR therefore can't run as a UDP-emitting device. The chosen workaround is one synthesizer method (`AppState.ingest_quest_packet`) that builds the same `OpenMusclePacket` shape the UDP listener emits, so the rest of the pipeline — `_handle_packet` → `DeviceInfo.update` → `_record_packet` → `TemporalMatcher` → `CaptureWriter` — is unchanged. The integration cost was one new endpoint plus one synthesizer; everything downstream rides for free.
+
+### `quest_hand` recording specifics
+
+- **Match window default** is 175 ms for `quest_hand` label sources vs 100 ms for `lask5`, set per-device-type in `AppState.DEFAULT_WINDOW_MS_BY_TYPE`. Quest WebXR has higher end-to-end latency than LASK5's ESP-NOW path, so a tighter window dropped too many sensor frames as unpaired.
+- **`label_count` is None / lazy-inferred** for `quest_hand` — `CaptureWriter` defers the CSV header write until the first label packet so the column count is derived from `len(values)`. Quest 3 sends 25 joints × 7 floats = 175 floats per frame; the hardcoded LASK5 `label_count=4` doesn't fit.
+- **Per-capture `<name>.labels.schema.json` sidecar** lists joint names + channel order so the wide CSV is self-describing. Only emitted for label sources whose meaning isn't obvious from `device_type` alone (today: `quest_hand`).
+- **`meta.json` `auto.label_source`** is tagged `"quest_hand"` so the Captures panel filter and any downstream training pipeline can cleanly separate Quest-labeled from LASK5-labeled datasets.
+- **Auto-pick** in `start_recording` walks `AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5")` — Quest wins if both are connected, since it's the richer label source.
+
+### WebXR client structure (`static/vr/`)
+
+| File | Role |
+|---|---|
+| `index.html` | Landing page with a 3-checkmark preflight (HTTPS, WebXR support, server reachable), arm selector, VRButton mount. Script tag uses `?v=N` cache-buster (see gotcha below). |
+| `app.js` | Scene + XR session lifecycle, per-frame joint capture → `/ws/quest`, real-time hand visualizer (blue captured-arm + green off-hand spheres), heatmap panel painted from `/ws/live`, 3×2 menu (REC / SESSION / PREDICT / TRAIN / RECENTER / EXIT VR), ray pointers + select-event button activation, REAL-vs-PRED finger-curl bars, ghost-hand overlay anchored at the real wrist when inference is on. |
+| `styles.css` | Pre-VR landing page only (the XR session paints WebGL directly, CSS doesn't apply inside). |
+
+### Cache-bust contract
+
+The HTML references the JS as `app.js?v=N`. **Bump N every time `app.js` changes.** Quest Browser ignores `Cache-Control: no-store` for ES modules in some configurations — the querystring forces a fresh fetch. The no-cache middleware on `/`, `/vr`, and `/static/*` is correct, but the version-querystring is the actual cache-busting mechanism in practice.
+
+### Auto-enable inference on train (VR-only)
+
+The desktop UI's server-side default is **paused-on-load** for inference (see commit `bd1b68a` rationale). In VR there's no obvious second click to enable it, so `runTrain` in `app.js` POSTs `{enabled: true}` to `/api/inference/enabled` after a successful activate — pressing TRAIN implies "I want predictions running." The status strip surfaces `trained: R²=X · model loaded ✓ · predict ON` so the change is visible.
+
 ## Known gotchas
 
 - **`from __future__ import annotations` breaks FastAPI body inference.** Don't add it back to `app.py` — the lazy-string annotations make FastAPI treat Pydantic-model parameters as query fields. (Bit us once, documented in `app.py` header.)
 - **`Pin.init(Pin.OUT, value=0)` quirks** are in the firmware, not here — but if you ever rewrite the matrix scan, see the firmware repo's "Sensor scan techniques" section first.
-- **Browser cache during dev**: the no-cache middleware on `/` and `/static/*` makes JS/CSS edits land on plain F5. If you ever serve this off a CDN or behind a cache, remove or scope down that middleware.
+- **Browser cache during dev**: the no-cache middleware on `/`, `/vr`, and `/static/*` makes JS/CSS edits land on plain F5 in desktop browsers. Quest Browser ignores it for ES modules — see the cache-bust contract in the VR section above (`?v=N` on the script src).
+- **`/vr` was missing from the no-cache middleware** until commit `fb83f82`. If you add another HTML entry point, remember to whitelist it too.
 - **mpremote and the LASK5 don't coexist** on the same serial port — `openmuscle web` only uses UDP, but Thonny / PuTTY / another mpremote session will lock the COM port. Symptom: `mpremote: failed to access COMxx`.
+- **WebXR requires a secure context.** localhost (`http://`) counts; LAN HTTPS via mkcert is the untethered path. Plain HTTP over LAN will silently refuse to grant hand-tracking and the user sees "WebXR not available" with no specific reason. The landing-page preflight surfaces this.
 
 ## v0.2.0 history (the LASK5 expansion)
 
