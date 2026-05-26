@@ -23,6 +23,37 @@ import socket
 
 from openmuscle.data.storage import CaptureWriter
 from openmuscle.protocol.schema import CURRENT_VERSION, OpenMusclePacket
+
+
+# Canonical channel ordering for a single quest_hand joint. This is the
+# coupling point between two places:
+#   - `AppState.ingest_quest_packet` packs joints into `data.values` in
+#     this order via `_flatten_quest_joint`.
+#   - `AppState._write_labels_schema` emits the column->(joint, channel)
+#     map using `_quest_label_column` which assumes this same order.
+# Changing one without the other makes the labels-schema sidecar lie
+# about what's in the CSV. Both callers route through this tuple + the
+# two helpers below to make the coupling structural rather than two
+# aspirational comments.
+QUEST_JOINT_CHANNEL_ORDER = ("px", "py", "pz", "rx", "ry", "rz", "rw")
+
+
+def _flatten_quest_joint(pos, rot):
+    """Pack one joint's (pos, rot) into the canonical channel order.
+
+    `pos` is [x, y, z]; `rot` is a unit quaternion [x, y, z, w]. Returns a
+    flat list of `len(QUEST_JOINT_CHANNEL_ORDER)` floats.
+    """
+    components = {"px": pos[0], "py": pos[1], "pz": pos[2],
+                  "rx": rot[0], "ry": rot[1], "rz": rot[2], "rw": rot[3]}
+    return [components[ch] for ch in QUEST_JOINT_CHANNEL_ORDER]
+
+
+def _quest_label_column(joint_index: int, channel_index: int) -> int:
+    """Index of the CSV column corresponding to (joint, channel) for a
+    quest_hand recording. Inverse view of the layout produced by
+    `_flatten_quest_joint` applied N times."""
+    return joint_index * len(QUEST_JOINT_CHANNEL_ORDER) + channel_index
 from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.web.inference import InferenceEngine
@@ -360,8 +391,10 @@ class AppState:
         for j in joints:
             pos = j.get("pos") or [0.0, 0.0, 0.0]
             rot = j.get("rot") or [0.0, 0.0, 0.0, 1.0]
-            flat.extend(float(v) for v in pos)
-            flat.extend(float(v) for v in rot)
+            # Route through _flatten_quest_joint so the channel order is
+            # taken from QUEST_JOINT_CHANNEL_ORDER -- same source-of-truth
+            # the labels-schema sidecar reads via _quest_label_column.
+            flat.extend(float(v) for v in _flatten_quest_joint(pos, rot))
             joint_names.append(j.get("name", ""))
 
         pkt = OpenMusclePacket(
@@ -464,7 +497,10 @@ class AppState:
             return
         joint_names = list(pkt.data.get("joint_names") or [])
         handedness = pkt.data.get("handedness") or "unknown"
-        ordering = ["px", "py", "pz", "rx", "ry", "rz", "rw"]
+        # Pull the channel order from the module-level constant so the schema
+        # is guaranteed consistent with how ingest_quest_packet flattened
+        # the values into the CSV (see QUEST_JOINT_CHANNEL_ORDER docstring).
+        ordering = list(QUEST_JOINT_CHANNEL_ORDER)
         n_floats = len(ordering)
         # Build the explicit column->(joint, channel) map so consumers
         # don't have to re-derive it from joint order.
@@ -472,7 +508,7 @@ class AppState:
         for ji, jn in enumerate(joint_names):
             for ci, ch in enumerate(ordering):
                 columns.append({
-                    "name": f"label_{ji * n_floats + ci}",
+                    "name": f"label_{_quest_label_column(ji, ci)}",
                     "joint": jn,
                     "channel": ch,
                 })
