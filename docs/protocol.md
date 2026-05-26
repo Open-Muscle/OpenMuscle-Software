@@ -82,6 +82,8 @@ Synthesized server-side from WebSocket frames sent by the WebXR client at `/vr` 
 
 A per-capture `<name>.labels.schema.json` sidecar is written on the first `quest_hand` packet of a recording. It maps `label_0..label_N` columns in the CSV back to `(joint, channel)`, so the wide label vector is self-describing.
 
+**Future-proofing note:** v1 captures one hand per recording (`handedness` is a single `"left"` or `"right"` string). A future `handedness: "both"` extension — payload carries both hands in `data.values` with the schema sidecar growing a parallel `joint_names_left` / `joint_names_right` (or a per-column `hand` field) — would be backward-compatible. Old consumers see a wider but still-flat values vector; new consumers can split it via the schema. Don't accidentally close that door in any future refactor of `_flatten_quest_joint` / `_write_labels_schema`.
+
 ### Adding a New Device Type
 
 Define a new `type` string and document the `data` shape. The PC-side parser auto-discovers devices by their `type` field.

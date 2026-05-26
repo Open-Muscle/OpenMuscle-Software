@@ -492,6 +492,20 @@ class AppState:
         this a wide-label CSV is opaque -- you'd have to know the joint
         ordering by convention. With it, any consumer can deserialize
         label columns into named joint poses.
+
+        TODO(wrist-relative-labels): joint positions are stored in absolute
+        world coordinates as captured by the headset, so a model trained
+        on them learns to predict positions where the recordings happened
+        to be -- generally not where the user is at inference time. The
+        VR ghost-hand viz works around this by anchoring predicted joints
+        to the real wrist each frame, but the right long-term fix is to
+        subtract the wrist position (and optionally rotate into the
+        wrist's frame) before writing, and reverse the transform at
+        inference. This changes the CSV semantics, so it deserves its
+        own scope. Track in the OpenMuscle-Software repo issue list
+        ("Wrist-relative label coordinates for portable quest_hand
+        models") before any model that needs to generalize across
+        capture-locations.
         """
         if rec.labels_schema_path is None:
             return
