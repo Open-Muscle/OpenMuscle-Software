@@ -28,3 +28,7 @@ settings.json
 .venv/
 venv/
 env/
+
+# Local TLS certs for the VR /vr page (mkcert-generated, per-machine,
+# not secret in the cryptographic sense but no reason to ship them)
+*.pem
