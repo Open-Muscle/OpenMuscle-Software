@@ -33,25 +33,48 @@ The two PEM files land in your current directory. Keep them next to the captures
 
 ### 2. Install the mkcert root CA on the Quest
 
+**Heads up:** this is the painful step. Meta's Horizon OS consumer shell **hides** the standard Android "Settings → Security → Install a certificate" path. The Settings panel you see when tapping the gear icon in VR is Meta's Horizon Settings, not AOSP Settings — different surface, no cert-install button. You have to launch the AOSP Settings activity via ADB.
+
+Procedure validated on Quest 3S, Horizon OS as of May 2026:
+
 ```powershell
-# Find the root CA
-mkcert -CAROOT
-# -> C:\Users\<you>\AppData\Local\mkcert
+# (a) Push the root CA from your PC to the headset's Downloads folder
+adb push "$env:LOCALAPPDATA\mkcert\rootCA.pem" /sdcard/Download/openmuscle-vr-rootCA.pem
+
+# (b) Launch the AOSP Security Dashboard activity directly via ADB.
+#     The $ MUST be backslash-escaped through PowerShell single-quotes so it
+#     survives BOTH the host shell AND the Android shell. Without the escape,
+#     $ gets eaten as a variable expansion and the activity name truncates to
+#     just '.Settings' which is not exported (Permission Denial).
+adb shell 'am start -n com.android.settings/.Settings\$SecurityDashboardActivity'
 ```
 
-Copy `rootCA.pem` from that folder to the headset. Two options:
+On the Quest after running those:
 
-- **USB**: connect Quest via cable, in Quest Settings allow file transfer, drag-drop `rootCA.pem` onto the headset's internal storage (e.g. `Download/`).
-- **Email/Drive**: email it to yourself or upload to Google Drive; open on the headset.
+1. **The 2D Settings panel may not appear immediately in your view.** Horizon shell aggressively suppresses unfamiliar 2D activities. **Press the Meta button** on your right controller, look for "Settings" (or similar) in the universal-menu app switcher, and click to bring it forward.
+2. In the AOSP Security dashboard: **Trusted credentials** → **Encryption** section → **Install a certificate** → **CA certificate**.
+3. **"Your data won't be private"** warning → tap **Install anyway** (your own root CA, the warning is generic Android boilerplate).
+4. **If no screen-lock PIN is set**, Quest refuses and prompts you to set one. Set a PIN, then re-do step 2.
+5. **File picker gotcha:** defaults to "Recent" view which is **empty** on a fresh install. Tap the **hamburger menu (≡)** at the top of the picker → navigate to **Internal Storage → Download** → tap **openmuscle-vr-rootCA.pem**.
+6. Success: "CA certificate installed" or similar.
 
-On the Quest:
+You only do this once per headset. The CA stays trusted across Horizon OS updates.
 
-1. Settings → **Security** → More Security Settings → **Install a certificate** → **CA certificate**.
-2. Confirm the "you're sure?" prompt (yes — it's your own root CA).
-3. Browse to where you dropped `rootCA.pem` and pick it.
-4. The Quest will prompt for / set a screen-lock PIN if you don't already have one — required for CA install.
+**Fallback if you can't find the AOSP Settings panel in the app switcher:** open the headset's **Files** app, navigate to **Download/openmuscle-vr-rootCA.pem**, tap it. Some Horizon versions trigger the install dialog from the file-open intent directly.
 
-You only do this once per headset.
+**Activities that work on Horizon OS** (useful for future Quest dev when standard menus are hidden):
+- `com.android.settings/.Settings$SecurityDashboardActivity` — security menu (the one you just used)
+- `com.android.settings/.Settings$TrustedCredentialsSettingsActivity` — view installed certs (for verifying yours is there)
+- `com.android.settings/.security.CredentialStorage` — direct install activity, but Horizon often suppresses its panel
+- `com.android.settings/.Settings$NetworkDashboardActivity`
+- `com.android.settings/.Settings$DevelopmentSettingsDashboardActivity`
+
+**Activities that DON'T exist on Horizon** (don't try — Error type 3):
+- `com.android.settings/.Settings$SecuritySettingsActivity` (older Android name, removed)
+- `com.android.settings/.Settings$EncryptionAndCredentialActivity` (renamed)
+
+**Non-exported, can't launch via ADB** (Permission Denial from null uid):
+- `com.android.settings/.Settings` (the bare main activity)
 
 ### 3. Start the server with HTTPS
 
