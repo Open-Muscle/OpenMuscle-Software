@@ -11,9 +11,14 @@ REM     5. Run `adb reverse tcp:8000 tcp:8000` so the headset
 REM        can reach localhost
 REM     6. Launch Quest Browser straight to /vr via ADB intent
 REM
-REM   Usage:   start-vr.bat            (right arm, default)
-REM            start-vr.bat right      (same)
-REM            start-vr.bat left       (left arm)
+REM   Usage:   start-vr.bat                      (right arm, vr mode)
+REM            start-vr.bat right                (same)
+REM            start-vr.bat left                 (left arm, vr mode)
+REM            start-vr.bat right ar             (right arm, AR passthrough)
+REM            start-vr.bat left  ar             (left arm,  AR passthrough)
+REM
+REM   VR mode  = fully immersive black background (gesture training default)
+REM   AR mode  = passthrough, you see your real workspace (field-capture)
 REM
 REM   To stop: close the "OpenMuscle VR Server" window.
 REM ============================================================
@@ -35,7 +40,14 @@ if /I not "%ARM%"=="right" if /I not "%ARM%"=="left" (
     pause
     exit /b 1
 )
-set "URL=http://localhost:%PORT%/vr?arm=%ARM%"
+set "MODE=%~2"
+if "%MODE%"=="" set "MODE=vr"
+if /I not "%MODE%"=="vr" if /I not "%MODE%"=="ar" (
+    echo [ERROR] mode must be 'vr' or 'ar' (you passed: %MODE%^)
+    pause
+    exit /b 1
+)
+set "URL=http://localhost:%PORT%/vr?arm=%ARM%&mode=%MODE%"
 
 REM --- 1. Locate adb ---------------------------------------------------------
 REM Prefer adb on PATH (the team's likely setup if they use MQDH or chocolatey),
@@ -131,12 +143,12 @@ if errorlevel 1 (
 )
 
 REM --- 7. Launch Quest Browser to /vr ----------------------------------------
-echo Opening Quest Browser to %URL%...
+echo Opening Quest Browser to "%URL%"...
 "%ADB%" shell am start -a android.intent.action.VIEW -d "%URL%" >nul
 
 echo.
 echo ============================================================
-echo   OpenMuscle VR is ready  (arm=%ARM%^)
+echo   OpenMuscle VR is ready  (arm=%ARM%, mode=%MODE%^)
 echo   - Server runs in the "OpenMuscle VR Server" window
 echo   - Put the headset on
 echo   - Set both controllers down on a flat surface

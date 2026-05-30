@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -39,6 +40,12 @@ const JOINT_NAMES = [
 
 const params = new URLSearchParams(location.search);
 const ARM = params.get('arm') === 'left' ? 'left' : 'right';   // FlexGrid-arm side
+// MODE: 'vr' (fully immersive black background, the v1.x default — used for
+// deliberate gesture training in a controlled space) vs 'ar' (passthrough
+// background, real world visible behind our panels — used for field-capture
+// sessions during real activities). See docs/vr-setup.md for the use cases.
+const MODE = params.get('mode') === 'ar' ? 'ar' : 'vr';
+const XR_SESSION_TYPE = MODE === 'ar' ? 'immersive-ar' : 'immersive-vr';
 const PINCH_THRESHOLD_M  = 0.025;   // 2.5 cm index-tip <-> thumb-tip
 const PINCH_HOLD_MS      = 1000;    // hold this long to toggle recording (captured arm)
 const HEATMAP_FORWARD_M  = 0.70;    // panel placed 70cm in front at session start
@@ -111,12 +118,12 @@ async function preflightChecks() {
     let xrOK = false;
     if (navigator.xr) {
         try {
-            xrOK = await navigator.xr.isSessionSupported('immersive-vr');
+            xrOK = await navigator.xr.isSessionSupported(XR_SESSION_TYPE);
         } catch (e) { xrOK = false; }
     }
     setCheck('check-xr', xrOK ? 'ok' : 'bad',
-             xrOK ? 'WebXR immersive-vr supported'
-                  : 'WebXR not available (open this URL in Quest Browser)');
+             xrOK ? `WebXR ${XR_SESSION_TYPE} supported`
+                  : `WebXR ${XR_SESSION_TYPE} not available (open in Quest Browser)`);
     try {
         const r = await fetch('/api/devices');
         setCheck('check-server', r.ok ? 'ok' : 'bad',
@@ -142,6 +149,14 @@ let scene, camera, renderer;
 let heatmapMesh, heatmapCanvas, heatmapCtx, heatmapTex;
 let headerCanvas, headerTex, headerMesh;
 let statusMesh, statusCanvas, statusTex;
+// Sync slate: big high-contrast splash that appears for SYNC_SLATE_MS ms
+// at REC press. Visible in the headset's screen recording so the operator
+// can frame-accurately pair the video to a CSV row when scrubbing later.
+let slateMesh, slateCanvas, slateCtx, slateTex;
+let slateShownUntil = 0;
+const SYNC_SLATE_MS = 2500;
+const SLATE_W = 0.60;
+const SLATE_H = 0.20;
 let compareMesh, compareCanvas, compareCtx, compareTex;
 // Per-finger max wrist->tip distance ever observed. We use this as the
 // "fully extended" reference so the curl normalization adapts to the
@@ -191,7 +206,11 @@ let lastStatusText = '';
 
 function initScene() {
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x05060a);
+    // In AR mode, leave the background null so passthrough shows through.
+    // In VR mode, set the dark background as before. Three.js handles the
+    // alpha-clear automatically when an immersive-ar session is active, but
+    // a non-null scene.background would still paint over it.
+    scene.background = (MODE === 'ar') ? null : new THREE.Color(0x05060a);
 
     camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight,
                                           0.05, 50);
@@ -303,6 +322,20 @@ function initScene() {
         new THREE.MeshBasicMaterial({ map: statusTex, transparent: true }));
     scene.add(statusMesh);
     drawStatus('');
+
+    // Sync slate: 60 x 20 cm panel for the SYNC_SLATE_MS splash at REC press.
+    // Hidden by default; brought to life by showSyncSlate(filename, unixMs).
+    slateCanvas = document.createElement('canvas');
+    slateCanvas.width = 1600; slateCanvas.height = 540;
+    slateCtx = slateCanvas.getContext('2d');
+    slateTex = new THREE.CanvasTexture(slateCanvas);
+    slateTex.colorSpace = THREE.SRGBColorSpace;
+    slateMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(SLATE_W, SLATE_H),
+        new THREE.MeshBasicMaterial({ map: slateTex, transparent: true,
+                                       depthWrite: false }));
+    slateMesh.visible = false;
+    scene.add(slateMesh);
 
     // Pinch progress ring (drawn on a small canvas, pinned to the captured hand's
     // wrist each frame; opacity scales with pinch hold time)
@@ -583,6 +616,59 @@ function setStatus(text) {
     drawStatus(text);
 }
 
+// Render the SYNC slate canvas. Big, high-contrast text so it's readable in
+// a re-watched screen recording when paused on the slate frame. Layout:
+//   line 1: SYNC                (giant)
+//   line 2: <filename>          (medium, monospace)
+//   line 3: <unix-ms timestamp> (medium, monospace)
+function drawSlate(filename, unixMs) {
+    const ctx = slateCtx;
+    const W = slateCanvas.width, H = slateCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // High-contrast yellow background -- pops in both VR and AR (passthrough)
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(0, 0, W, H);
+
+    // Black border for definition against bright real-world backgrounds in AR
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth = 12;
+    ctx.strokeRect(6, 6, W - 12, H - 12);
+
+    ctx.fillStyle = '#0d1117';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.font = 'bold 140px system-ui';
+    ctx.fillText('SYNC', W / 2, 130);
+
+    ctx.font = 'bold 56px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    ctx.fillText(filename, W / 2, 280);
+
+    ctx.font = '52px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    ctx.fillText(`t = ${unixMs}`, W / 2, 380);
+
+    ctx.font = '32px system-ui';
+    ctx.fillText('pair this video frame with the CSV row at this timestamp',
+                 W / 2, 470);
+
+    slateTex.needsUpdate = true;
+}
+
+// Trigger the slate splash. Visible for SYNC_SLATE_MS, then auto-hidden by
+// updateSlateVisibility() in the frame loop.
+function showSyncSlate(filename, unixMs) {
+    drawSlate(filename, unixMs);
+    slateMesh.visible = true;
+    slateShownUntil = performance.now() + SYNC_SLATE_MS;
+}
+
+function updateSlateVisibility() {
+    if (slateMesh.visible && performance.now() > slateShownUntil) {
+        slateMesh.visible = false;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Finger curl: derived from wrist <-> finger-tip distance, normalized to a
 // per-user [0..1] curl where 1 = fully curled (tip near wrist), 0 = fully
@@ -742,6 +828,14 @@ function placeAnchors(frame, refSpace) {
     statusMesh.position.copy(heatPos).add(new THREE.Vector3(0, -STATUS_ROW_DOWN, 0));
     statusMesh.lookAt(headPos);
     statusMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
+
+    // Sync slate sits centered in the user's primary view (in front of the
+    // heatmap, between them and it). When triggered at REC press it pops up
+    // big and obvious so the headset's screen recording captures a clean
+    // sync frame. Slightly closer than the heatmap so it visually takes
+    // precedence during the splash.
+    slateMesh.position.copy(headPos).addScaledVector(headFwd, 0.55);
+    slateMesh.lookAt(headPos);
 
     placed = true;
 }
@@ -1009,10 +1103,18 @@ function updateFromSnapshot(snap, timestampMs) {
     // Pick the first flexgrid device's matrix to paint
     const fg = (snap.devices || []).find(d => d.device_type === 'flexgrid' && d.matrix?.length);
     if (fg) drawHeatmap(fg.matrix);
-    // Header text: device count + recording status
+    // Header text: while recording, include filename + ms clock so the
+    // headset's screen recording captures sync info every frame the user
+    // happens to look at the heatmap. Without it, the operator would have
+    // to memorize which capture corresponds to which video shoot.
     const rec = snap.recording;
     if (rec) {
-        drawHeader(`REC · ${rec.rows} rows · match ${(rec.match_rate * 100).toFixed(0)}%`, true);
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        const ms = String(now.getMilliseconds()).padStart(3, '0');
+        drawHeader(`REC · ${hh}:${mm}:${ss}.${ms} · ${rec.filename}`, true);
         uiState.recording = true;
     } else {
         const fgHz = fg ? `${fg.hz?.toFixed?.(0) || '0'} Hz` : 'no FlexGrid';
@@ -1059,6 +1161,11 @@ async function toggleRecording() {
             if (r.ok) {
                 const data = await r.json();
                 setStatus(`recording: ${data.filename} (window ${data.window_ms}ms)`);
+                // Fire the sync slate so the headset's screen recording
+                // captures a clean frame-accurate pairing point. The Unix-
+                // ms timestamp embedded in the slate lets you locate the
+                // exact CSV row when scrubbing the video later.
+                showSyncSlate(data.filename, Date.now());
             } else {
                 const err = await r.text();
                 setStatus(`start failed: ${err.slice(0, 60)}`);
@@ -1228,6 +1335,7 @@ function onXRFrame(timestamp, frame) {
     updateRaycast();
     updateButtonVisual();
     updateFromSnapshot(latestSnapshot, timestamp);
+    updateSlateVisibility();
 
     renderer.render(scene, camera);
 }
@@ -1238,10 +1346,20 @@ function onXRFrame(timestamp, frame) {
 
 function bootVRButton() {
     initScene();
-    const button = VRButton.createButton(renderer, {
-        requiredFeatures: ['local-floor'],
-        optionalFeatures: ['hand-tracking'],
+    // VRButton requests immersive-vr; ARButton requests immersive-ar.
+    // local-floor is required in VR (we anchor to floor height) but optional
+    // in AR (the headset is already in the user's real space; passthrough
+    // gives us our own floor). hand-tracking is optional in both -- if the
+    // user picks up controllers we still get a basic ray-pointer session.
+    const buttonFactory = MODE === 'ar' ? ARButton : VRButton;
+    const button = buttonFactory.createButton(renderer, {
+        requiredFeatures: MODE === 'ar' ? [] : ['local-floor'],
+        optionalFeatures: MODE === 'ar'
+            ? ['local-floor', 'hand-tracking']
+            : ['hand-tracking'],
     });
+    // ARButton/VRButton labels differ slightly ("START AR" vs "ENTER VR").
+    // Don't override; the user knows what mode they picked from the URL.
     document.getElementById('enter-vr-mount').appendChild(button);
 
     renderer.xr.addEventListener('sessionstart', () => {
