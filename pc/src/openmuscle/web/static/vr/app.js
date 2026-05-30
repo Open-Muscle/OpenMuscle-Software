@@ -48,7 +48,19 @@ const MODE = params.get('mode') === 'ar' ? 'ar' : 'vr';
 const XR_SESSION_TYPE = MODE === 'ar' ? 'immersive-ar' : 'immersive-vr';
 const PINCH_THRESHOLD_M  = 0.025;   // 2.5 cm index-tip <-> thumb-tip
 const PINCH_HOLD_MS      = 1000;    // hold this long to toggle recording (captured arm)
-const HEATMAP_FORWARD_M  = 0.70;    // panel placed 70cm in front at session start
+
+// AR mode pushes panels further away + shrinks them so they don't dominate
+// your view of the real world. The same panel sizes that read as
+// "comfortably in front of me" in VR (no real-world reference) feel HUGE in
+// passthrough against an actual kitchen/desk/workshop. Default VR sizes are
+// the v1.x constants; AR multipliers adjust distance and scale.
+const HEATMAP_FORWARD_M_VR = 0.70;
+const HEATMAP_FORWARD_M_AR = 1.10;
+const AR_UI_SCALE          = 0.65;   // applied to every panel/button mesh in AR
+
+const HEATMAP_FORWARD_M  = (MODE === 'ar') ? HEATMAP_FORWARD_M_AR : HEATMAP_FORWARD_M_VR;
+const UI_SCALE           = (MODE === 'ar') ? AR_UI_SCALE          : 1.0;
+
 const HEATMAP_W          = 0.40;    // 40cm panel matches FlexGrid 15:4 aspect
 const HEATMAP_H          = 0.12;
 
@@ -354,6 +366,15 @@ function initScene() {
                                        opacity: 0, side: THREE.DoubleSide }));
     pinchIndicator.visible = false;
     scene.add(pinchIndicator);
+
+    // In AR mode shrink every panel/group uniformly so they read as small
+    // overlays against the real-world background. Slate stays full-size
+    // deliberately -- it's designed to dominate the 2.5s video-sync frame.
+    if (UI_SCALE !== 1.0) {
+        for (const obj of [heatmapMesh, headerMesh, compareMesh, statusMesh, menuPanel]) {
+            obj.scale.setScalar(UI_SCALE);
+        }
+    }
 
     // Joint visualizer spheres for BOTH hands. Captured arm = blue (the
     // hand whose pose we're recording). Off-hand = green (the hand that
@@ -803,20 +824,23 @@ function placeAnchors(frame, refSpace) {
     const headFwd = new THREE.Vector3(0, 0, -1).applyMatrix4(
         new THREE.Matrix4().extractRotation(m));
 
-    // Place heatmap 70cm in front, slightly below eye height
+    // Place heatmap HEATMAP_FORWARD_M in front, slightly below eye height.
+    // Vertical offsets are scaled by UI_SCALE so panel-to-panel gaps shrink
+    // proportionally with panel sizes in AR mode (otherwise small panels
+    // would have weirdly large empty space between them).
     const heatPos = headPos.clone().addScaledVector(headFwd, HEATMAP_FORWARD_M);
-    heatPos.y -= 0.10;
+    heatPos.y -= 0.10 * UI_SCALE;
     heatmapMesh.position.copy(heatPos);
     heatmapMesh.lookAt(headPos);
 
     // Header centered above the heatmap
-    headerMesh.position.copy(heatPos).add(new THREE.Vector3(0, HEATMAP_H * 0.6, 0));
+    headerMesh.position.copy(heatPos).add(new THREE.Vector3(0, HEATMAP_H * 0.6 * UI_SCALE, 0));
     headerMesh.lookAt(headPos);
 
     // REAL vs PRED comparison panel sits between the heatmap and the menu.
     // Same tilt as the menu so they look like one continuous surface tilted
     // toward the head.
-    const comparePos = heatPos.clone().add(new THREE.Vector3(0, -COMPARE_OFFSET_DOWN, 0));
+    const comparePos = heatPos.clone().add(new THREE.Vector3(0, -COMPARE_OFFSET_DOWN * UI_SCALE, 0));
     compareMesh.position.copy(comparePos);
     compareMesh.lookAt(headPos);
     compareMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
@@ -825,13 +849,13 @@ function placeAnchors(frame, refSpace) {
     // the buttons are readable + ray-hits feel natural even when the user is
     // looking down at it. The lookAt aims the +Z axis at the head; then a
     // small extra X-axis rotation tilts the top edge toward the user.
-    const menuPos = heatPos.clone().add(new THREE.Vector3(0, -MENU_OFFSET_DOWN, 0));
+    const menuPos = heatPos.clone().add(new THREE.Vector3(0, -MENU_OFFSET_DOWN * UI_SCALE, 0));
     menuPanel.position.copy(menuPos);
     menuPanel.lookAt(headPos);
     menuPanel.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
 
     // Status strip below the menu (also tilted to match for readability)
-    statusMesh.position.copy(heatPos).add(new THREE.Vector3(0, -STATUS_ROW_DOWN, 0));
+    statusMesh.position.copy(heatPos).add(new THREE.Vector3(0, -STATUS_ROW_DOWN * UI_SCALE, 0));
     statusMesh.lookAt(headPos);
     statusMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
 
