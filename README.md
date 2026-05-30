@@ -133,6 +133,9 @@ See [docs/adding-a-device.md](docs/adding-a-device.md) for details.
 **Standalone firmware (promoted from this repo's `embedded/devices/`):**
 - [FlexGridV3-Firmware](https://github.com/Open-Muscle/FlexGridV3-Firmware) — current FlexGrid revision, with the sensor-scan techniques writeup
 
+**AR / VR:**
+- [OpenMuscle-AR](https://github.com/Open-Muscle/OpenMuscle-AR) — AR/VR companion. The current WebXR client lives here in `pc/src/openmuscle/web/static/vr/` (tight coupling to the FastAPI server), but the AR repo is the discoverability anchor and the future home for the planned native Quest APK / BLE-direct work. See its [ROADMAP](https://github.com/Open-Muscle/OpenMuscle-AR/blob/main/ROADMAP.md).
+
 **Coordination / docs:**
 - [OpenMuscle-Hub](https://github.com/Open-Muscle/OpenMuscle-Hub) — central docs and roadmap
 
