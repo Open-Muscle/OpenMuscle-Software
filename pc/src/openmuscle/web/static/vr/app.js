@@ -216,10 +216,16 @@ function initScene() {
                                           0.05, 50);
     camera.position.set(0, 1.6, 0);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    // alpha: true is REQUIRED for AR mode. Without it the WebGL framebuffer
+    // is opaque, so passthrough has nothing to composite behind -- you'd see
+    // the dark VR background even though the session granted immersive-ar.
+    // In VR mode alpha: true is fine too (we draw a solid background) so we
+    // enable it unconditionally rather than conditionally on MODE.
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
+    if (MODE === 'ar') renderer.setClearAlpha(0);   // belt-and-suspenders: explicit transparent clear
     document.body.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'none';   // hidden while landing page is up
 
@@ -1366,6 +1372,16 @@ function bootVRButton() {
         document.getElementById('landing').style.display = 'none';
         renderer.domElement.style.display = 'block';
         placed = false;
+        // Log the granted session's environment-blend mode so we can tell
+        // if Quest gave us what we asked for. Expected:
+        //   immersive-vr  -> 'opaque'
+        //   immersive-ar  -> 'alpha-blend' or 'additive' (Quest 3 = alpha-blend)
+        // If MODE === 'ar' but blend mode is 'opaque', Quest fell back to VR
+        // and the background will still be black regardless of alpha clearing.
+        const session = renderer.xr.getSession();
+        console.log('[openmuscle-vr] XR session started.',
+                    'requested mode:', XR_SESSION_TYPE,
+                    'blend mode:', session?.environmentBlendMode);
         connectQuestWS();
         connectLiveWS();
         renderer.setAnimationLoop(onXRFrame);
