@@ -106,6 +106,21 @@ const RAY_COLOR_HOVER    = 0xfbbf24;     // amber on hit
 
 const BUTTON_FLASH_MS    = 180;
 
+// Drag handles: small cubes that sit on the top-left of each movable panel
+// group. Off-hand ray hovers + pinches the handle -> the panel follows the
+// controller until the pinch releases. Release re-orients the panel toward
+// the head so it always ends up facing the user.
+const HANDLE_SIZE_M      = 0.030;
+const HANDLE_COLOR_IDLE  = 0x6b7280;     // slate gray
+const HANDLE_COLOR_HOVER = 0xfbbf24;     // same amber as ray hover -- visual continuity
+const HANDLE_COLOR_GRAB  = 0x10b981;     // emerald when actively grabbed
+
+// Collapsed STOP button shown while recording. Replaces the full 3x2 menu
+// grid so the user's view isn't dominated by action buttons they don't need
+// during natural-activity capture sessions.
+const STOP_W             = 0.18;
+const STOP_H             = 0.10;
+
 // ---------------------------------------------------------------------------
 // Landing-page checks (run before VR session starts)
 // ---------------------------------------------------------------------------
@@ -183,6 +198,36 @@ let ghostGroup;                                // model-predicted hand (amber, t
 let ghostJointMeshes = new Map();              // joint-name -> sphere mesh
 let placed = false;                            // anchors set on first XRFrame
 
+// Movable panel groups (v1.10). Heatmap + header + compare get wrapped in
+// `infoGroup` so they move together as the "data display" cluster. The full
+// menu lives in `menuRoot` along with the status strip so action UI moves
+// as one unit. Each group gets a drag handle so the user can reposition it
+// independently while the headset is on.
+let infoGroup;
+let menuRoot;
+
+// Collapsed STOP button shown in place of menuRoot while recording. Anchored
+// to the same world position as menuRoot, but only one of the two is visible
+// at any time (toggled by uiState.recording in updateFromSnapshot).
+let stopButtonMesh, stopButtonCanvas, stopButtonCtx, stopButtonTex, stopButtonMat;
+
+// Drag handle registry. Each entry = { handle: Mesh, target: Object3D, mat:
+// Material }. The handle is rendered as a small cube; the target is the
+// Group whose position the drag updates.
+const dragHandles = [];
+
+// Active drag state. dragTarget is the Group currently being moved; when
+// non-null, updateDrag() repositions it each frame to follow dragController.
+// grabOffset captures the (target - controller) position at grab time so
+// the panel feels like it's being held at the exact point you pinched it,
+// not snapping to the controller's center.
+const dragState = {
+    target: null,
+    controller: null,
+    grabOffset: new THREE.Vector3(),
+    handleMat: null,        // material to color-flash while grabbed
+};
+
 // Menu panel + buttons. Each button is a rectangular Mesh (PlaneGeometry +
 // canvas texture) parented to menuPanel so they move together. Hit-tested
 // by raycast from the off-hand controller; activated by the pinch
@@ -197,6 +242,9 @@ const controllers = [];          // controllers[i].userData.handedness = "left"|
 const controllerRays = [];       // line meshes parallel to controllers[]
 const raycaster = new THREE.Raycaster();
 let hoveredButton = null;        // whichever button the off-hand ray is currently over
+let hoveredHandle = null;        // drag-handle entry the off-hand ray is over (mutually
+                                 // exclusive with hoveredButton -- the ray hits one or
+                                 // the other based on geometric closest-first)
 
 // Server-derived state (mirrored into button visuals each frame from /ws/live)
 const uiState = {
@@ -246,6 +294,13 @@ function initScene() {
     dir.position.set(1, 2, 0.5);
     scene.add(dir);
 
+    // Info group (data display cluster): heatmap + header + compare. Wrapped
+    // in a single Group so the user can drag-move them all together via the
+    // info-group handle. Child positions are local-space offsets from the
+    // group origin (which is at the heatmap center).
+    infoGroup = new THREE.Group();
+    scene.add(infoGroup);
+
     // Heatmap panel (PlaneGeometry + CanvasTexture, painted from /ws/live)
     heatmapCanvas = document.createElement('canvas');
     heatmapCanvas.width = 600; heatmapCanvas.height = 180;
@@ -257,7 +312,7 @@ function initScene() {
                                                    side: THREE.DoubleSide });
     heatmapMesh = new THREE.Mesh(new THREE.PlaneGeometry(HEATMAP_W, HEATMAP_H),
                                   heatMat);
-    scene.add(heatmapMesh);
+    infoGroup.add(heatmapMesh);
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -267,7 +322,8 @@ function initScene() {
     headerMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(HEATMAP_W, HEATMAP_H * 0.5),
         new THREE.MeshBasicMaterial({ map: headerTex, transparent: true }));
-    scene.add(headerMesh);
+    headerMesh.position.y = HEATMAP_H * 0.6;   // local-space offset above heatmap
+    infoGroup.add(headerMesh);
     drawHeader('connecting…', false);
 
     // Menu panel + 3x2 grid of rectangular buttons. Top row = toggles for
@@ -300,6 +356,12 @@ function initScene() {
             ctrl.userData.handedness = null;
         });
         ctrl.addEventListener('selectstart', () => onControllerSelect(ctrl));
+        // selectend fires when pinch releases -- only used to end an active
+        // drag. Button activations are instantaneous (no hold required), so
+        // we don't need to track selectend for them.
+        ctrl.addEventListener('selectend', () => {
+            if (dragState.controller === ctrl) endDrag();
+        });
         const lineGeo = new THREE.BufferGeometry().setFromPoints([
             new THREE.Vector3(0, 0, 0),
             new THREE.Vector3(0, 0, -1),
@@ -314,9 +376,9 @@ function initScene() {
         controllerRays.push(line);
     }
 
-    // REAL vs PRED comparison panel. Lives between the heatmap and the menu.
-    // Hidden until inference is running AND a captured hand is being tracked
-    // (otherwise we have nothing to compare). See drawCompare.
+    // REAL vs PRED comparison panel. Local to infoGroup so it moves with the
+    // data display when the user drags it. Hidden until inference is running
+    // AND a captured hand is being tracked (otherwise nothing to compare).
     compareCanvas = document.createElement('canvas');
     compareCanvas.width = 800; compareCanvas.height = 100;
     compareCtx = compareCanvas.getContext('2d');
@@ -326,11 +388,21 @@ function initScene() {
         new THREE.PlaneGeometry(COMPARE_W, COMPARE_H),
         new THREE.MeshBasicMaterial({ map: compareTex, transparent: true }));
     compareMesh.visible = false;
-    scene.add(compareMesh);
+    compareMesh.position.y = -COMPARE_OFFSET_DOWN;   // local offset below heatmap
+    compareMesh.rotation.x = THREE.MathUtils.degToRad(MENU_TILT_DEG);
+    infoGroup.add(compareMesh);
     drawCompare(null, null);
 
-    // Status strip below the buttons -- canvas-textured plane that shows
-    // action feedback ("training...", "trained: R²=0.81", "session started").
+    // Menu root (action UI cluster): menuPanel + statusMesh wrapped in a
+    // group so the user can drag-move the whole action area as a unit. The
+    // menuPanel itself stays as its own group (already has button children).
+    menuRoot = new THREE.Group();
+    scene.add(menuRoot);
+    menuRoot.add(menuPanel);
+    menuPanel.position.set(0, 0, 0);   // local origin = menuRoot origin
+
+    // Status strip below the menu -- now a child of menuRoot so it moves
+    // along when the menu is dragged.
     statusCanvas = document.createElement('canvas');
     statusCanvas.width = 800; statusCanvas.height = 90;
     statusTex = new THREE.CanvasTexture(statusCanvas);
@@ -338,8 +410,39 @@ function initScene() {
     statusMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(STATUS_W, STATUS_H),
         new THREE.MeshBasicMaterial({ map: statusTex, transparent: true }));
-    scene.add(statusMesh);
+    statusMesh.position.y = -(STATUS_ROW_DOWN - MENU_OFFSET_DOWN);  // gap menu->status
+    menuRoot.add(statusMesh);
     drawStatus('');
+
+    // Collapsed STOP button: shown in place of the full menu while
+    // recording. Anchored to menuRoot too so it lives at the same world
+    // position; we toggle .visible based on uiState.recording each frame
+    // (in updateFromSnapshot / a small helper).
+    stopButtonCanvas = document.createElement('canvas');
+    stopButtonCanvas.width = 512; stopButtonCanvas.height = 280;
+    stopButtonCtx = stopButtonCanvas.getContext('2d');
+    stopButtonTex = new THREE.CanvasTexture(stopButtonCanvas);
+    stopButtonTex.colorSpace = THREE.SRGBColorSpace;
+    stopButtonMat = new THREE.MeshBasicMaterial({
+        map: stopButtonTex, transparent: true,
+        side: THREE.DoubleSide, depthWrite: false,
+    });
+    stopButtonMesh = new THREE.Mesh(new THREE.PlaneGeometry(STOP_W, STOP_H),
+                                     stopButtonMat);
+    stopButtonMesh.userData.buttonName = 'STOP_COLLAPSED';   // raycast target
+    stopButtonMesh.visible = false;
+    menuRoot.add(stopButtonMesh);
+    drawStopButton(false);
+
+    // Drag handles -- one for infoGroup, one for menuRoot. Position each
+    // handle in the top-left corner of its target so it's easy to spot
+    // without obscuring the panel content.
+    createDragHandle(infoGroup,
+                     new THREE.Vector3(-HEATMAP_W / 2 - HANDLE_SIZE_M,
+                                        HEATMAP_H / 2 + HANDLE_SIZE_M, 0));
+    createDragHandle(menuRoot,
+                     new THREE.Vector3(-MENU_W / 2 - HANDLE_SIZE_M,
+                                        MENU_H / 2 + HANDLE_SIZE_M, 0));
 
     // Sync slate: 60 x 20 cm panel for the SYNC_SLATE_MS splash at REC press.
     // Hidden by default; brought to life by showSyncSlate(filename, unixMs).
@@ -367,14 +470,9 @@ function initScene() {
     pinchIndicator.visible = false;
     scene.add(pinchIndicator);
 
-    // In AR mode shrink every panel/group uniformly so they read as small
-    // overlays against the real-world background. Slate stays full-size
-    // deliberately -- it's designed to dominate the 2.5s video-sync frame.
-    if (UI_SCALE !== 1.0) {
-        for (const obj of [heatmapMesh, headerMesh, compareMesh, statusMesh, menuPanel]) {
-            obj.scale.setScalar(UI_SCALE);
-        }
-    }
+    // AR-mode scaling is now applied to infoGroup + menuRoot directly in
+    // placeAnchors (single source of truth). Individual children inherit
+    // their parent group's scale.
 
     // Joint visualizer spheres for BOTH hands. Captured arm = blue (the
     // hand whose pose we're recording). Off-hand = green (the hand that
@@ -515,6 +613,108 @@ function exitVR() {
     if (session) session.end();
 }
 
+// ---------------------------------------------------------------------------
+// Drag handles + collapsed STOP button (v1.10)
+// ---------------------------------------------------------------------------
+
+function createDragHandle(target, localOffset) {
+    const geo = new THREE.BoxGeometry(HANDLE_SIZE_M, HANDLE_SIZE_M, HANDLE_SIZE_M * 0.4);
+    const mat = new THREE.MeshStandardMaterial({
+        color: HANDLE_COLOR_IDLE,
+        emissive: HANDLE_COLOR_IDLE,
+        emissiveIntensity: 0.35,
+        metalness: 0.3,
+        roughness: 0.6,
+    });
+    const handle = new THREE.Mesh(geo, mat);
+    handle.position.copy(localOffset);
+    handle.userData.dragTarget = target;   // raycast looks this up
+    target.add(handle);
+    dragHandles.push({ handle, target, mat });
+    return handle;
+}
+
+function drawStopButton(hovered) {
+    const ctx = stopButtonCtx;
+    const W = stopButtonCanvas.width, H = stopButtonCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Big red button, white STOP text. Hover state brightens.
+    ctx.fillStyle = hovered ? '#ff6b6b' : '#ef4444';
+    const r = 30;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(W - r, 0); ctx.arcTo(W, 0, W, r, r);
+    ctx.lineTo(W, H - r); ctx.arcTo(W, H, W - r, H, r);
+    ctx.lineTo(r, H);     ctx.arcTo(0, H, 0, H - r, r);
+    ctx.lineTo(0, r);     ctx.arcTo(0, 0, r, 0, r);
+    ctx.closePath();
+    ctx.fill();
+
+    // White inset border for definition against bright AR backgrounds
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 120px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('STOP', W / 2, H / 2);
+
+    stopButtonTex.needsUpdate = true;
+}
+
+// Swap menu visibility based on recording state. Called each frame from
+// updateFromSnapshot so it tracks whatever the server actually reports
+// (catches cases where another client started/stopped recording too).
+function setRecordingCollapsedUI(isRecording) {
+    menuPanel.visible = !isRecording;
+    stopButtonMesh.visible = !!isRecording;
+    // Status strip stays visible in both states -- it surfaces save/train
+    // feedback that's useful regardless of the mode.
+}
+
+function startDrag(target, controller, handleMat) {
+    dragState.target = target;
+    dragState.controller = controller;
+    dragState.grabOffset.copy(target.position).sub(controller.position);
+    dragState.handleMat = handleMat;
+    if (handleMat) {
+        handleMat.color.setHex(HANDLE_COLOR_GRAB);
+        handleMat.emissive.setHex(HANDLE_COLOR_GRAB);
+        handleMat.emissiveIntensity = 0.5;
+    }
+}
+
+function endDrag() {
+    if (!dragState.target) return;
+    // Re-aim the panel at the head's current position so it ends up facing
+    // the user no matter where they let go. Without this, dragging behind
+    // your back would leave the panel facing the wrong way.
+    const head = renderer.xr.getCamera ? renderer.xr.getCamera() : camera;
+    dragState.target.lookAt(head.position);
+    // menuRoot has a tilt baked in via placeAnchors; preserve it on release.
+    if (dragState.target === menuRoot) {
+        dragState.target.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
+    }
+    if (dragState.handleMat) {
+        dragState.handleMat.color.setHex(HANDLE_COLOR_IDLE);
+        dragState.handleMat.emissive.setHex(HANDLE_COLOR_IDLE);
+        dragState.handleMat.emissiveIntensity = 0.35;
+    }
+    dragState.target = null;
+    dragState.controller = null;
+    dragState.handleMat = null;
+}
+
+function updateDrag() {
+    if (!dragState.target || !dragState.controller) return;
+    dragState.target.position
+        .copy(dragState.controller.position)
+        .add(dragState.grabOffset);
+}
+
 // Toggle live inference on/off. Server-side: POST /api/inference/enabled
 // {enabled: bool}. We mirror inferenceEnabled from /ws/live snapshot so
 // the button's active color reflects whatever the server actually thinks.
@@ -558,16 +758,41 @@ function recenterUI() {
 function onControllerSelect(ctrl) {
     const handedness = ctrl.userData?.handedness;
     if (handedness === ARM) return;       // captured arm: handled elsewhere
+
+    // Priority 1: hovered drag handle -> start a drag (preempts buttons)
+    if (hoveredHandle) {
+        startDrag(hoveredHandle.target, ctrl, hoveredHandle.mat);
+        return;
+    }
+
+    // Priority 2: hovered collapsed STOP button (visible only while recording)
+    if (stopButtonMesh.visible && hoveredButton === null
+            && _hoveredMeshIsStopButton) {
+        // Treat as a STOP press = trigger toggleRecording (which will stop).
+        const now = performance.now();
+        if (now - _stopLastActivateAt > BUTTON_COOLDOWN_MS) {
+            _stopLastActivateAt = now;
+            try { toggleRecording(); }
+            catch (e) { console.error('STOP failed:', e); }
+        }
+        return;
+    }
+
+    // Priority 3: hovered regular menu button -> activate
     if (!hoveredButton) return;
     const now = performance.now();
     if (now - hoveredButton.lastActivateAt < BUTTON_COOLDOWN_MS) return;
     hoveredButton.lastActivateAt = now;
-    // Brief white flash so the user gets visual confirmation that the press
-    // registered, separate from whatever state-change the action triggers.
     hoveredButton.flashUntil = now + BUTTON_FLASH_MS;
     try { hoveredButton.onActivate(); }
     catch (e) { console.error(`button ${hoveredButton.name} failed:`, e); }
 }
+
+// Track collapsed STOP hover state separately from the menu-button hover
+// state since stopButtonMesh isn't in the `buttons` map. The raycast logic
+// sets these each frame.
+let _hoveredMeshIsStopButton = false;
+let _stopLastActivateAt = 0;
 
 // Per-frame: raycast each controller against the menu buttons, highlight the
 // hovered one, shorten the visible ray to the hit point. Only the off-hand's
@@ -575,27 +800,69 @@ function onControllerSelect(ctrl) {
 // hovering buttons while you're trying to perform a gesture.
 const _tmpMat = new THREE.Matrix4();
 function updateRaycast() {
+    // Reset all hover states each frame; raycast hits below re-set them.
     hoveredButton = null;
-    const buttonMeshes = Object.values(buttons).map(b => b.mesh);
+    hoveredHandle = null;
+    _hoveredMeshIsStopButton = false;
+
+    // Build the raycast target list. Drag handles take precedence over
+    // buttons when both are reachable -- but Three.js's raycaster returns
+    // hits sorted by distance, so we mix both sets and let geometry decide.
+    // Visible-only filter: hidden meshes shouldn't be hoverable.
+    const buttonMeshes = Object.values(buttons)
+        .filter(b => b.mesh.visible && menuPanel.visible)
+        .map(b => b.mesh);
+    const handleMeshes = dragHandles
+        .filter(h => h.target.visible)
+        .map(h => h.handle);
+    const stopMeshList = stopButtonMesh.visible ? [stopButtonMesh] : [];
+    const allTargets = [...buttonMeshes, ...handleMeshes, ...stopMeshList];
 
     for (let i = 0; i < controllers.length; i++) {
         const ctrl = controllers[i];
         const line = controllerRays[i];
         const handedness = ctrl.userData?.handedness;
-        // Hide the captured-arm's ray + skip its raycast
+
+        // Hide the captured-arm's ray + skip its raycast. Also: while THIS
+        // controller is dragging, keep its ray visible + amber so the user
+        // sees they're holding something.
         if (!handedness || handedness === ARM) {
             line.visible = false;
             continue;
         }
         line.visible = true;
 
+        // Dragging: ray follows the controller, no raycast needed
+        if (dragState.controller === ctrl) {
+            line.scale.z = RAY_IDLE_LEN_M * 0.6;
+            line.material.color.setHex(HANDLE_COLOR_GRAB);
+            continue;
+        }
+
         _tmpMat.identity().extractRotation(ctrl.matrixWorld);
         raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
         raycaster.ray.direction.set(0, 0, -1).applyMatrix4(_tmpMat);
 
-        const hits = raycaster.intersectObjects(buttonMeshes, false);
+        const hits = raycaster.intersectObjects(allTargets, false);
         if (hits.length > 0) {
             const hit = hits[0];
+            // Was it a drag handle?
+            const handleEntry = dragHandles.find(h => h.handle === hit.object);
+            if (handleEntry) {
+                hoveredHandle = handleEntry;
+                line.scale.z = hit.distance;
+                line.material.color.setHex(HANDLE_COLOR_HOVER);
+                continue;
+            }
+            // Was it the collapsed STOP button?
+            if (hit.object === stopButtonMesh) {
+                _hoveredMeshIsStopButton = true;
+                drawStopButton(true);
+                line.scale.z = hit.distance;
+                line.material.color.setHex(RAY_COLOR_HOVER);
+                continue;
+            }
+            // Otherwise a regular menu button
             const name = hit.object.userData.buttonName;
             const btn = buttons[name];
             if (btn) {
@@ -608,6 +875,11 @@ function updateRaycast() {
         // No hit: restore default-length idle-colored ray
         line.scale.z = RAY_IDLE_LEN_M;
         line.material.color.setHex(RAY_COLOR_IDLE);
+    }
+
+    // Repaint the collapsed STOP idle state if we didn't hover it this frame
+    if (!_hoveredMeshIsStopButton && stopButtonMesh.visible) {
+        drawStopButton(false);
     }
 }
 
@@ -824,40 +1096,29 @@ function placeAnchors(frame, refSpace) {
     const headFwd = new THREE.Vector3(0, 0, -1).applyMatrix4(
         new THREE.Matrix4().extractRotation(m));
 
-    // Place heatmap HEATMAP_FORWARD_M in front, slightly below eye height.
-    // Vertical offsets are scaled by UI_SCALE so panel-to-panel gaps shrink
-    // proportionally with panel sizes in AR mode (otherwise small panels
-    // would have weirdly large empty space between them).
+    // Place infoGroup (heatmap + header + compare) in front of the user,
+    // slightly below eye height. infoGroup's local origin is at the heatmap
+    // center; header and compare positions are local offsets set at init.
+    // After this initial placement the user can drag the whole group via
+    // its handle to wherever fits their workspace.
     const heatPos = headPos.clone().addScaledVector(headFwd, HEATMAP_FORWARD_M);
     heatPos.y -= 0.10 * UI_SCALE;
-    heatmapMesh.position.copy(heatPos);
-    heatmapMesh.lookAt(headPos);
+    infoGroup.position.copy(heatPos);
+    infoGroup.lookAt(headPos);
+    infoGroup.scale.setScalar(UI_SCALE);
 
-    // Header centered above the heatmap
-    headerMesh.position.copy(heatPos).add(new THREE.Vector3(0, HEATMAP_H * 0.6 * UI_SCALE, 0));
-    headerMesh.lookAt(headPos);
-
-    // REAL vs PRED comparison panel sits between the heatmap and the menu.
-    // Same tilt as the menu so they look like one continuous surface tilted
-    // toward the head.
-    const comparePos = heatPos.clone().add(new THREE.Vector3(0, -COMPARE_OFFSET_DOWN * UI_SCALE, 0));
-    compareMesh.position.copy(comparePos);
-    compareMesh.lookAt(headPos);
-    compareMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
-
-    // Menu panel sits below the heatmap. Tilted slightly toward the head so
-    // the buttons are readable + ray-hits feel natural even when the user is
-    // looking down at it. The lookAt aims the +Z axis at the head; then a
-    // small extra X-axis rotation tilts the top edge toward the user.
+    // Place menuRoot (menu panel + status strip). Same forward distance but
+    // dropped further so it sits below the data display. Tilted toward the
+    // head for ergonomic button-reach. menuPanel + statusMesh local offsets
+    // were set at init.
     const menuPos = heatPos.clone().add(new THREE.Vector3(0, -MENU_OFFSET_DOWN * UI_SCALE, 0));
-    menuPanel.position.copy(menuPos);
-    menuPanel.lookAt(headPos);
-    menuPanel.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
+    menuRoot.position.copy(menuPos);
+    menuRoot.lookAt(headPos);
+    menuRoot.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
+    menuRoot.scale.setScalar(UI_SCALE);
 
-    // Status strip below the menu (also tilted to match for readability)
-    statusMesh.position.copy(heatPos).add(new THREE.Vector3(0, -STATUS_ROW_DOWN * UI_SCALE, 0));
-    statusMesh.lookAt(headPos);
-    statusMesh.rotateX(THREE.MathUtils.degToRad(MENU_TILT_DEG));
+    // statusMesh is now a child of menuRoot with a fixed local offset --
+    // no separate positioning needed here. It moves and tilts with the menu.
 
     // Sync slate sits centered in the user's primary view (in front of the
     // heatmap, between them and it). When triggered at REC press it pops up
@@ -1362,10 +1623,12 @@ function onXRFrame(timestamp, frame) {
         for (const m of ghostJointMeshes.values()) m.visible = false;
     }
 
+    updateDrag();            // keep any actively-dragged group glued to the controller
     updateRaycast();
     updateButtonVisual();
     updateFromSnapshot(latestSnapshot, timestamp);
     updateSlateVisibility();
+    setRecordingCollapsedUI(uiState.recording);   // swap menu <-> STOP every frame
 
     renderer.render(scene, camera);
 }
