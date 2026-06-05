@@ -198,6 +198,16 @@ let ghostGroup;                                // model-predicted hand (amber, t
 let ghostJointMeshes = new Map();              // joint-name -> sphere mesh
 let placed = false;                            // anchors set on first XRFrame
 
+// XR visibility state. Quest pauses the WebXR session whenever the user
+// triggers system UI -- universal menu, notifications, or (the failure mode
+// that motivated v1.11) walking out of the Guardian boundary and being
+// prompted to redraw it. While paused, viewer/joint poses can return null
+// or stale data, so we skip capture-and-send to avoid feeding garbage to
+// the recorder. On resume we re-anchor panels since the user's spatial
+// reference frame may have shifted.
+let xrPaused = false;
+let xrPausedAt = 0;        // timestamp of last pause start (for status display)
+
 // Movable panel groups (v1.10). Heatmap + header + compare get wrapped in
 // `infoGroup` so they move together as the "data display" cluster. The full
 // menu lives in `menuRoot` along with the status strip so action UI moves
@@ -1579,6 +1589,19 @@ function onXRFrame(timestamp, frame) {
     const refSpace = renderer.xr.getReferenceSpace();
     if (!session || !refSpace) return;
 
+    // If the XR session is paused (Quest's boundary redraw, system menu,
+    // notification overlay) skip everything that depends on live poses --
+    // they can return null or stale data. Keep rendering the scene so the
+    // user still sees our panels when the pause clears or for partial
+    // visibility, but don't push captured joints to /ws/quest or update
+    // hand visualizers. The visibilitychange handler already set placed=
+    // false at the moment of resume, so the next non-paused frame will
+    // re-anchor everything to the user's new position automatically.
+    if (xrPaused) {
+        renderer.render(scene, camera);
+        return;
+    }
+
     if (!placed) placeAnchors(frame, refSpace);
 
     let capturedHand = null, offHand = null;
@@ -1659,6 +1682,7 @@ function bootVRButton() {
         document.getElementById('landing').style.display = 'none';
         renderer.domElement.style.display = 'block';
         placed = false;
+        xrPaused = false;
         // Log the granted session's environment-blend mode so we can tell
         // if Quest gave us what we asked for. Expected:
         //   immersive-vr  -> 'opaque'
@@ -1669,17 +1693,60 @@ function bootVRButton() {
         console.log('[openmuscle-vr] XR session started.',
                     'requested mode:', XR_SESSION_TYPE,
                     'blend mode:', session?.environmentBlendMode);
+
+        // Pause/resume detection. visibilityState is one of:
+        //   'visible'         -- normal operation
+        //   'visible-blurred' -- still drawing but system UI is on top
+        //                        (boundary redraw, universal menu, notifications)
+        //   'hidden'          -- not rendering at all (headset off)
+        // While anything other than 'visible' we should NOT capture-and-send
+        // since poses can return stale or null data and would corrupt the
+        // recorder timeline. On return to 'visible' we re-anchor because the
+        // user's world position may have shifted (e.g., they walked over to
+        // redraw their boundary).
+        session?.addEventListener('visibilitychange', () => {
+            const state = session.visibilityState;
+            const nowPaused = state !== 'visible';
+            const wasPaused = xrPaused;
+            xrPaused = nowPaused;
+            console.log('[openmuscle-vr] XR visibility:', state,
+                        '(paused:', nowPaused, ')');
+            if (nowPaused && !wasPaused) {
+                xrPausedAt = performance.now();
+                setStatus(`session paused (${state}) — boundary redraw or system UI`);
+            } else if (!nowPaused && wasPaused) {
+                const heldMs = Math.round(performance.now() - xrPausedAt);
+                setStatus(`session resumed after ${(heldMs / 1000).toFixed(1)}s — re-anchoring UI`);
+                placed = false;   // re-run placeAnchors with current head pose
+            }
+        });
+
         connectQuestWS();
         connectLiveWS();
         renderer.setAnimationLoop(onXRFrame);
     });
-    renderer.xr.addEventListener('sessionend', () => {
+    renderer.xr.addEventListener('sessionend', async () => {
         renderer.setAnimationLoop(null);
         document.getElementById('landing').style.display = '';
         renderer.domElement.style.display = 'none';
+        // If a recording was active when the session ended, stop it server-
+        // side so the CSV closes cleanly. Without this the server's
+        // ActiveCapture stays open and any future REC press would fail with
+        // "Already recording" -- the operator would have to use the desktop
+        // UI to recover. Fire-and-forget; if the server is unreachable
+        // (e.g., we lost Wi-Fi simultaneously) just log it.
+        if (uiState.recording) {
+            try {
+                await fetch('/api/recording', { method: 'DELETE' });
+                console.log('[openmuscle-vr] auto-stopped active recording on sessionend');
+            } catch (e) {
+                console.warn('[openmuscle-vr] failed to auto-stop recording on sessionend:', e);
+            }
+        }
         try { questWs && questWs.close(); } catch (e) {}
         try { liveWs && liveWs.close(); } catch (e) {}
         questWs = null; liveWs = null;
+        xrPaused = false;
     });
 }
 
