@@ -40,9 +40,9 @@ const JOINT_NAMES = [
 
 const params = new URLSearchParams(location.search);
 const ARM = params.get('arm') === 'left' ? 'left' : 'right';   // FlexGrid-arm side
-// MODE: 'vr' (fully immersive black background, the v1.x default — used for
+// MODE: 'vr' (fully immersive black background, the v1.x default, used for
 // deliberate gesture training in a controlled space) vs 'ar' (passthrough
-// background, real world visible behind our panels — used for field-capture
+// background, real world visible behind our panels, used for field-capture
 // sessions during real activities). See docs/vr-setup.md for the use cases.
 const MODE = params.get('mode') === 'ar' ? 'ar' : 'vr';
 const XR_SESSION_TYPE = MODE === 'ar' ? 'immersive-ar' : 'immersive-vr';
@@ -364,6 +364,9 @@ function initScene() {
         });
         ctrl.addEventListener('disconnected', () => {
             ctrl.userData.handedness = null;
+            // If this controller was mid-drag when it dropped out, release
+            // the panel so it doesn't get orphaned in the GRAB state.
+            if (dragState.controller === ctrl) cancelDrag();
         });
         ctrl.addEventListener('selectstart', () => onControllerSelect(ctrl));
         // selectend fires when pinch releases -- only used to end an active
@@ -723,6 +726,27 @@ function endDrag() {
     savePanelLayout();
 }
 
+// Abnormal drag termination: the controller disconnected (hand tracking
+// lost mid-drag) or the session paused (boundary redraw) while a panel was
+// being held. In these cases `selectend` never fires, so without this the
+// drag would be orphaned -- dragState.target stays set, the handle stays
+// stuck GRAB-green, and updateDrag() keeps gluing the panel to a frozen or
+// stale controller position. cancelDrag() releases the panel wherever it
+// currently is (no head re-orientation, since head pose is unreliable
+// during a pause), restores the handle color, and persists the layout.
+function cancelDrag() {
+    if (!dragState.target) return;
+    if (dragState.handleMat) {
+        dragState.handleMat.color.setHex(HANDLE_COLOR_IDLE);
+        dragState.handleMat.emissive.setHex(HANDLE_COLOR_IDLE);
+        dragState.handleMat.emissiveIntensity = 0.35;
+    }
+    dragState.target = null;
+    dragState.controller = null;
+    dragState.handleMat = null;
+    savePanelLayout();
+}
+
 // ---------------------------------------------------------------------------
 // Panel layout persistence (localStorage, per-MODE)
 //
@@ -745,11 +769,29 @@ function _poseToJSON(obj3d) {
     };
 }
 
+// Validate that every element of `arr` is a finite number and the array is
+// exactly `len` long. Guards against corrupt / partially-written / schema-
+// drifted localStorage payloads that would otherwise set NaN positions and
+// fling a panel to an unreachable spot the user can't even find to drag back.
+function _allFinite(arr, len) {
+    if (!Array.isArray(arr) || arr.length !== len) return false;
+    for (const v of arr) {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+    }
+    return true;
+}
+
 function _applyPoseJSON(obj3d, pose) {
-    if (!pose || !pose.p || !pose.q) return false;
+    if (!pose || !_allFinite(pose.p, 3) || !_allFinite(pose.q, 4)) return false;
+    // Reject a degenerate (zero-length) quaternion -- it can't be normalized
+    // and would leave the object's orientation undefined.
+    const [qx, qy, qz, qw] = pose.q;
+    if (qx * qx + qy * qy + qz * qz + qw * qw < 1e-6) return false;
+    const scale = (typeof pose.s === 'number' && Number.isFinite(pose.s) && pose.s > 0)
+        ? pose.s : 1.0;
     obj3d.position.set(pose.p[0], pose.p[1], pose.p[2]);
-    obj3d.quaternion.set(pose.q[0], pose.q[1], pose.q[2], pose.q[3]);
-    obj3d.scale.setScalar(typeof pose.s === 'number' ? pose.s : 1.0);
+    obj3d.quaternion.set(qx, qy, qz, qw).normalize();
+    obj3d.scale.setScalar(scale);
     return true;
 }
 
@@ -1588,7 +1630,7 @@ async function toggleSession() {
 
 async function runTrain() {
     if (uiState.training) {
-        setStatus('training already in flight — wait for it to finish');
+        setStatus('training already in flight -- wait for it to finish');
         return;
     }
     if (uiState.recording) {
@@ -1793,10 +1835,14 @@ function bootVRButton() {
                         '(paused:', nowPaused, ')');
             if (nowPaused && !wasPaused) {
                 xrPausedAt = performance.now();
-                setStatus(`session paused (${state}) — boundary redraw or system UI`);
+                // Release any in-progress drag -- selectend won't fire while
+                // the system UI is on top, so the drag would otherwise be
+                // stuck following a frozen controller through the pause.
+                cancelDrag();
+                setStatus(`session paused (${state}) -- boundary redraw or system UI`);
             } else if (!nowPaused && wasPaused) {
                 const heldMs = Math.round(performance.now() - xrPausedAt);
-                setStatus(`session resumed after ${(heldMs / 1000).toFixed(1)}s — re-anchoring UI`);
+                setStatus(`session resumed after ${(heldMs / 1000).toFixed(1)}s -- re-anchoring UI`);
                 placed = false;   // re-run placeAnchors with current head pose
             }
         });
@@ -1817,8 +1863,17 @@ function bootVRButton() {
         // (e.g., we lost Wi-Fi simultaneously) just log it.
         if (uiState.recording) {
             try {
-                await fetch('/api/recording', { method: 'DELETE' });
-                console.log('[openmuscle-vr] auto-stopped active recording on sessionend');
+                const r = await fetch('/api/recording', { method: 'DELETE' });
+                if (r.ok) {
+                    console.log('[openmuscle-vr] auto-stopped active recording on sessionend');
+                } else {
+                    // 400 here usually means the server already thinks it's
+                    // not recording (state drifted). Log it honestly rather
+                    // than claiming success, so a confused capture is
+                    // debuggable from the console after the fact.
+                    console.warn('[openmuscle-vr] sessionend auto-stop returned HTTP',
+                                 r.status, '-- recording may not have closed cleanly');
+                }
             } catch (e) {
                 console.warn('[openmuscle-vr] failed to auto-stop recording on sessionend:', e);
             }
