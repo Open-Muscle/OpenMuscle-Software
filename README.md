@@ -113,6 +113,7 @@ mpremote cp embedded/devices/flexgrid_v1/config/defaults.json :/config/
 - [Adding a New Device](docs/adding-a-device.md)
 - [CLI Usage Guide](docs/pc-cli.md)
 - [VR Setup & Operation](docs/vr-setup.md) — mkcert + Quest cert install + per-session walkthrough
+- [VR Testing Scenarios](docs/vr-testing-scenarios.md) — bring-up order, 2-minute smoke test, per-feature test runbook
 
 ## Adding a New Device
 
