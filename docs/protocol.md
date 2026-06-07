@@ -68,7 +68,7 @@ Synthesized server-side from WebSocket frames sent by the WebXR client at `/vr` 
     "hands": {
         "handedness": "left" | "right",
         "joints": [
-            {"name": "wrist", "pos": [x,y,z], "rot": [x,y,z,w], "radius": 0.02},
+            {"name": "wrist", "pos": [x,y,z], "rot": [x,y,z,w], "radius": 0.02, "valid": true},
             ...
         ]
     }
@@ -76,6 +76,8 @@ Synthesized server-side from WebSocket frames sent by the WebXR client at `/vr` 
 ```
 
 - `values` follows the same convention as LASK5 — flat, in canonical joint × channel order — so the recorder and matcher pair `quest_hand` frames with FlexGrid frames identically to LASK5. The order is `[px, py, pz, rx, ry, rz, rw] × N joints`.
+- **Fixed-length contract.** A well-behaved client MUST send all joints in canonical `joint_names` order every frame, so the `values` length and per-slot meaning are stable across frames. When an individual joint pose is momentarily unavailable, send a zero position + identity quaternion with `"valid": false` rather than omitting the joint — omitting it would shift every later joint into the wrong CSV column and silently misalign the labels. The server defends against violations by locking the label width at the first label packet and padding/truncating later rows to keep the CSV rectangular (it counts and logs any mismatch), but clients should not rely on that.
+- `valid` (per joint, in `hands.joints`) marks whether the pose was actually tracked this frame. It is preserved in the JSONL sidecar so offline analysis can filter zero-filled joints; the flat `values` / CSV carry only the numbers.
 - `joint_names` lists the joints in the same order they're flattened into `values`. The standard set is the W3C WebXR Hand Input spec (25 joints: wrist + 4 thumb + 5 each for index/middle/ring/pinky).
 - `hands` is the structured per-joint form, kept in the JSONL sidecar for offline analysis. It's redundant with `values` + `joint_names` but easier to diff by eye.
 - Empty payloads (the headset reports tracking-lost for the whole hand this frame) are dropped silently by the server — they'd otherwise produce zero-rows that mislead training.

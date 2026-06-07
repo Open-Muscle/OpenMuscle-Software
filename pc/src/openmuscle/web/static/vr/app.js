@@ -1340,19 +1340,43 @@ function captureAndSend(frame, refSpace, hand, timestampMs) {
     if (timestampMs - lastReportAt < 1000 / REPORT_HZ) return;
     lastReportAt = timestampMs;
 
+    // Emit ALL joints in canonical JOINT_NAMES order, every frame, even when
+    // a joint's pose is momentarily unavailable. This keeps the flattened
+    // `values` array a FIXED length with STABLE slot meaning -- critical
+    // because the server writes these straight into CSV columns. The old
+    // code skipped missing joints, which (a) made the payload length vary
+    // frame to frame -> ragged CSV, and worse (b) shifted every later joint
+    // into the wrong column when a middle joint dropped -> silently
+    // misaligned ground-truth labels. For an unavailable joint we send a
+    // zero position + identity quaternion and valid:false, so downstream can
+    // filter it (the validity is preserved in the JSONL sidecar; the CSV
+    // itself carries the zeros). Only when NO joint is available do we drop
+    // the whole frame -- there's nothing to pair.
     const joints = [];
+    let validCount = 0;
     for (const name of JOINT_NAMES) {
         const p = jointPose(frame, refSpace, hand, name);
-        if (!p) continue;
-        const t = p.transform;
-        joints.push({
-            name,
-            pos: [t.position.x, t.position.y, t.position.z],
-            rot: [t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w],
-            radius: p.radius || 0,
-        });
+        if (p) {
+            const t = p.transform;
+            joints.push({
+                name,
+                pos: [t.position.x, t.position.y, t.position.z],
+                rot: [t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w],
+                radius: p.radius || 0,
+                valid: true,
+            });
+            validCount++;
+        } else {
+            joints.push({
+                name,
+                pos: [0, 0, 0],
+                rot: [0, 0, 0, 1],
+                radius: 0,
+                valid: false,
+            });
+        }
     }
-    if (joints.length === 0) return;  // tracking lost; let it drop
+    if (validCount === 0) return;  // hand fully untracked this frame; drop it
     questWs.send(JSON.stringify({
         device_id: `quest-${ARM}`,
         ts: Math.floor(timestampMs),

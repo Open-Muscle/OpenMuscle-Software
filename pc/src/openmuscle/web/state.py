@@ -184,6 +184,15 @@ class ActiveCapture:
     # not derivable from device_type alone -- e.g. quest_hand.
     labels_schema_path: Optional[Path] = None
     labels_schema_written: bool = False
+    # Label-width lock. quest_hand frames can vary in joint count when hand
+    # tracking is partial; writing those varying lengths straight to the CSV
+    # produces ragged rows (different column count per row) that break
+    # pandas.read_csv and corrupt the capture for training. We lock the
+    # expected width at the first label packet (same width the labels-schema
+    # sidecar describes) and pad/truncate every paired row to it, so the CSV
+    # stays rectangular and consistent with the schema. None until locked.
+    locked_label_count: Optional[int] = None
+    label_width_mismatch_count: int = 0
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -476,6 +485,25 @@ class AppState:
             rec.matched_count += 1
             label_values = list(matched.data.get("values", []))
 
+        # Guarantee a rectangular CSV. If the label width was locked (quest_hand)
+        # and this matched label has a different length, pad with zeros or
+        # truncate to the locked width. Without this, variable-length payloads
+        # (partial hand tracking, or a misbehaving client) would write ragged
+        # rows that break pandas.read_csv and corrupt the whole capture. The
+        # locked width matches the labels-schema sidecar, so consumers can
+        # still map every column to a (joint, channel). NB: a well-behaved
+        # client sends a fixed-length array every frame, so this rarely fires;
+        # the mismatch counter surfaces it in the stop-recording stats + log
+        # if it does.
+        if rec.locked_label_count is not None and label_values:
+            n = rec.locked_label_count
+            if len(label_values) != n:
+                rec.label_width_mismatch_count += 1
+                if len(label_values) < n:
+                    label_values = list(label_values) + [0.0] * (n - len(label_values))
+                else:
+                    label_values = list(label_values[:n])
+
         # Flatten as-sent [cols][rows] matrix row-major. Header in CaptureWriter
         # is R0C0..R0Cn, R1C0.., so iterating rows-then-cols here keeps the
         # column meaning correct (cf. the col-major bug we fixed in 245cb8f).
@@ -526,13 +554,21 @@ class AppState:
                     "joint": jn,
                     "channel": ch,
                 })
+        n_label_columns = len(joint_names) * n_floats
+        # Lock the CSV label width to what this first label packet described,
+        # so _record_packet can pad/truncate every paired row to match the
+        # schema and keep the CSV rectangular. (Well-behaved clients send a
+        # fixed-length joint array every frame, so this almost never triggers
+        # a pad/truncate -- it's a safety net against partial-tracking frames
+        # and any client that emits a variable-length payload.)
+        rec.locked_label_count = n_label_columns
         schema = {
             "label_source": "quest_hand",
             "handedness": handedness,
             "ordering": ordering,
             "floats_per_joint": n_floats,
             "n_joints": len(joint_names),
-            "n_label_columns": len(joint_names) * n_floats,
+            "n_label_columns": n_label_columns,
             "joint_names": joint_names,
             "columns": columns,
         }
@@ -1002,6 +1038,17 @@ class AppState:
             "stopped: {} -- {} matched / {} sensor frames ({}%), {}s".format(
                 rec.path.name, rec.matched_count, rec.sensor_frames_seen,
                 round(rec.match_rate * 100, 1), round(rec.duration_s, 1)))
+        # If any rows had to be padded/truncated to the locked label width,
+        # call it out -- it means the label source sent variable-length
+        # frames (e.g. partial hand tracking), and those rows have some
+        # zero-filled joint columns.
+        if rec.label_width_mismatch_count:
+            self.log_buffer.warn("recording",
+                "{}: {} row(s) padded/truncated to locked label width {} "
+                "(variable-length label frames -- some joint columns are "
+                "zero-filled)".format(
+                    rec.path.name, rec.label_width_mismatch_count,
+                    rec.locked_label_count))
         result = {
             "filename": rec.path.name,
             "rows": rec.row_count,
@@ -1014,6 +1061,7 @@ class AppState:
             "unpaired_sensor": rec.unpaired_sensor_count,
             "sensor_frames_seen": rec.sensor_frames_seen,
             "label_packets_seen": rec.label_packets_seen,
+            "label_width_mismatch": rec.label_width_mismatch_count,
             "match_rate": round(rec.match_rate, 3),
             "sidecars": {
                 "sensor": str(rec.path.with_suffix("")) + ".sensor.jsonl",
