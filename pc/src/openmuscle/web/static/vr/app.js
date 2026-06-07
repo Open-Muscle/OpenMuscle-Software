@@ -185,10 +185,17 @@ const SYNC_SLATE_MS = 2500;
 const SLATE_W = 0.60;
 const SLATE_H = 0.20;
 let compareMesh, compareCanvas, compareCtx, compareTex;
-// Per-finger max wrist->tip distance ever observed. We use this as the
-// "fully extended" reference so the curl normalization adapts to the
-// user's hand size without needing calibration. Starts conservative.
-const fingerMaxExtended = [0.105, 0.110, 0.105, 0.090];   // index, middle, ring, pinky
+// Per-finger max wrist->tip distance ever observed, used as the "fully
+// extended" reference so the curl normalization adapts to the user's hand
+// size without explicit calibration. REAL and PREDICTED keep SEPARATE
+// calibration arrays: the real distances are physical (~0.10 m), but the
+// model's predicted distances can be wildly off-scale for a poorly-trained
+// model (common early in training). If they shared one array, one bad
+// predicted frame would pollute the max and distort the REAL bars too --
+// exactly when you most need the real bars to stay trustworthy. Index,
+// middle, ring, pinky.
+const fingerMaxExtendedReal = [0.105, 0.110, 0.105, 0.090];
+const fingerMaxExtendedPred = [0.105, 0.110, 0.105, 0.090];
 let pinchIndicator;
 let armGroup;                                  // captured-hand joint spheres (blue)
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
@@ -1135,9 +1142,9 @@ function updateSlateVisibility() {
 // then 5 each for index/middle/ring/pinky -- so tips are at 9, 14, 19, 24.
 const TIP_INDICES_FMRP = [9, 14, 19, 24];
 
-function curlFromDistance(dist, fingerIdx) {
-    if (dist > fingerMaxExtended[fingerIdx]) fingerMaxExtended[fingerIdx] = dist;
-    const maxD = fingerMaxExtended[fingerIdx];
+function curlFromDistance(dist, fingerIdx, maxArr) {
+    if (dist > maxArr[fingerIdx]) maxArr[fingerIdx] = dist;
+    const maxD = maxArr[fingerIdx];
     const minD = maxD * 0.45;   // empirical fully-curled estimate (~45% of extended)
     const range = maxD - minD;
     if (range <= 0) return 0;
@@ -1157,7 +1164,7 @@ function realCurls(frame, refSpace, hand) {
         if (!tp) { out.push(null); continue; }
         const t = tp.transform.position;
         const d = Math.hypot(t.x - w.x, t.y - w.y, t.z - w.z);
-        out.push(curlFromDistance(d, i));
+        out.push(curlFromDistance(d, i, fingerMaxExtendedReal));
     }
     return out;
 }
@@ -1174,7 +1181,7 @@ function predictedCurls(values) {
         const base = TIP_INDICES_FMRP[i] * 7;
         const tx = values[base], ty = values[base + 1], tz = values[base + 2];
         const d = Math.hypot(tx - wx, ty - wy, tz - wz);
-        out.push(curlFromDistance(d, i));
+        out.push(curlFromDistance(d, i, fingerMaxExtendedPred));
     }
     return out;
 }
@@ -1404,6 +1411,7 @@ const _ghostTmpVec = new THREE.Vector3();
 const _ghostPredWristPos = new THREE.Vector3();
 const _ghostRealWristPos = new THREE.Vector3();
 const _ghostPredQuat = new THREE.Quaternion();
+const _ghostPredQuatInv = new THREE.Quaternion();
 const _ghostRealQuat = new THREE.Quaternion();
 const _ghostDeltaQuat = new THREE.Quaternion();
 
@@ -1428,12 +1436,22 @@ function updateGhostHand(predValues, realWristPos, realWristQuat) {
 
     let useRotation = false;
     if (realWristQuat) {
-        _ghostPredQuat.set(predValues[3], predValues[4], predValues[5], predValues[6]);
-        _ghostRealQuat.set(realWristQuat.x, realWristQuat.y, realWristQuat.z, realWristQuat.w);
-        // delta = real * inverse(pred). Apply to (pred_pos - pred_wrist_pos)
-        // to land in the real-wrist's frame.
-        _ghostDeltaQuat.copy(_ghostRealQuat).multiply(_ghostPredQuat.clone().invert());
-        useRotation = true;
+        const qx = predValues[3], qy = predValues[4], qz = predValues[5], qw = predValues[6];
+        // Guard a degenerate (near-zero) predicted wrist quaternion: a poorly
+        // trained model can output one, and inverting it divides by ~zero ->
+        // NaN -> the whole ghost hand jumps to NaN positions. When that
+        // happens we fall back to position-only alignment (still useful).
+        const qLenSq = qx * qx + qy * qy + qz * qz + qw * qw;
+        if (qLenSq > 1e-6) {
+            _ghostPredQuat.set(qx, qy, qz, qw).normalize();
+            _ghostRealQuat.set(realWristQuat.x, realWristQuat.y, realWristQuat.z, realWristQuat.w);
+            // delta = real * inverse(pred). Apply to (pred_pos - pred_wrist_pos)
+            // to land in the real-wrist's frame. Uses a dedicated inverse temp
+            // (no per-frame allocation).
+            _ghostPredQuatInv.copy(_ghostPredQuat).invert();
+            _ghostDeltaQuat.copy(_ghostRealQuat).multiply(_ghostPredQuatInv);
+            useRotation = true;
+        }
     }
 
     let i = 0;
