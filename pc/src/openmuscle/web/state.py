@@ -745,6 +745,11 @@ class AppState:
                 "sensor_frames_seen": r.sensor_frames_seen,
                 "label_packets_seen": r.label_packets_seen,
                 "match_rate": round(r.match_rate, 3),
+                # Rows that had to be padded/truncated to the locked label
+                # width (variable-length label frames, e.g. partial hand
+                # tracking). Surfaced live so the in-VR header can warn the
+                # operator that joints are dropping mid-capture.
+                "label_width_mismatch": r.label_width_mismatch_count,
             }
         return {
             "type": "tick",

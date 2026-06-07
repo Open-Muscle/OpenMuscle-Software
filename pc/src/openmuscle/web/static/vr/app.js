@@ -1562,17 +1562,48 @@ function drawHeatmap(matrix) {
     heatmapTex.needsUpdate = true;
 }
 
-function drawHeader(text, isRecording) {
+// Guard against redundant header re-uploads. While recording the text
+// changes every frame (ms clock) so it legitimately redraws; while idle the
+// "X Hz · Y Hz" string changes ~1/sec, so without this it would re-upload
+// the texture 72x/sec for nothing. Keyed on the full (text, recording,
+// quality) tuple.
+let _headerLastKey = null;
+
+function drawHeader(text, isRecording, qualityColor) {
+    const key = text + '|' + isRecording + '|' + (qualityColor || '');
+    if (key === _headerLastKey) return;
+    _headerLastKey = key;
+
     const ctx = headerCanvas.getContext('2d');
-    ctx.clearRect(0, 0, headerCanvas.width, headerCanvas.height);
+    const W = headerCanvas.width, H = headerCanvas.height;
+    ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = isRecording ? 'rgba(239, 68, 68, 0.95)' : 'rgba(20, 24, 32, 0.85)';
     const pad = 12;
-    ctx.fillRect(pad, pad, headerCanvas.width - pad * 2, headerCanvas.height - pad * 2);
+    ctx.fillRect(pad, pad, W - pad * 2, H - pad * 2);
+
+    // Live capture-quality dot on the left (recording only). Green = good
+    // match rate, amber = marginal, red = poor, gray = still warming up.
+    let textLeftInset = 0;
+    if (qualityColor) {
+        ctx.fillStyle = qualityColor;
+        ctx.beginPath();
+        ctx.arc(44, H / 2, 16, 0, Math.PI * 2);
+        ctx.fill();
+        textLeftInset = 36;   // nudge centered text right so it clears the dot
+    }
+
+    // Auto-fit the font so long filenames don't overflow the canvas edges.
     ctx.fillStyle = '#f0f4f8';
-    ctx.font = 'bold 32px system-ui';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'center';
-    ctx.fillText(text, headerCanvas.width / 2, headerCanvas.height / 2);
+    let fontPx = 32;
+    const maxTextW = W - pad * 2 - textLeftInset - 24;
+    do {
+        ctx.font = `bold ${fontPx}px system-ui`;
+        if (ctx.measureText(text).width <= maxTextW) break;
+        fontPx -= 2;
+    } while (fontPx > 16);
+    ctx.fillText(text, (W + textLeftInset) / 2, H / 2);
     headerTex.needsUpdate = true;
 }
 
@@ -1592,13 +1623,31 @@ function updateFromSnapshot(snap, timestampMs) {
         const mm = String(now.getMinutes()).padStart(2, '0');
         const ss = String(now.getSeconds()).padStart(2, '0');
         const ms = String(now.getMilliseconds()).padStart(3, '0');
-        drawHeader(`REC · ${hh}:${mm}:${ss}.${ms} · ${rec.filename}`, true);
+        // Live capture-quality gauge so the operator can tell mid-session
+        // whether the data is clean -- without taking the headset off or
+        // checking the PC. The dot color tracks the sensor<->label match
+        // rate; a "JOINTS DROPPING" suffix warns when partial hand tracking
+        // is forcing the server to zero-pad joint columns (label_width_mismatch).
+        const mr = rec.match_rate || 0;
+        const pct = Math.round(mr * 100);
+        const dropping = (rec.label_width_mismatch || 0) > 0;
+        const warmingUp = (rec.sensor_frames_seen || 0) < 10;
+        let qColor;
+        if (warmingUp)       qColor = '#9ca3af';   // gray: not enough frames yet
+        else if (mr >= 0.70) qColor = '#22c55e';   // green: good
+        else if (mr >= 0.40) qColor = '#f59e0b';   // amber: marginal
+        else                 qColor = '#ef4444';   // red: poor pairing
+        if (dropping && !warmingUp && qColor === '#22c55e') qColor = '#f59e0b';
+        let txt = `REC ${hh}:${mm}:${ss}.${ms} · ${rec.filename}`;
+        if (!warmingUp) txt += ` · ${pct}%`;
+        if (dropping) txt += ' · JOINTS DROPPING';
+        drawHeader(txt, true, qColor);
         uiState.recording = true;
     } else {
         const fgHz = fg ? `${fg.hz?.toFixed?.(0) || '0'} Hz` : 'no FlexGrid';
         const questDev = (snap.devices || []).find(d => d.device_type === 'quest_hand');
         const questHz = questDev ? `${questDev.hz?.toFixed?.(0) || '0'} Hz` : 'no Quest';
-        drawHeader(`${fgHz} · ${questHz}`, false);
+        drawHeader(`${fgHz} · ${questHz}`, false, null);
         uiState.recording = false;
     }
     // Session state mirrors the server's active_session field
