@@ -647,7 +647,17 @@ function createDragHandle(target, localOffset) {
     return handle;
 }
 
+// Tracks the last hover state we actually rendered so we can skip the
+// redraw (and the GPU texture re-upload) when nothing changed. The STOP
+// button is visible for the whole recording but its appearance only flips
+// on hover enter/leave, so without this guard we'd re-upload a 512x280
+// texture every frame at 72fps -- wasted bandwidth competing with hand
+// tracking exactly when smooth tracking matters most.
+let _stopButtonLastHovered = null;
+
 function drawStopButton(hovered) {
+    if (_stopButtonLastHovered === hovered) return;   // no change, skip
+    _stopButtonLastHovered = hovered;
     const ctx = stopButtonCtx;
     const W = stopButtonCanvas.width, H = stopButtonCanvas.height;
     ctx.clearRect(0, 0, W, H);
@@ -1007,19 +1017,37 @@ function updateRaycast() {
     }
 }
 
+// Once the current status text has fully faded we stop re-uploading the
+// (now-blank) texture every frame. drawStatus is called every frame from
+// updateFromSnapshot to animate the fade, but past alpha 0 there's nothing
+// left to animate -- without this flag a blank status strip would keep
+// uploading a cleared 800x90 texture forever, for no visible benefit.
+let _statusFadeDone = false;
+
 function drawStatus(text) {
     if (text !== lastStatusText) {
         lastStatusText = text;
         lastStatusAt = performance.now();
+        _statusFadeDone = false;
     }
+    if (_statusFadeDone) return;   // fully faded + already cleared once; nothing to do
+
     const ctx = statusCanvas.getContext('2d');
     const W = statusCanvas.width, H = statusCanvas.height;
     ctx.clearRect(0, 0, W, H);
-    if (!text) { statusTex.needsUpdate = true; return; }
+    if (!text) {
+        statusTex.needsUpdate = true;
+        _statusFadeDone = true;     // blank: one upload, then stop
+        return;
+    }
     // Fade alpha over STATUS_FADE_MS
     const age = performance.now() - lastStatusAt;
     const alpha = Math.max(0, 1 - age / STATUS_FADE_MS);
-    if (alpha <= 0) { statusTex.needsUpdate = true; return; }
+    if (alpha <= 0) {
+        statusTex.needsUpdate = true;   // final cleared upload
+        _statusFadeDone = true;         // ...then stop until the text changes
+        return;
+    }
     ctx.globalAlpha = alpha;
     ctx.fillStyle = 'rgba(20, 24, 32, 0.80)';
     ctx.fillRect(0, 0, W, H);
@@ -1033,9 +1061,12 @@ function drawStatus(text) {
 }
 
 function setStatus(text) {
-    // Update text + restart fade timer
+    // Update text + restart fade timer. Force a re-render even if the text
+    // is identical to what just faded (re-issuing the same message should
+    // flash it again).
     lastStatusText = text;
     lastStatusAt = performance.now();
+    _statusFadeDone = false;
     drawStatus(text);
 }
 
