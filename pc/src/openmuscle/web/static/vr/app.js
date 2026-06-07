@@ -1876,7 +1876,7 @@ async function runTrain() {
 // Main XR frame loop
 // ---------------------------------------------------------------------------
 
-function onXRFrame(timestamp, frame) {
+function onXRFrameImpl(timestamp, frame) {
     const session = renderer.xr.getSession();
     const refSpace = renderer.xr.getReferenceSpace();
     if (!session || !refSpace) return;
@@ -1946,6 +1946,32 @@ function onXRFrame(timestamp, frame) {
     setRecordingCollapsedUI(uiState.recording);   // swap menu <-> STOP every frame
 
     renderer.render(scene, camera);
+}
+
+// Resilient frame-loop wrapper. A single throwing frame (malformed snapshot,
+// an unexpected null pose, a bad predicted vector) must NOT kill the whole
+// XR session -- on a field-capture rig that would freeze the headset mid-
+// recording and lose work that can't easily be redone. We catch, rate-limit
+// a console.error so the bug is still visible, and ALWAYS render so the view
+// stays live and the user can still reach EXIT / STOP. The error is not
+// swallowed silently -- it's logged, just not fatal.
+let _frameErrCount = 0;
+let _frameErrLastLogged = 0;
+function onXRFrame(timestamp, frame) {
+    try {
+        onXRFrameImpl(timestamp, frame);
+    } catch (e) {
+        _frameErrCount++;
+        // Log the first error immediately, then at most once every 2s, with
+        // a running count so a persistent per-frame error is obvious but
+        // doesn't flood the console at 72fps.
+        const now = performance.now();
+        if (_frameErrCount === 1 || now - _frameErrLastLogged > 2000) {
+            _frameErrLastLogged = now;
+            console.error(`[openmuscle-vr] frame error #${_frameErrCount}:`, e);
+        }
+        try { renderer.render(scene, camera); } catch (e2) { /* last resort */ }
+    }
 }
 
 // ---------------------------------------------------------------------------
