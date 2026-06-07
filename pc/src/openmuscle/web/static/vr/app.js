@@ -1308,6 +1308,15 @@ function placeAnchors(frame, refSpace) {
 let questWs = null;
 let liveWs = null;
 let latestSnapshot = null;
+// "Want open" flags. The auto-reconnect on a socket's `close` event must NOT
+// fire when WE deliberately closed it (on sessionend). Without these flags,
+// closing the sockets at sessionend triggers their close handlers, which
+// reconnect 1.5s later -- so the page keeps hammering /ws/quest + /ws/live
+// forever after you exit VR, and re-entering VR stacks another reconnect
+// loop on top. The flag lets close handlers distinguish a network blip
+// (reconnect) from an intentional teardown (stay closed).
+let _questWsWantOpen = false;
+let _liveWsWantOpen = false;
 
 function wsURL(path) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1315,21 +1324,40 @@ function wsURL(path) {
 }
 
 function connectQuestWS() {
+    _questWsWantOpen = true;
     questWs = new WebSocket(wsURL('/ws/quest'));
     questWs.addEventListener('close', () => {
-        // Reconnect with backoff so a network blip doesn't lose the session
-        setTimeout(connectQuestWS, 1500);
+        // Reconnect with backoff so a network blip doesn't lose the session,
+        // but only if we still want this socket open (not after teardown).
+        if (_questWsWantOpen) setTimeout(connectQuestWS, 1500);
     });
     questWs.addEventListener('error', () => { try { questWs.close(); } catch (e) {} });
 }
 
 function connectLiveWS() {
+    _liveWsWantOpen = true;
     liveWs = new WebSocket(wsURL('/ws/live'));
     liveWs.addEventListener('message', (ev) => {
         try { latestSnapshot = JSON.parse(ev.data); } catch (e) {}
     });
-    liveWs.addEventListener('close', () => setTimeout(connectLiveWS, 1500));
+    liveWs.addEventListener('close', () => {
+        if (_liveWsWantOpen) setTimeout(connectLiveWS, 1500);
+    });
     liveWs.addEventListener('error', () => { try { liveWs.close(); } catch (e) {} });
+}
+
+// Intentional teardown: clear the want-open flag first so the close handler
+// does NOT schedule a reconnect, then close + drop the reference.
+function closeQuestWS() {
+    _questWsWantOpen = false;
+    try { questWs && questWs.close(); } catch (e) {}
+    questWs = null;
+}
+
+function closeLiveWS() {
+    _liveWsWantOpen = false;
+    try { liveWs && liveWs.close(); } catch (e) {}
+    liveWs = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2000,9 +2028,10 @@ function bootVRButton() {
                 console.warn('[openmuscle-vr] failed to auto-stop recording on sessionend:', e);
             }
         }
-        try { questWs && questWs.close(); } catch (e) {}
-        try { liveWs && liveWs.close(); } catch (e) {}
-        questWs = null; liveWs = null;
+        // Intentional teardown -- close via the helpers so the reconnect
+        // loop actually stops (clearing the want-open flag first).
+        closeQuestWS();
+        closeLiveWS();
         xrPaused = false;
     });
 }
