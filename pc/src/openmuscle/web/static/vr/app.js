@@ -274,7 +274,7 @@ const uiState = {
     inferenceModel: null,          // model name string for status
     // pinch is the hands-free fallback for REC only
     pinchStart: 0,
-    lastPinchToggleAt: 0,
+    pinchToggled: false,   // already fired a toggle for the current hold; needs release
 };
 
 let lastReportAt = 0;
@@ -590,11 +590,23 @@ function createMenuButton(name, label, isActive, onActivate, row, col) {
 }
 
 function drawMenuButton(btn, hovered) {
+    const active = !!btn.isActive();
+    const flashing = (btn.flashUntil || 0) > performance.now();
+    // Skip the redraw + GPU texture re-upload when nothing about this button's
+    // appearance changed. updateButtonVisual calls this for all 6 buttons every
+    // frame, but they only change on active/hover/flash transitions -- without
+    // this guard that's 6 texture uploads/frame at 72fps for nothing. (Same
+    // fix v1.14 applied to the STOP button + status strip; the menu buttons
+    // were missed.) The flashing bool is time-derived, so a flash naturally
+    // forces one more redraw when it expires (true -> false flips the key).
+    const labelText = (btn.name === 'REC' && active) ? 'STOP' : btn.label;
+    const drawKey = `${active}|${hovered}|${flashing}|${labelText}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+
     const ctx = btn.ctx;
     const W = btn.canvas.width, H = btn.canvas.height;
     ctx.clearRect(0, 0, W, H);
-    const active = !!btn.isActive();
-    const flashing = (btn.flashUntil || 0) > performance.now();
 
     // Rounded-rect background. Priority: flash > active > hovered > idle.
     // Flash is the brief white burst right after a successful select; it
@@ -618,7 +630,7 @@ function drawMenuButton(btn, hovered) {
     ctx.fill();
 
     // Label: REC <-> STOP swap so the button tells you what tapping it does next
-    const labelText = (btn.name === 'REC' && active) ? 'STOP' : btn.label;
+    // (labelText computed above for the redraw-skip key).
     ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';   // dark text on white flash
     ctx.font = 'bold 72px system-ui';
     ctx.textAlign = 'center';
@@ -1513,18 +1525,26 @@ function detectPinchAndToggle(frame, refSpace, hand, timestampMs) {
     pinchIndicator.lookAt(head.position);
 
     if (isPinching) {
-        if (uiState.pinchStart === 0) uiState.pinchStart = timestampMs;
+        if (uiState.pinchStart === 0) {
+            uiState.pinchStart = timestampMs;
+            uiState.pinchToggled = false;   // fresh hold
+        }
         const held = timestampMs - uiState.pinchStart;
         const progress = Math.min(1.0, held / PINCH_HOLD_MS);
         pinchIndicator.visible = true;
         pinchIndicator.material.opacity = 0.3 + 0.7 * progress;
-        if (held >= PINCH_HOLD_MS && timestampMs - uiState.lastPinchToggleAt > 1500) {
+        // Fire exactly once per hold. Previously this used pinchStart =
+        // -Infinity + a 1.5s cooldown to "require release", but that made
+        // `held` Infinity so a CONTINUOUS hold re-toggled every 1.5s. The
+        // pinchToggled flag enforces a real release (a non-pinching frame
+        // clears it below) before the next toggle can fire.
+        if (!uiState.pinchToggled && held >= PINCH_HOLD_MS) {
+            uiState.pinchToggled = true;
             toggleRecording();
-            uiState.lastPinchToggleAt = timestampMs;
-            uiState.pinchStart = -Infinity;  // require release before next
         }
     } else {
         uiState.pinchStart = 0;
+        uiState.pinchToggled = false;   // released -> next hold can toggle again
         pinchIndicator.visible = false;
     }
 }
