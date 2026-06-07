@@ -716,6 +716,73 @@ function endDrag() {
     dragState.target = null;
     dragState.controller = null;
     dragState.handleMat = null;
+    // Persist whatever the user just settled on so it survives session
+    // reloads (and pause/resume). Per-MODE key because VR and AR should
+    // have independent layouts -- you might dock the menu top-right in
+    // VR for gesture training but want it at-waist for AR field capture.
+    savePanelLayout();
+}
+
+// ---------------------------------------------------------------------------
+// Panel layout persistence (localStorage, per-MODE)
+//
+// Save the user's preferred infoGroup / menuRoot poses so they don't have
+// to re-drag the cluster every time they reload the page or come back from
+// a pause. Stored as world-space transforms in the local-floor reference
+// frame -- works for the common case where the user spawns in roughly the
+// same spot at their PC each session. If they spawn somewhere very
+// different the saved layout may be in the wrong place, in which case
+// RECENTER resets to defaults.
+// ---------------------------------------------------------------------------
+
+const LAYOUT_STORAGE_KEY = `openmuscle-vr-layout-${MODE}`;
+
+function _poseToJSON(obj3d) {
+    return {
+        p: [obj3d.position.x, obj3d.position.y, obj3d.position.z],
+        q: [obj3d.quaternion.x, obj3d.quaternion.y, obj3d.quaternion.z, obj3d.quaternion.w],
+        s: obj3d.scale.x,        // uniform scale (we only ever setScalar)
+    };
+}
+
+function _applyPoseJSON(obj3d, pose) {
+    if (!pose || !pose.p || !pose.q) return false;
+    obj3d.position.set(pose.p[0], pose.p[1], pose.p[2]);
+    obj3d.quaternion.set(pose.q[0], pose.q[1], pose.q[2], pose.q[3]);
+    obj3d.scale.setScalar(typeof pose.s === 'number' ? pose.s : 1.0);
+    return true;
+}
+
+function savePanelLayout() {
+    try {
+        const payload = {
+            v: 1,                            // schema version, bump if structure changes
+            info: _poseToJSON(infoGroup),
+            menu: _poseToJSON(menuRoot),
+        };
+        localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(payload));
+    } catch (e) {
+        // localStorage quota errors / private mode / etc. Not fatal.
+        console.warn('[openmuscle-vr] savePanelLayout failed:', e);
+    }
+}
+
+function loadPanelLayout() {
+    try {
+        const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+        if (!raw) return null;
+        const payload = JSON.parse(raw);
+        if (!payload || payload.v !== 1) return null;
+        return payload;
+    } catch (e) {
+        console.warn('[openmuscle-vr] loadPanelLayout failed:', e);
+        return null;
+    }
+}
+
+function clearPanelLayout() {
+    try { localStorage.removeItem(LAYOUT_STORAGE_KEY); }
+    catch (e) { /* swallow */ }
 }
 
 function updateDrag() {
@@ -757,8 +824,13 @@ async function togglePredict() {
 // session start. Setting `placed = false` makes the next XRFrame call
 // placeAnchors with the current viewer pose.
 function recenterUI() {
+    // RECENTER = reset to default positions + forget any persisted layout.
+    // Without the clear, a user who got confused, hit RECENTER, then closed
+    // the tab would come back next session to the same lost layout. The
+    // "I want a clean slate" gesture needs to actually clean the slate.
+    clearPanelLayout();
     placed = false;
-    setStatus('UI re-centered to your current view');
+    setStatus('UI re-centered (defaults restored, saved layout cleared)');
 }
 
 // Pinch on a controller -> activate whichever button the ray is currently over,
@@ -1096,8 +1168,9 @@ function drawCompare(real, pred) {
 
 function placeAnchors(frame, refSpace) {
     // Use the headset's current pose to place panel + button in front of the
-    // user at session start. After this they're world-anchored -- they don't
-    // follow the head (head-locked panels make people queasy).
+    // user at session start (or restore previously-saved layout). After this
+    // they're world-anchored -- they don't follow the head (head-locked
+    // panels make people queasy).
     const viewerPose = frame.getViewerPose(refSpace);
     if (!viewerPose) return;
     const view = viewerPose.views[0];
@@ -1106,11 +1179,26 @@ function placeAnchors(frame, refSpace) {
     const headFwd = new THREE.Vector3(0, 0, -1).applyMatrix4(
         new THREE.Matrix4().extractRotation(m));
 
-    // Place infoGroup (heatmap + header + compare) in front of the user,
-    // slightly below eye height. infoGroup's local origin is at the heatmap
-    // center; header and compare positions are local offsets set at init.
-    // After this initial placement the user can drag the whole group via
-    // its handle to wherever fits their workspace.
+    // Slate position is always fresh per-session -- it pops up in front of
+    // wherever the user is right now when REC fires, regardless of where
+    // the panels live. So we always set it here.
+    slateMesh.position.copy(headPos).addScaledVector(headFwd, 0.55);
+    slateMesh.lookAt(headPos);
+
+    // If a saved layout exists from a prior drag (or prior session), apply
+    // it and skip the default positioning. The user's preferred field-
+    // capture workstation comes back the way they left it.
+    const saved = loadPanelLayout();
+    if (saved && _applyPoseJSON(infoGroup, saved.info) && _applyPoseJSON(menuRoot, saved.menu)) {
+        placed = true;
+        return;
+    }
+
+    // Default positioning: infoGroup (heatmap + header + compare) in front
+    // of the user, slightly below eye height. infoGroup's local origin is
+    // at the heatmap center; header and compare positions are local offsets
+    // set at init. After this initial placement the user can drag the whole
+    // group via its handle to wherever fits their workspace.
     const heatPos = headPos.clone().addScaledVector(headFwd, HEATMAP_FORWARD_M);
     heatPos.y -= 0.10 * UI_SCALE;
     infoGroup.position.copy(heatPos);
@@ -1129,14 +1217,6 @@ function placeAnchors(frame, refSpace) {
 
     // statusMesh is now a child of menuRoot with a fixed local offset --
     // no separate positioning needed here. It moves and tilts with the menu.
-
-    // Sync slate sits centered in the user's primary view (in front of the
-    // heatmap, between them and it). When triggered at REC press it pops up
-    // big and obvious so the headset's screen recording captures a clean
-    // sync frame. Slightly closer than the heatmap so it visually takes
-    // precedence during the splash.
-    slateMesh.position.copy(headPos).addScaledVector(headFwd, 0.55);
-    slateMesh.lookAt(headPos);
 
     placed = true;
 }
