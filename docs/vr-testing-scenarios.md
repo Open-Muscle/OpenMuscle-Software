@@ -39,10 +39,22 @@ The fastest "is anything obviously broken" check. Only needs the headset + PC + 
 | 6 | Point the ray at a menu button | Ray turns amber, button highlights |
 | 7 | Pinch (off-hand index + thumb) while hovering RECENTER | Brief white flash on the button; panels re-anchor in front of you |
 | 8 | Point at a panel's drag handle (small cube, top-left corner) and pinch-hold | Handle turns green; panel follows your hand. Release: panel drops + faces you |
-| 9 | Tap REC | Yellow SYNC slate flashes ~2.5s; menu collapses to one big red STOP button; header shows a live ms clock + filename |
+| 9 | Tap REC | Yellow SYNC slate flashes ~2.5s; menu collapses to one big red STOP button; header shows a live ms clock + filename + a capture-quality dot (gray while warming up) |
 | 10 | Tap STOP | Menu returns to the full 3x2 grid; status strip shows "saved: ..." |
 
 If all 10 pass, the core interaction loop is healthy. If FlexGrid is connected, the heatmap in step 3 animates and the REC in step 9 actually pairs sensor frames.
+
+### Reading capture quality (live, while recording)
+
+The recording header is also a live data-quality gauge, so you can tell mid-capture whether the data is good without taking the headset off:
+
+- **Quality dot color** (tracks the sensor-to-label match rate):
+  - **gray** = warming up (fewer than ~10 sensor frames seen yet)
+  - **green** = match rate >= 70% (good)
+  - **amber** = 40 to 70% (marginal -- check that both FlexGrid and Quest are streaming)
+  - **red** = below 40% (poor pairing -- something is off; see Troubleshooting)
+- **`NN%`** in the header is the live match rate.
+- **`JOINTS DROPPING`** appears (and the dot goes amber) when your hand is partially out of the cameras' view and the headset is sending incomplete joint frames. Those frames get zero-filled joint columns -- keep your capture hand more fully in view if you see this a lot. The final count is also reported in the stop result (`label_width_mismatch`).
 
 ---
 
