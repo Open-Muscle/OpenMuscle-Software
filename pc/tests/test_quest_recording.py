@@ -52,6 +52,17 @@ def _quest_payload(n_joints, handedness="right", device_id="quest-right"):
             "joints": joints}
 
 
+def _lask5_packet(device_id="lask5-test", recv_time=None):
+    return OpenMusclePacket(
+        version=CURRENT_VERSION,
+        device_type="lask5",
+        device_id=device_id,
+        timestamp_ms=int((recv_time or time.time()) * 1000),
+        data={"values": [100, 200, 300, 400], "joystick": {"x": 2048, "y": 2048}},
+        receive_time=recv_time or time.time(),
+    )
+
+
 class TestQuestRecordingRectangular:
     def test_variable_joint_counts_produce_rectangular_csv(self):
         with tempfile.TemporaryDirectory() as d:
@@ -120,3 +131,77 @@ class TestQuestRecordingRectangular:
             assert schema["n_label_columns"] == n_label_cols == 175
             # Columns map is fully enumerated and matches the count.
             assert len(schema["columns"]) == 175
+
+
+class TestRecordingDefaults:
+    """Per-device-type match-window defaults + the label_source meta tag.
+
+    Quest WebXR has higher end-to-end latency than LASK5's ESP-NOW path, so
+    quest_hand recordings default to a wider 175ms match window vs LASK5's
+    100ms. And every capture's meta sidecar is tagged with which label
+    source produced it, so the Captures panel + downstream training can keep
+    Quest-labeled and LASK5-labeled datasets separable.
+    """
+
+    def test_quest_window_defaults_to_175ms(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s.ingest_quest_packet(_quest_payload(25))
+            rec = s.start_recording(filename="q.csv")   # window_ms=None
+            s.stop_recording()   # close file handles before temp-dir cleanup
+            assert rec.label_device_id == "quest-right"
+            assert abs(rec.window_s - 0.175) < 1e-9, rec.window_s
+
+    def test_lask5_window_defaults_to_100ms(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s._handle_packet(_lask5_packet())          # no quest device present
+            rec = s.start_recording(filename="l.csv")   # window_ms=None
+            s.stop_recording()
+            assert rec.label_device_id == "lask5-test"
+            assert abs(rec.window_s - 0.100) < 1e-9, rec.window_s
+
+    def test_explicit_window_overrides_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s.ingest_quest_packet(_quest_payload(25))
+            rec = s.start_recording(filename="o.csv", window_ms=250)
+            s.stop_recording()
+            assert abs(rec.window_s - 0.250) < 1e-9, rec.window_s
+
+    def test_auto_pick_prefers_quest_over_lask5(self):
+        # Both label sources present -> Quest wins (richer label vector),
+        # per AUTO_LABEL_TYPE_PREFERENCE.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s._handle_packet(_lask5_packet())
+            s.ingest_quest_packet(_quest_payload(25))
+            rec = s.start_recording(filename="p.csv")
+            s.stop_recording()
+            assert rec.label_device_id == "quest-right"
+
+    def test_label_source_meta_tag_quest(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s.ingest_quest_packet(_quest_payload(25))
+            s.start_recording(filename="qm.csv")
+            s.stop_recording()
+            meta = s.read_capture_meta("qm.csv")
+            assert meta["auto"]["label_source"] == "quest_hand"
+            assert meta["auto"]["window_ms"] == 175
+
+    def test_label_source_meta_tag_lask5(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s._handle_packet(_lask5_packet())
+            s.start_recording(filename="lm.csv")
+            s.stop_recording()
+            meta = s.read_capture_meta("lm.csv")
+            assert meta["auto"]["label_source"] == "lask5"
+            assert meta["auto"]["window_ms"] == 100
