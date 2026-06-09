@@ -115,6 +115,54 @@ function handleTick(msg) {
     // in lockstep with the underlying bars and the WS message.
     renderResiduals(lask, msg.inference);
     renderPipelinePills(msg, lask);
+    // quest_hand 3D viewer: when a hand label source is streaming, swap the
+    // LASK5 piston comparator for a live 3D hand (the pistons are zeros for
+    // a hand source). No-op when no quest_hand device is present.
+    renderHandViewer(lastDevices.find(d => d.device_type === 'quest_hand'),
+                     msg.inference);
+}
+
+// ---------- quest_hand 3D viewer ----------
+
+// Drives the Three.js hand viewer (window.OMHandViewer, loaded as a module).
+// Shows the REAL captured hand from the live quest_hand device's flat joint
+// `values`, plus the model's PREDICTED hand from inference.piston_values when
+// a quest-trained model (>= 25 joints * 7 floats) is running. Toggles the
+// .hand-mode class on .comparator so CSS hides the LASK5 pistons in favor of
+// the viewer.
+function renderHandViewer(questDev, inference) {
+    const comparator = document.querySelector('.comparator');
+    const viewerReady = window.OMHandViewer && window.OMHandViewer.isReady;
+    if (!questDev) {
+        if (comparator) comparator.classList.remove('hand-mode');
+        if (viewerReady && window.OMHandViewer.isReady()) window.OMHandViewer.setVisible(false);
+        return;
+    }
+    // Lazy-init the viewer on first quest_hand sighting (the module may still
+    // be loading right at page open; guard with isReady).
+    if (window.OMHandViewer && !window.OMHandViewer.isReady()) {
+        const el = document.getElementById('hand-viewer-canvas');
+        if (el) window.OMHandViewer.init(el);
+    }
+    if (!(window.OMHandViewer && window.OMHandViewer.isReady())) return;
+
+    if (comparator) comparator.classList.add('hand-mode');
+    window.OMHandViewer.setVisible(true);
+
+    const realFlat = Array.isArray(questDev.values) ? questDev.values : null;
+    // Predicted hand: only when the live model emits a full hand vector.
+    let predFlat = null;
+    const pv = inference && inference.piston_values;
+    if (Array.isArray(pv) && pv.length >= 25 * 7) predFlat = pv;
+    window.OMHandViewer.update(realFlat, predFlat);
+
+    // Reuse the existing GT meta slot to label the hand source.
+    const gtMeta = document.getElementById('lask-meta');
+    if (gtMeta) {
+        const hz = (typeof questDev.hz === 'number') ? questDev.hz.toFixed(0) : '0';
+        const nJoints = realFlat ? Math.floor(realFlat.length / 7) : 0;
+        gtMeta.textContent = `Quest hand · ${nJoints} joints · ${hz} Hz`;
+    }
 }
 
 // ---------- device list ----------

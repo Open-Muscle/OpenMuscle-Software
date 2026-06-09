@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenMuscle Studio</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <!-- Three.js for the quest_hand 3D viewer. Same CDN + version the VR
+         client uses. hand-viewer.js is an ES module exposing window.OMHandViewer;
+         the plain app.js drives it from handleTick. -->
+    <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script type="module" src="/static/hand-viewer.js?v=1"></script>
 </head>
 <body>
     <header class="topbar">
@@ -98,6 +105,20 @@
                             <div class="piston" data-i="1"><div class="piston-label">P2̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
                             <div class="piston" data-i="2"><div class="piston-label">P3̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
                             <div class="piston" data-i="3"><div class="piston-label">P4̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                        </div>
+                    </div>
+
+                    <!-- quest_hand 3D viewer. Replaces the piston comparator-row
+                         above when a quest_hand label source is streaming (app.js
+                         toggles .hand-mode on .comparator). REAL captured hand
+                         (green) + PREDICTED model hand (amber) in wrist-local
+                         space. Drag to rotate; double-click to resume auto-spin. -->
+                    <div id="hand-viewer" class="hand-viewer">
+                        <div id="hand-viewer-canvas" class="hand-viewer-canvas"></div>
+                        <div class="hand-viewer-legend">
+                            <span class="hv-real">● real</span>
+                            <span class="hv-pred">● predicted</span>
+                            <span class="hv-hint">drag to rotate</span>
                         </div>
                     </div>
 
