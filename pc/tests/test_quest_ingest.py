@@ -100,3 +100,29 @@ class TestIngestQuestPacket:
             s.ingest_quest_packet({"joints": [_full_joint("wrist", offset=i * 0.01)]})
         d = next(iter(s.devices.values()))
         assert d.packets_total == 5
+
+
+class TestSnapshotExposesQuestHand:
+    """The desktop Studio 3D hand viewer reads each device's flat `values`
+    from the /ws/live snapshot. Lock that contract: a quest_hand device must
+    surface in _snapshot() as device_type 'quest_hand' with its full flat
+    joint vector, so a future snapshot refactor can't silently break the
+    viewer's only data source.
+    """
+
+    def test_snapshot_has_quest_device_with_flat_values(self):
+        # _snapshot() touches the full inference machinery, so use a real
+        # AppState (its __init__ sets engine_status etc.) rather than the bare
+        # __new__ helper. The UDP listener is never started, so no socket binds.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            s = AppState(udp_port=53997, captures_dir=d)
+            joints = [_full_joint(f"j{i}", i * 0.01) for i in range(25)]
+            s.ingest_quest_packet({"device_id": "quest-right", "handedness": "right",
+                                   "joints": joints})
+            snap = s._snapshot()
+            quest = [dev for dev in snap["devices"] if dev["device_type"] == "quest_hand"]
+            assert len(quest) == 1
+            # 25 joints * 7 floats -> the viewer slices [i*7 .. i*7+6] per joint.
+            assert len(quest[0]["values"]) == 25 * 7
+            assert quest[0]["device_id"] == "quest-right"
