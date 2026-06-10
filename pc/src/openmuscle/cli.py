@@ -190,15 +190,21 @@ def predict(model, port):
 @main.command()
 @click.option("--port", default=3141, help="UDP port to send to")
 @click.option("--device-type", default="flexgrid",
-              help="Device type to simulate (flexgrid, lask5)")
+              type=click.Choice(["flexgrid", "lask5", "quest_hand", "combo"]),
+              help="Device type to simulate. quest_hand streams synthetic "
+                   "WebXR hand frames to the web server's /ws/quest; combo "
+                   "adds a correlated flexgrid UDP device so record/train/"
+                   "predict works end to end without hardware.")
 @click.option("--replay", type=click.Path(exists=True),
               help="Replay a capture file instead of generating synthetic data")
 @click.option("--target-ip", default="127.0.0.1", help="Target IP address")
-def simulate(port, device_type, replay, target_ip):
-    """Send synthetic or replayed sensor data over UDP."""
+@click.option("--web-port", default=8000,
+              help="openmuscle web HTTP port (quest_hand/combo only)")
+def simulate(port, device_type, replay, target_ip, web_port):
+    """Send synthetic or replayed sensor data."""
     from openmuscle.simulate.transmitter import run_simulator
     run_simulator(port=port, device_type=device_type,
-                  replay_file=replay, target_ip=target_ip)
+                  replay_file=replay, target_ip=target_ip, web_port=web_port)
 
 
 @main.command()
