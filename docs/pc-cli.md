@@ -57,6 +57,16 @@ Send synthetic data for testing without hardware.
 openmuscle simulate --device-type flexgrid
 openmuscle simulate --device-type lask5 --target-ip 192.168.1.100
 openmuscle simulate --replay data/raw/legacy/capture_45.txt
+
+# Synthetic WebXR hand: streams 25-joint frames to the running
+# `openmuscle web` server's /ws/quest WebSocket (no headset needed).
+openmuscle simulate --device-type quest_hand
+
+# Combo: the same latent finger-curl signal drives BOTH a flexgrid UDP
+# device and the quest hand, so the capture is learnable and the whole
+# record -> train -> predict pipeline can be exercised end to end with
+# zero hardware. Use --web-port if the web server is not on 8000.
+openmuscle simulate --device-type combo
 ```
 
 ### `openmuscle models`

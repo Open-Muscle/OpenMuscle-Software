@@ -25,6 +25,35 @@ If any step fails, the [troubleshooting wiki page](https://github.com/Open-Muscl
 
 ---
 
+## Zero-hardware smoke test (no headset, no FlexGrid)
+
+Before any headset session, you can exercise the entire PC-side quest
+pipeline with the simulator. Two terminals:
+
+```bash
+cd pc
+openmuscle web                              # terminal 1
+openmuscle simulate --device-type combo     # terminal 2
+```
+
+Then in the desktop UI (`http://localhost:8000/`):
+
+1. Devices panel lists `flexgrid-sim` (~12 Hz, live heatmap) and
+   `quest-sim` (~25 Hz, `quest_hand`).
+2. The Live stage swaps the piston comparator for the 3D hand viewer; a
+   green articulated hand auto-rotates and its fingers visibly curl.
+3. REC pairs frames (match rate goes green), STOP writes a CSV with 64
+   sensor columns and 175 label columns plus the labels-schema sidecar.
+4. Train on that capture; the combo simulator's sensor values are
+   derived from the same latent finger curls as the hand, so the model
+   should reach a clearly positive held-out R^2. Load the model and the
+   amber predicted hand tracks the green real hand in the viewer.
+
+If all of that works, a real-headset failure is in the headset/network
+layer, not the PC pipeline.
+
+---
+
 ## 2-minute smoke test (no FlexGrid required)
 
 The fastest "is anything obviously broken" check. Only needs the headset + PC + server. Do this first whenever you pick the project back up after code changes.

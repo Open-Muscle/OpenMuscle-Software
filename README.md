@@ -56,6 +56,10 @@ openmuscle predict -m data/models/random_forest_*/model.pkl
 
 # Test without hardware
 openmuscle simulate --device-type flexgrid
+
+# Test the whole VR pipeline without hardware (pair with `openmuscle web`):
+# synthetic flexgrid + synthetic Quest hand driven by the same finger curls
+openmuscle simulate --device-type combo
 ```
 
 ### VR companion (Meta Quest 3)
