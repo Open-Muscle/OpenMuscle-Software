@@ -147,10 +147,16 @@ function computeFraming(pts) {
     _fitRadius = maxR || 0.1;
 }
 
+let _lastW = 0, _lastH = 0;
+
 function resize() {
     if (!container || !renderer) return;
     const w = container.clientWidth || 320;
     const h = container.clientHeight || 240;
+    // Skip no-op resizes: setVisible(true) fires every tick, and setSize
+    // clears the drawing buffer even when the size hasn't changed.
+    if (w === _lastW && h === _lastH) return;
+    _lastW = w; _lastH = h;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
@@ -187,7 +193,15 @@ const OMHandViewer = {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10);
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        // The canvas must never drive layout: setSize(..., false) sets the
+        // canvas width/height ATTRIBUTES (drawing buffer), and without CSS
+        // sizing those become the layout size. The container then grows to
+        // fit, resize() reads the bigger clientWidth, and the loop runs the
+        // canvas up to the GPU's max texture size. CSS-pin it to the
+        // container instead.
+        renderer.domElement.style.width = '100%';
+        renderer.domElement.style.height = '100%';
         container.appendChild(renderer.domElement);
 
         realRig = makeHandRig(COLOR_REAL, 1.0);
