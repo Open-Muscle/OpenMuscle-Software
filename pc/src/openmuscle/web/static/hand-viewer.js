@@ -129,6 +129,24 @@ function layoutHand(flat, rig, outPositions) {
 const _realOut = Array.from({ length: N_JOINTS }, () => new THREE.Vector3());
 const _predOut = Array.from({ length: N_JOINTS }, () => new THREE.Vector3());
 
+// Auto-framing target + fit radius, recomputed from the real hand each update
+// so any hand size/pose fills the viewport (the hand extends up from the
+// wrist, so looking at the wrist alone wastes the lower half of the view).
+const _focus = new THREE.Vector3();
+let _fitRadius = 0.1;
+
+function computeFraming(pts) {
+    _focus.set(0, 0, 0);
+    for (let i = 0; i < N_JOINTS; i++) _focus.add(pts[i]);
+    _focus.multiplyScalar(1 / N_JOINTS);
+    let maxR = 0;
+    for (let i = 0; i < N_JOINTS; i++) {
+        const d = pts[i].distanceTo(_focus);
+        if (d > maxR) maxR = d;
+    }
+    _fitRadius = maxR || 0.1;
+}
+
 function resize() {
     if (!container || !renderer) return;
     const w = container.clientWidth || 320;
@@ -138,18 +156,27 @@ function resize() {
     camera.updateProjectionMatrix();
 }
 
+// Place the orbit camera from the current yaw/pitch. Hands are wrist-centered
+// at the origin, so the camera always looks at (0,0,0). Shared by the animate
+// loop and snapshot() so a snapshot never renders from an unpositioned camera.
+function positionCamera() {
+    // Distance to fit a sphere of _fitRadius given the camera's vertical FOV,
+    // with margin. Orbit around the hand centroid (_focus), not the wrist.
+    const half = THREE.MathUtils.degToRad(camera.fov) / 2;
+    const r = Math.max(0.12, (_fitRadius / Math.sin(half)) * 1.4);
+    camera.position.set(
+        _focus.x + r * Math.cos(pitch) * Math.sin(yaw),
+        _focus.y + r * Math.sin(pitch),
+        _focus.z + r * Math.cos(pitch) * Math.cos(yaw),
+    );
+    camera.lookAt(_focus);
+}
+
 function animate() {
     raf = requestAnimationFrame(animate);
     if (!visible) return;
     if (autoRotate && !dragging) yaw += 0.005;
-    // Orbit camera around the origin (hands are wrist-centered at origin).
-    const r = 0.34;
-    camera.position.set(
-        r * Math.cos(pitch) * Math.sin(yaw),
-        r * Math.sin(pitch),
-        r * Math.cos(pitch) * Math.cos(yaw),
-    );
-    camera.lookAt(0, 0, 0);
+    positionCamera();
     renderer.render(scene, camera);
 }
 
@@ -197,7 +224,7 @@ const OMHandViewer = {
     // for a non-quest model -> predicted hand hidden).
     update(realFlat, predFlat) {
         if (!renderer) return;
-        layoutHand(realFlat, realRig, _realOut);
+        if (layoutHand(realFlat, realRig, _realOut)) computeFraming(_realOut);
         if (predFlat && predFlat.length >= N_JOINTS * FLOATS_PER_JOINT) {
             layoutHand(predFlat, predRig, _predOut);
         } else {
@@ -209,6 +236,17 @@ const OMHandViewer = {
         visible = !!v;
         if (container) container.style.display = v ? '' : 'none';
         if (v) resize();
+    },
+
+    // Render one frame synchronously and return it as a PNG data URL. The
+    // synchronous render + toDataURL captures the drawing buffer before the
+    // compositor clears it, so it works without preserveDrawingBuffer. Handy
+    // for frame thumbnails and for headless verification of the render.
+    snapshot() {
+        if (!renderer) return null;
+        positionCamera();
+        renderer.render(scene, camera);
+        return renderer.domElement.toDataURL('image/png');
     },
 
     isReady() { return !!renderer; },
