@@ -32,7 +32,11 @@ def receive(port, save_dir):
 @main.command()
 @click.option("--host", default="0.0.0.0", help="HTTP bind address")
 @click.option("--port", default=8000, help="HTTP port")
-@click.option("--udp-port", default=3141, help="UDP port to listen on for device telemetry")
+@click.option("--udp-port", default=3141, help="UDP port for sensor/label data frames")
+@click.option("--announce-port", default=3140,
+              help="UDP port for V4 discovery announce beacons (PROTOCOL.md v1.0 "
+                   "splits beacons onto 3140; 3141 is data-only). The shared-3141 "
+                   "type-tap stays as a fallback.")
 @click.option("--captures-dir", default=None,
               help="Directory to save captures (default: data/raw/merged)")
 @click.option("--model", "model_path", default=None, type=click.Path(),
@@ -50,7 +54,7 @@ def receive(port, save_dir):
                    "on the headset (Settings -> Security -> Install a certificate).")
 @click.option("--ssl-keyfile", default=None, type=click.Path(exists=True, dir_okay=False),
               help="Path to TLS private key (PEM). Pair with --ssl-certfile.")
-def web(host, port, udp_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
+def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
     # mkcert produces a cert AND key; we need both or neither.
@@ -77,7 +81,8 @@ def web(host, port, udp_port, captures_dir, model_path, hand, ssl_certfile, ssl_
         click.echo(f"Forwarding inference to robot hand at {hand_target[0]}:{hand_target[1]}")
     serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
           model_path=model_path, hand_target=hand_target,
-          ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
+          ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
+          announce_port=announce_port)
 
 
 @main.command()

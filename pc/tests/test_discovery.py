@@ -289,6 +289,34 @@ def test_probe_unreachable_returns_none(mgr):
 
 # ---- auto-subscribe path --------------------------------------------------
 
+def test_dedicated_announce_listener_discovers(tmp_path):
+    """The dedicated announce-beacon listener (port-split: 3140 in prod) binds
+    its own UDP socket and discovers a device from a real beacon datagram."""
+    # Grab a free UDP port for the listener.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    m = DiscoveryManager(pc_host="127.0.0.1", announce_port=port,
+                         cache_path=str(tmp_path / "c.json"),
+                         auto_subscribe=False)
+    m.start()
+    try:
+        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        beacon = json.dumps(_announce(device_id="flexgrid-bcn")).encode("utf-8")
+        deadline = time.time() + 3.0
+        found = False
+        while time.time() < deadline and not found:
+            tx.sendto(beacon, ("127.0.0.1", port))
+            time.sleep(0.1)
+            found = any(d["device_id"] == "flexgrid-bcn" for d in m.snapshot())
+        tx.close()
+        assert found, "announce listener did not discover the beaconed device"
+    finally:
+        m.stop()
+
+
 def test_auto_subscribe_on_announce(server, tmp_path):
     m = DiscoveryManager(pc_host="127.0.0.1", udp_port=3141,
                          cache_path=str(tmp_path / "c.json"),

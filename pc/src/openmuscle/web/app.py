@@ -71,12 +71,14 @@ def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
 
 def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                model_path: Optional[str] = None,
-               hand_target: Optional[tuple] = None) -> FastAPI:
+               hand_target: Optional[tuple] = None,
+               announce_port: int = 3140) -> FastAPI:
     state = AppState(
         udp_port=udp_port,
         captures_dir=captures_dir,
         model_path=model_path,
         hand_target=hand_target,
+        discovery_announce_port=announce_port,
     )
 
     @asynccontextmanager
@@ -605,7 +607,8 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           model_path: Optional[str] = None,
           hand_target: Optional[tuple] = None,
           ssl_certfile: Optional[str] = None,
-          ssl_keyfile: Optional[str] = None):
+          ssl_keyfile: Optional[str] = None,
+          announce_port: int = 3140):
     """Run the web UI server (blocks).
 
     Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
@@ -619,6 +622,7 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         captures_dir=captures_dir,
         model_path=model_path,
         hand_target=hand_target,
+        announce_port=announce_port,
     )
     uvicorn.run(app, host=host, port=port, log_level="info",
                 ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)

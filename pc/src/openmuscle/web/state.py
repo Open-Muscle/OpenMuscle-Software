@@ -222,7 +222,8 @@ class AppState:
     def __init__(self, udp_port: int = 3141, captures_dir: Path | None = None,
                  model_path: Optional[str] = None,
                  hand_target: Optional[tuple] = None,
-                 enable_discovery: bool = True):
+                 enable_discovery: bool = True,
+                 discovery_announce_port: int = 3140):
         """
         Args:
             udp_port: incoming device telemetry port (FlexGrid + LASK5)
@@ -258,7 +259,9 @@ class AppState:
         # pc/bridge_subscriber.py. The listener hands announce beacons straight
         # to it; subscribed devices' sensor frames flow through the normal queue.
         self.discovery: Optional[DiscoveryManager] = (
-            DiscoveryManager(udp_port=udp_port, auto_subscribe=True)
+            DiscoveryManager(udp_port=udp_port,
+                             announce_port=discovery_announce_port,
+                             auto_subscribe=True)
             if enable_discovery else None)
         announce_handler = self.discovery.on_announce if self.discovery else None
         self.listener = UDPListener(port=udp_port, announce_handler=announce_handler)
@@ -304,9 +307,10 @@ class AppState:
             return
         self.listener.start()
         if self.discovery:
-            # Re-probe cached devices in the background so we recover sources
-            # whose beacon is silent (held by another hub) at startup.
-            self.discovery.recover_cache()
+            # Starts the dedicated announce-beacon listener (UDP 3140) and
+            # re-probes cached devices so we recover sources whose beacon is
+            # silent (held by another hub) at startup.
+            self.discovery.start()
         self._started = True
 
     def stop(self):
