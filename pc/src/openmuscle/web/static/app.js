@@ -98,6 +98,7 @@ function handleTick(msg) {
     }
     renderActiveSession();
     renderDevices();
+    renderDiscovery(msg.discovery || []);
     renderRecordPickers();
     renderRecording();
     const dev = selectedDevice();
@@ -163,6 +164,122 @@ function renderHandViewer(questDev, inference) {
         const nJoints = realFlat ? Math.floor(realFlat.length / 7) : 0;
         gtMeta.textContent = `Quest hand · ${nJoints} joints · ${hz} Hz`;
     }
+}
+
+// ---------- native V4 discovery (Sources rail) ----------
+
+let _discoveryProbeWired = false;
+
+function renderDiscovery(discovery) {
+    const list = document.getElementById('discovery-list');
+    const count = document.getElementById('discovery-count');
+    if (!list) return;
+    if (!_discoveryProbeWired) wireDiscoveryProbe();
+
+    const subs = discovery.filter(d => d.subscribed).length;
+    if (count) count.textContent = discovery.length
+        ? `${subs}/${discovery.length} subscribed` : '';
+
+    if (!discovery.length) {
+        list.innerHTML = '<li class="empty">No V4 sources discovered yet…</li>';
+        return;
+    }
+    list.innerHTML = discovery.map(d => {
+        // State badge: subscribed (green) / error (red) / known (grey).
+        let stateCls = 'known', stateTxt = 'known';
+        if (d.subscribed) { stateCls = 'subscribed'; stateTxt = 'subscribed'; }
+        else if (d.sub_error) { stateCls = 'err'; stateTxt = 'error'; }
+        const btnTxt = d.subscribed ? 'Unsubscribe' : 'Subscribe';
+        const btnAct = d.subscribed ? 'unsubscribe' : 'subscribe';
+        const age = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
+        const errLine = d.sub_error
+            ? `<div class="src-err" title="${escapeHtml(d.sub_error)}">${escapeHtml(d.sub_error)}</div>`
+            : '';
+        return `
+            <li class="src ${stateCls}" data-id="${escapeHtml(d.device_id)}">
+                <div class="src-top">
+                    <span class="src-id">${escapeHtml(d.device_id)}</span>
+                    <span class="src-state ${stateCls}">${stateTxt}</span>
+                </div>
+                <div class="src-meta">
+                    <span class="type">${escapeHtml(d.device_type)}</span>
+                    <span class="addr">${escapeHtml(d.ip)}:${d.cmd_port}</span>
+                    <span class="via">via ${escapeHtml(d.source)}</span>
+                    <span class="age">${age}</span>
+                </div>
+                ${errLine}
+                <button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(d.device_id)}">${btnTxt}</button>
+            </li>`;
+    }).join('');
+
+    list.querySelectorAll('.src-btn').forEach(btn => {
+        btn.onclick = async (e) => {
+            e.stopPropagation();
+            const id = btn.dataset.id;
+            const act = btn.dataset.act;
+            btn.disabled = true;
+            btn.textContent = act === 'subscribe' ? 'Subscribing…' : 'Unsubscribing…';
+            try {
+                const res = await fetch(`/api/discovery/${act}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: id }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    setProbeMsg(err.detail || `${act} failed`, true);
+                }
+            } catch (err) {
+                setProbeMsg(String(err), true);
+            }
+            // Next WS tick re-renders the true state; no manual refresh needed.
+        };
+    });
+}
+
+function wireDiscoveryProbe() {
+    const form = document.getElementById('discovery-probe-form');
+    const input = document.getElementById('discovery-probe-ip');
+    if (!form || !input) return;
+    _discoveryProbeWired = true;
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        const raw = input.value.trim();
+        if (!raw) return;
+        // Accept "ip" or "ip:port".
+        let ip = raw, cmd_port = null;
+        if (raw.includes(':')) {
+            const parts = raw.split(':');
+            ip = parts[0];
+            const p = parseInt(parts[1], 10);
+            if (!isNaN(p)) cmd_port = p;
+        }
+        setProbeMsg(`probing ${ip}…`, false);
+        try {
+            const res = await fetch('/api/discovery/probe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cmd_port ? { ip, cmd_port } : { ip }),
+            });
+            if (res.ok) {
+                const d = await res.json();
+                setProbeMsg(`found ${d.device_id} (${d.device_type})`, false);
+                input.value = '';
+            } else {
+                const err = await res.json().catch(() => ({}));
+                setProbeMsg(err.detail || `no V4 source at ${ip}`, true);
+            }
+        } catch (err) {
+            setProbeMsg(String(err), true);
+        }
+    };
+}
+
+function setProbeMsg(text, isError) {
+    const el = document.getElementById('discovery-probe-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('err', !!isError);
 }
 
 // ---------- device list ----------

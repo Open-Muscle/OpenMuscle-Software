@@ -59,6 +59,21 @@
                     <ul id="device-list" class="devices-compact">
                         <li class="empty">Waiting for a device to send a packet…</li>
                     </ul>
+
+                    <!-- Native V4 discovery: sources found via announce beacon /
+                         cache / manual probe, with per-source subscribe toggle.
+                         Driven by app.js renderDiscovery() from the WS snapshot's
+                         `discovery` array. Replaces running bridge_subscriber.py. -->
+                    <h3 class="rail-head rail-head-sources">Sources <span id="discovery-count" class="rail-count"></span></h3>
+                    <ul id="discovery-list" class="devices-compact discovery-compact">
+                        <li class="empty">No V4 sources discovered yet…</li>
+                    </ul>
+                    <form id="discovery-probe-form" class="discovery-probe">
+                        <input id="discovery-probe-ip" type="text"
+                               placeholder="add by IP (e.g. 10.0.0.23)" />
+                        <button type="submit" title="Probe this address for a V4 source">＋</button>
+                    </form>
+                    <div id="discovery-probe-msg" class="discovery-probe-msg"></div>
                 </aside>
 
                 <!-- Heatmap (center, the hero) -->
