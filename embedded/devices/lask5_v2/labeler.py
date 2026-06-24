@@ -14,10 +14,14 @@
 #     ADCs are used for the on-OLED bar chart and the Calibrate flow.
 
 import time
+import machine
 from machine import Pin, ADC
 import uasyncio as asyncio
 import om_logger as log
 from om_device import BaseDevice
+from om_subscribers import Subscribers
+from om_discovery import Discovery
+from om_commands import CommandServer, build_standard_handlers
 from sensor_pistons import SensorPistons
 from display_lask5 import draw_taskbar, play_splash
 
@@ -50,6 +54,15 @@ class LASK5(BaseDevice):
         # "espnow" broadcasts directly to a paired bracelet/robot hand.
         # Persisted in settings.json -- can be toggled live from the menu.
         "stream_mode": "udp",
+        # Discovery + subscribe protocol additions (see spec section 4-6).
+        # No udp_target_ip is used for sensor frames in this mode; sources
+        # unicast to subscribed hubs only. ESP-NOW path is unchanged.
+        "fw_version":           "v3.0.0",
+        "cmd_port":             8002,
+        "udp_sensor_port":      3141,   # broadcast beacon port; hubs also pick this for default
+        "announce_interval_s":  1,
+        "max_subscribers":      4,
+        "heartbeat_timeout_s":  5,
     }
 
     # Menu UX: a single "Start" button both OPENS the menu (from live) and
@@ -101,6 +114,51 @@ class LASK5(BaseDevice):
         # active, _display_loop yields and lets them write the OLED directly.
         self._display_owner = "live"  # "live" | "menu" | "modal"
 
+        # Discovery + subscribe state (V3 protocol):
+        #   subscribers - hubs currently receiving label frames
+        #   _streaming  - false halts UDP send_loop without removing subscribers
+        #   _reboot_requested - flag polled by reboot_watcher
+        # Discovery + CommandServer instances are built in run() after the
+        # network is up and the Wi-Fi STA has an IP.
+        self.subscribers = Subscribers(
+            max_subscribers=self.settings.get("max_subscribers", 4),
+            heartbeat_timeout_s=self.settings.get("heartbeat_timeout_s", 5),
+        )
+        self._streaming = True
+        self._reboot_requested = False
+
+    # ----- DeviceState interface for om_commands.build_standard_handlers -----
+    # The standard handler factory needs: subscribers, device_id, device_type,
+    # fw_version, caps, extra_info, start_stream(), stop_stream(), request_reboot()
+
+    @property
+    def fw_version(self):
+        return self.settings.get("fw_version", "v3.0.0")
+
+    @property
+    def device_type(self):
+        return self.DEVICE_TYPE
+
+    @property
+    def caps(self):
+        return ["label", "status", "cmd"]
+
+    @property
+    def extra_info(self):
+        return {"pistons": 4, "joystick": True, "espnow_paired": True}
+
+    def start_stream(self):
+        self._streaming = True
+        log.info("Streaming started")
+
+    def stop_stream(self):
+        self._streaming = False
+        log.info("Streaming stopped")
+
+    def request_reboot(self):
+        self._reboot_requested = True
+        log.info("Reboot requested")
+
     # ----- helpers -----
 
     def blink(self, count=2, on_ms=300, off_ms=200):
@@ -126,16 +184,66 @@ class LASK5(BaseDevice):
         self.blink(2)
         self.network.init_espnow()
 
-        # Streaming + display + menu all run concurrently. UDP and ESPNow
-        # broadcast in parallel so both the web UI and any peer bracelet
-        # receive ground-truth labels with no menu gating.
+        # New in V3 firmware: discovery + subscribe protocol on Wi-Fi.
+        # ESP-NOW path to OpenHand is untouched. The cmd server binds before
+        # we spawn any other task so hubs hitting the device immediately
+        # after boot can connect.
+        self._discovery = Discovery(
+            self.settings, self.subscribers, self.network.sta,
+            device_type=self.DEVICE_TYPE,
+            services={
+                "label": self.settings.get("udp_sensor_port", 3141),
+                "cmd":   self.settings.get("cmd_port", 8002),
+            },
+            caps=self.caps,
+            extra_fields={"pistons": 4, "joystick": True},
+            beacon_port=self.settings.get("udp_sensor_port", 3141),
+            announce_interval_s=self.settings.get("announce_interval_s", 1),
+            fw_version=self.fw_version,
+            device_id=self.device_id,
+        )
+        self._cmd_server = CommandServer(
+            port=self.settings.get("cmd_port", 8002),
+            handlers=build_standard_handlers(self),
+        )
+        await self._cmd_server.start()
+
+        # Streaming + display + menu + discovery + subscriber pruning + reboot
+        # watcher all run concurrently. UDP fans out to subscribers and ESPNow
+        # broadcasts to the paired bracelet in parallel; both kept independent
+        # so a Wi-Fi flap does not disturb the ESP-NOW link.
         asyncio.create_task(self._send_loop())
         asyncio.create_task(self._espnow_loop())
         asyncio.create_task(self._display_loop())
         asyncio.create_task(self._menu_loop())
+        asyncio.create_task(self._discovery.announce_loop())
+        asyncio.create_task(self._subscriber_prune_loop())
+        asyncio.create_task(self._reboot_watcher())
 
         while True:
             await asyncio.sleep(1)
+
+    async def _subscriber_prune_loop(self):
+        """Drop subscribers whose last heartbeat aged past the configured
+        timeout. Self-cleans the list when a hub disappears."""
+        while True:
+            try:
+                dropped = self.subscribers.prune_stale()
+                if dropped:
+                    log.info("Pruned {} stale subscriber(s); remaining={}".format(
+                        dropped, self.subscribers.count()))
+            except Exception as e:
+                log.warn("subscriber_prune_loop failed: {}".format(e))
+            await asyncio.sleep(1)
+
+    async def _reboot_watcher(self):
+        """Polls the reboot flag set by a `reboot` command verb."""
+        while True:
+            if self._reboot_requested:
+                log.info("Soft-resetting in 500 ms...")
+                await asyncio.sleep_ms(500)
+                machine.reset()
+            await asyncio.sleep_ms(200)
 
     # ----- streaming -----
 
@@ -143,19 +251,27 @@ class LASK5(BaseDevice):
         return self.settings.get("stream_mode", "udp")
 
     async def _send_loop(self):
-        """UDP send loop. Only transmits when stream_mode == 'udp'. Keeps
-        running (and reading sensors) even when idle so the on-OLED taskbar
-        stays responsive immediately after a mode toggle."""
+        """UDP send loop. Only transmits when stream_mode == 'udp' AND at
+        least one hub is subscribed. Keeps reading sensors regardless so
+        the on-OLED taskbar stays responsive immediately after a mode toggle.
+
+        V3 protocol change: replaces send_udp() to a hardcoded udp_target_ip
+        with send_udp_to_subscribers() that fans out to every entry in the
+        live subscriber list. The list is populated by hubs talking to the
+        cmd server (see om_commands)."""
         interval = 1.0 / self.settings.get("sample_rate_hz", 25)
         while True:
-            if self._stream_mode() == "udp":
+            if self._stream_mode() == "udp" and self._streaming:
                 data = self.sensor.read()  # {"values": [0..1, ...]}
                 data["joystick"] = {
                     "x": self.joystick_x.read(),
                     "y": self.joystick_y.read(),
                 }
                 packet = self.make_packet(data)
-                await self.network.send_udp(packet)
+                # send_udp_to_subscribers no-ops when the list is empty, so
+                # the work above is wasted when idle; we still do it so the
+                # very first frame after a subscribe is ready to go.
+                await self.network.send_udp_to_subscribers(packet, self.subscribers)
             await asyncio.sleep(interval)
 
     async def _espnow_loop(self):
