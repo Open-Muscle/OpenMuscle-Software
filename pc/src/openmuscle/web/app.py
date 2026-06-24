@@ -248,6 +248,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # schema-v2 role tag for the sensor band: left / right / labeler
         # (lowercase wire tokens). Defaults to left for a single-source capture.
         role: Optional[str] = "left"
+        # Additional bands for a multi-band capture: [{"device_id":..,"role":..}].
+        # Each must be a seen flexgrid of the same matrix dims as the primary.
+        extra_sensors: Optional[list] = None
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):
@@ -258,6 +261,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 filename=body.filename,
                 window_ms=body.window_ms,
                 role=body.role or "left",
+                extra_sensors=body.extra_sensors,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))

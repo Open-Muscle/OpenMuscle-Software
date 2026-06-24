@@ -176,9 +176,15 @@ class ActiveCapture:
     cols: int
     window_s: float
     matcher: TemporalMatcher
-    # Hub-assigned role for the sensor source in schema-v2 captures (one of the
-    # lowercase wire tokens left/right/labeler; board #0091 interop contract).
+    # Hub-assigned role for the PRIMARY sensor source in schema-v2 captures (one
+    # of the lowercase wire tokens left/right/labeler; board #0091).
     role: str = "left"
+    # All recorded bands as {device_id: role}. Single-source = one entry (the
+    # primary). Multi-band capture adds more (each a feature source tagged with
+    # its own role); every band's frames are matched against the one labeler and
+    # written as its own interleaved v2 row. Defaults to {} and is filled in by
+    # start_recording so existing constructions stay valid.
+    sensors: dict = field(default_factory=dict)
     sensor_jsonl: Optional[IO] = None
     label_jsonl: Optional[IO] = None
     # Path for a per-capture labels-schema sidecar. Written on the first
@@ -485,7 +491,9 @@ class AppState:
             return
 
         # --- Sensor stream: write JSONL sidecar always, paired CSV when matched ---
-        if pkt.device_id != rec.sensor_device_id:
+        # Multi-band: any recorded band (device_id in rec.sensors) produces rows,
+        # each tagged with its own role. Single-source = one entry in rec.sensors.
+        if pkt.device_id not in rec.sensors:
             return  # ignore packets from third-party devices during this recording
 
         mat = pkt.data.get("matrix")
@@ -542,8 +550,8 @@ class AppState:
         # role + device_id and a hub-arrival epoch-ms timestamp. Features are
         # already row-major (above); labels are the matched label vector.
         ts_hub_ms = int(pkt.receive_time * 1000)
-        rec.writer.write_row_v2(ts_hub_ms, rec.role, rec.sensor_device_id,
-                                flat, label_values)
+        rec.writer.write_row_v2(ts_hub_ms, rec.sensors[pkt.device_id],
+                                pkt.device_id, flat, label_values)
 
     def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
         """Emit the per-capture labels-schema sidecar.
@@ -768,6 +776,7 @@ class AppState:
                 "filename": r.path.name,
                 "schema_version": "v2",
                 "role": r.role,
+                "sensors": dict(r.sensors),   # {device_id: role} for every band
                 "sensor_device_id": r.sensor_device_id,
                 "label_device_id": r.label_device_id,
                 "rows": r.row_count,
@@ -896,7 +905,8 @@ class AppState:
                         filename: Optional[str] = None,
                         window_ms: Optional[int] = None,
                         label_count: int = 4,
-                        role: str = "left") -> ActiveCapture:
+                        role: str = "left",
+                        extra_sensors: Optional[list] = None) -> ActiveCapture:
         """Start a paired recording.
 
         Args:
@@ -948,6 +958,33 @@ class AppState:
             raise RuntimeError(
                 f"Sensor device '{sensor_device_id}' has not sent a matrix payload yet"
             )
+
+        # Build the recorded-bands map {device_id: role}. The primary sensor is
+        # the first band; extra_sensors adds more for a multi-band capture. Every
+        # band must be a seen flexgrid that has sent a matrix of the SAME dims as
+        # the primary (the v2 CSV has one fixed R{r}C{c} feature block, and the
+        # trainer's Left||Right concat assumes equal per-band feature width).
+        sensors_map = {sensor_device_id: role}
+        for entry in (extra_sensors or []):
+            if isinstance(entry, dict):
+                did, drole = entry.get("device_id"), entry.get("role", "left")
+            else:
+                did, drole = entry[0], (entry[1] if len(entry) > 1 else "left")
+            drole = (drole or "left").strip().lower()
+            if drole not in ("left", "right", "labeler"):
+                raise RuntimeError(f"Invalid role '{drole}' for band '{did}'")
+            if did in sensors_map:
+                raise RuntimeError(f"Band '{did}' listed twice")
+            band = self.devices.get(did)
+            if band is None:
+                raise RuntimeError(f"Extra sensor band '{did}' not seen yet")
+            if band.rows == 0 or band.cols == 0:
+                raise RuntimeError(f"Extra sensor band '{did}' has not sent a matrix yet")
+            if (band.rows, band.cols) != (sensor_dev.rows, sensor_dev.cols):
+                raise RuntimeError(
+                    f"Band '{did}' is {band.rows}x{band.cols} but the primary is "
+                    f"{sensor_dev.rows}x{sensor_dev.cols}; all bands must match dims")
+            sensors_map[did] = drole
 
         if label_device_id is not None and label_device_id not in self.devices:
             raise RuntimeError(f"Label device '{label_device_id}' not seen yet")
@@ -1021,6 +1058,7 @@ class AppState:
             window_s=window_ms / 1000.0,
             matcher=matcher,
             role=role,
+            sensors=sensors_map,
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
             labels_schema_path=labels_schema_sidecar,
@@ -1078,7 +1116,7 @@ class AppState:
             "schema": "v2",
             "mirror": False,
             "label_source": label_source_wire,
-            "roles": {sensor_device_id: self.recording.role},
+            "roles": dict(sensors_map),   # {device_id: role} for every band
             "created_ms": int(self.recording.started_at * 1000),
         }
 

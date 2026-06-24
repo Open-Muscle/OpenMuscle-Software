@@ -241,3 +241,40 @@ class TestRecordingDefaults:
             meta = s.read_capture_meta("iq.csv")
             assert meta["label_source"] == "quest"
             assert meta["auto"]["label_source"] == "quest_hand"
+
+    def test_multiband_interleaved_v2_rows_and_pivot(self):
+        # Two bands (left + right) + a labeler -> one interleaved v2 CSV, each
+        # row tagged with its band's role/device_id; the trainer then pivots it
+        # to the 120-wide Left||Right matrix. The PC half of P4 end-to-end.
+        from openmuscle.data.dataset import load_training_data
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+            s._handle_packet(_flexgrid_packet(device_id="fg-right"))
+            s._handle_packet(_lask5_packet(device_id="lask5-test"))
+            s.start_recording(
+                filename="mb.csv",
+                sensor_device_id="fg-left", role="left",
+                extra_sensors=[{"device_id": "fg-right", "role": "right"}],
+                label_device_id="lask5-test",
+            )
+            for _ in range(3):
+                t = time.time()
+                s._handle_packet(_lask5_packet(device_id="lask5-test", recv_time=t))
+                s._handle_packet(_flexgrid_packet(device_id="fg-left", recv_time=t + 0.001))
+                s._handle_packet(_flexgrid_packet(device_id="fg-right", recv_time=t + 0.002))
+                time.sleep(0.005)
+            s.stop_recording()
+
+            rows = [r for r in csv.reader(open(Path(d) / "mb.csv"))]
+            assert rows[0][:3] == ["ts_hub_ms", "role", "device_id"]
+            data = rows[1:]
+            assert {r[1] for r in data} == {"left", "right"}
+            assert {r[2] for r in data} == {"fg-left", "fg-right"}
+            # meta roles map carries both bands
+            meta = s.read_capture_meta("mb.csv")
+            assert meta["roles"] == {"fg-left": "left", "fg-right": "right"}
+            # The long multi-role CSV pivots to the wide 120-col matrix (15x4 = 60/side).
+            X, y = load_training_data(str(Path(d) / "mb.csv"))
+            assert X.shape[1] == 120
+            assert X.shape[0] >= 1
