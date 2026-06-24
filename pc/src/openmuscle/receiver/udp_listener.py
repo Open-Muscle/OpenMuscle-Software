@@ -18,10 +18,15 @@ class UDPListener:
             # process pkt
     """
 
-    def __init__(self, port: int = 3141, bind_ip: str = "0.0.0.0"):
+    def __init__(self, port: int = 3141, bind_ip: str = "0.0.0.0",
+                 announce_handler=None):
         self.port = port
         self.bind_ip = bind_ip
         self.packet_queue: Queue = Queue()
+        # Optional callback(announce_dict, src_ip) for V4 discovery beacons.
+        # When set, announce packets are routed here and NOT enqueued as sensor
+        # frames. When None (CLI inference/heatmap tools), behavior is unchanged.
+        self.announce_handler = announce_handler
         self._running = False
         self._thread = None
 
@@ -44,8 +49,18 @@ class UDPListener:
             try:
                 data, addr = sock.recvfrom(8192)
                 pkt = parse_packet(data)
-                if pkt:
-                    self.packet_queue.put(pkt)
+                if pkt is None:
+                    continue
+                # Divert V4 discovery beacons to the discovery handler; the
+                # announce carries no IP, so pass the datagram source address.
+                if pkt.device_type == "announce":
+                    if self.announce_handler is not None:
+                        try:
+                            self.announce_handler(pkt.data, addr[0])
+                        except Exception as e:
+                            print(f"announce handler error: {e}")
+                    continue
+                self.packet_queue.put(pkt)
             except socket.timeout:
                 continue
             except Exception as e:
