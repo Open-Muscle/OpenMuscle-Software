@@ -22,9 +22,41 @@ from typing import IO, Optional
 import socket
 
 from openmuscle.data.storage import CaptureWriter
-from openmuscle.protocol.schema import OpenMusclePacket
+from openmuscle.protocol.schema import CURRENT_VERSION, OpenMusclePacket
+
+
+# Canonical channel ordering for a single quest_hand joint. This is the
+# coupling point between two places:
+#   - `AppState.ingest_quest_packet` packs joints into `data.values` in
+#     this order via `_flatten_quest_joint`.
+#   - `AppState._write_labels_schema` emits the column->(joint, channel)
+#     map using `_quest_label_column` which assumes this same order.
+# Changing one without the other makes the labels-schema sidecar lie
+# about what's in the CSV. Both callers route through this tuple + the
+# two helpers below to make the coupling structural rather than two
+# aspirational comments.
+QUEST_JOINT_CHANNEL_ORDER = ("px", "py", "pz", "rx", "ry", "rz", "rw")
+
+
+def _flatten_quest_joint(pos, rot):
+    """Pack one joint's (pos, rot) into the canonical channel order.
+
+    `pos` is [x, y, z]; `rot` is a unit quaternion [x, y, z, w]. Returns a
+    flat list of `len(QUEST_JOINT_CHANNEL_ORDER)` floats.
+    """
+    components = {"px": pos[0], "py": pos[1], "pz": pos[2],
+                  "rx": rot[0], "ry": rot[1], "rz": rot[2], "rw": rot[3]}
+    return [components[ch] for ch in QUEST_JOINT_CHANNEL_ORDER]
+
+
+def _quest_label_column(joint_index: int, channel_index: int) -> int:
+    """Index of the CSV column corresponding to (joint, channel) for a
+    quest_hand recording. Inverse view of the layout produced by
+    `_flatten_quest_joint` applied N times."""
+    return joint_index * len(QUEST_JOINT_CHANNEL_ORDER) + channel_index
 from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
+from openmuscle.discovery import DiscoveryManager
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
@@ -146,6 +178,22 @@ class ActiveCapture:
     matcher: TemporalMatcher
     sensor_jsonl: Optional[IO] = None
     label_jsonl: Optional[IO] = None
+    # Path for a per-capture labels-schema sidecar. Written on the first
+    # label packet (lazy, like the CSV header) so the schema reflects
+    # whatever the device actually sent rather than what we expected.
+    # Only populated for label sources whose label width / structure is
+    # not derivable from device_type alone -- e.g. quest_hand.
+    labels_schema_path: Optional[Path] = None
+    labels_schema_written: bool = False
+    # Label-width lock. quest_hand frames can vary in joint count when hand
+    # tracking is partial; writing those varying lengths straight to the CSV
+    # produces ragged rows (different column count per row) that break
+    # pandas.read_csv and corrupt the capture for training. We lock the
+    # expected width at the first label packet (same width the labels-schema
+    # sidecar describes) and pad/truncate every paired row to it, so the CSV
+    # stays rectangular and consistent with the schema. None until locked.
+    locked_label_count: Optional[int] = None
+    label_width_mismatch_count: int = 0
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -173,11 +221,15 @@ class AppState:
 
     def __init__(self, udp_port: int = 3141, captures_dir: Path | None = None,
                  model_path: Optional[str] = None,
-                 hand_target: Optional[tuple] = None):
+                 hand_target: Optional[tuple] = None,
+                 enable_discovery: bool = True):
         """
         Args:
             udp_port: incoming device telemetry port (FlexGrid + LASK5)
             captures_dir: where recorded CSVs go
+            enable_discovery: run native V4 discovery + auto-subscribe (replaces
+                        the interim bridge_subscriber.py). Set False to bind the
+                        UDP port only and rely on an external subscriber/bridge.
             model_path: optional path to a trained model .pkl. When set, every
                         FlexGrid packet is run through the model and its
                         predictions populate the WS snapshot's `inference`
@@ -199,7 +251,17 @@ class AppState:
         self.log_buffer.info("server", "AppState init  udp_port={}  captures_dir={}".format(
             udp_port, str(self.captures_dir)))
 
-        self.listener = UDPListener(port=udp_port)
+        # Native V4 discovery + subscribe. Discovers announcing sources, keeps a
+        # TCP subscription + 1 Hz heartbeat to each, and re-probes cached devices
+        # on startup (a device's beacon goes silent once any hub subscribes, so
+        # the cache is how we recover one another hub already holds). Replaces
+        # pc/bridge_subscriber.py. The listener hands announce beacons straight
+        # to it; subscribed devices' sensor frames flow through the normal queue.
+        self.discovery: Optional[DiscoveryManager] = (
+            DiscoveryManager(udp_port=udp_port, auto_subscribe=True)
+            if enable_discovery else None)
+        announce_handler = self.discovery.on_announce if self.discovery else None
+        self.listener = UDPListener(port=udp_port, announce_handler=announce_handler)
         self.devices: dict[str, DeviceInfo] = {}
         self.recording: Optional[ActiveCapture] = None
         # At most one active session at a time. Recordings made while a
@@ -241,10 +303,16 @@ class AppState:
         if self._started:
             return
         self.listener.start()
+        if self.discovery:
+            # Re-probe cached devices in the background so we recover sources
+            # whose beacon is silent (held by another hub) at startup.
+            self.discovery.recover_cache()
         self._started = True
 
     def stop(self):
         self.listener.stop()
+        if self.discovery:
+            self.discovery.stop()
         if self.recording:
             self.stop_recording()
         if self._hand_sock is not None:
@@ -307,6 +375,77 @@ class AppState:
                     if self.hand_target:
                         self._forward_to_hand(pred)
 
+    def ingest_quest_packet(self, payload: dict) -> None:
+        """Synthesize an OpenMusclePacket from a Quest WebSocket frame and
+        route it through the standard packet path.
+
+        From the recorder's perspective the Quest is just another device:
+        once we build an OpenMusclePacket with `device_type="quest_hand"`
+        and hand it to `_handle_packet`, the DeviceInfo registry, the
+        TemporalMatcher, the JSONL sidecars, and the WS snapshot all
+        treat it identically to LASK5. This is why the Quest never needs
+        to learn UDP -- the JS in the headset only has WebSocket.
+
+        Expected payload shape (one hand for v1, per the team's
+        "FlexGrid-arm only" decision):
+
+            {
+                "device_id":   "quest-01",          # optional
+                "ts":          12345,               # device-local ms (optional)
+                "handedness":  "left" | "right",    # which hand this frame is for
+                "joints": [
+                    {"name": "wrist",          "pos": [x,y,z], "rot": [x,y,z,w], "radius": 0.02},
+                    {"name": "thumb-metacarpal", "pos": [...], "rot": [...]},
+                    ... 26 entries total, in OpenXR canonical order
+                ],
+                "meta": {...}                       # optional, e.g. tracking confidence
+            }
+
+        We flatten joints into `data.values = [px,py,pz, rx,ry,rz,rw] * N`
+        so it matches LASK5's `data.values` convention (the recorder pulls
+        from this field). The structured per-joint form is preserved under
+        `data.hands` for the JSONL sidecar -- if you later want to know
+        WHICH joint a column corresponds to, the sidecar tells you, while
+        the trainable CSV stays a plain matrix of floats.
+
+        Empty payloads (e.g. headset reports tracking lost this frame)
+        are silently dropped -- we want gaps in the data, not zero rows
+        that would mislead the model.
+        """
+        joints = payload.get("joints") or []
+        if not joints:
+            return
+
+        flat: list[float] = []
+        joint_names: list[str] = []
+        for j in joints:
+            pos = j.get("pos") or [0.0, 0.0, 0.0]
+            rot = j.get("rot") or [0.0, 0.0, 0.0, 1.0]
+            # Route through _flatten_quest_joint so the channel order is
+            # taken from QUEST_JOINT_CHANNEL_ORDER -- same source-of-truth
+            # the labels-schema sidecar reads via _quest_label_column.
+            flat.extend(float(v) for v in _flatten_quest_joint(pos, rot))
+            joint_names.append(j.get("name", ""))
+
+        pkt = OpenMusclePacket(
+            version=CURRENT_VERSION,
+            device_type="quest_hand",
+            device_id=payload.get("device_id") or "quest-01",
+            timestamp_ms=int(payload.get("ts") or 0),
+            data={
+                "values": flat,
+                "handedness": payload.get("handedness") or "unknown",
+                "joint_names": joint_names,
+                "hands": {
+                    "handedness": payload.get("handedness") or "unknown",
+                    "joints": joints,
+                },
+            },
+            metadata=payload.get("meta") or {},
+            receive_time=time.time(),
+        )
+        self._handle_packet(pkt)
+
     # Flush JSONL sidecars every N frames to bound crash-loss to ~3 s of
     # data while keeping syscalls ~50× cheaper than line-buffered writes.
     # At 33 Hz sensor + 25 Hz label rates, 100 ≈ 3 s.
@@ -323,6 +462,12 @@ class AppState:
             rec.matcher.add_label(pkt)
             rec.label_packets_seen += 1
             self._write_jsonl(rec.label_jsonl, pkt)
+            # Lazy: emit the labels-schema sidecar on the first label packet
+            # for label sources whose column layout is opaque from device_type
+            # alone. v1: quest_hand only. The sidecar gives consumers a map
+            # from the CSV's label_0..label_N columns back to (joint, channel).
+            if rec.labels_schema_path is not None and not rec.labels_schema_written:
+                self._write_labels_schema(rec, pkt)
             # Bounded crash-loss flush
             if (rec.label_packets_seen % self.JSONL_FLUSH_EVERY == 0
                     and rec.label_jsonl is not None):
@@ -361,6 +506,25 @@ class AppState:
             rec.matched_count += 1
             label_values = list(matched.data.get("values", []))
 
+        # Guarantee a rectangular CSV. If the label width was locked (quest_hand)
+        # and this matched label has a different length, pad with zeros or
+        # truncate to the locked width. Without this, variable-length payloads
+        # (partial hand tracking, or a misbehaving client) would write ragged
+        # rows that break pandas.read_csv and corrupt the whole capture. The
+        # locked width matches the labels-schema sidecar, so consumers can
+        # still map every column to a (joint, channel). NB: a well-behaved
+        # client sends a fixed-length array every frame, so this rarely fires;
+        # the mismatch counter surfaces it in the stop-recording stats + log
+        # if it does.
+        if rec.locked_label_count is not None and label_values:
+            n = rec.locked_label_count
+            if len(label_values) != n:
+                rec.label_width_mismatch_count += 1
+                if len(label_values) < n:
+                    label_values = list(label_values) + [0.0] * (n - len(label_values))
+                else:
+                    label_values = list(label_values[:n])
+
         # Flatten as-sent [cols][rows] matrix row-major. Header in CaptureWriter
         # is R0C0..R0Cn, R1C0.., so iterating rows-then-cols here keeps the
         # column meaning correct (cf. the col-major bug we fixed in 245cb8f).
@@ -368,6 +532,78 @@ class AppState:
         cols = len(mat)
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
         rec.writer.write_row(pkt.receive_time, flat, label_values)
+
+    def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
+        """Emit the per-capture labels-schema sidecar.
+
+        Maps the CSV's label_0..label_N columns back to the underlying
+        (joint, channel) coordinates for a quest_hand recording. Without
+        this a wide-label CSV is opaque -- you'd have to know the joint
+        ordering by convention. With it, any consumer can deserialize
+        label columns into named joint poses.
+
+        TODO(wrist-relative-labels): joint positions are stored in absolute
+        world coordinates as captured by the headset, so a model trained
+        on them learns to predict positions where the recordings happened
+        to be -- generally not where the user is at inference time. The
+        VR ghost-hand viz works around this by anchoring predicted joints
+        to the real wrist each frame, but the right long-term fix is to
+        subtract the wrist position (and optionally rotate into the
+        wrist's frame) before writing, and reverse the transform at
+        inference. This changes the CSV semantics, so it deserves its
+        own scope. Track in the OpenMuscle-Software repo issue list
+        ("Wrist-relative label coordinates for portable quest_hand
+        models") before any model that needs to generalize across
+        capture-locations.
+        """
+        if rec.labels_schema_path is None:
+            return
+        joint_names = list(pkt.data.get("joint_names") or [])
+        handedness = pkt.data.get("handedness") or "unknown"
+        # Pull the channel order from the module-level constant so the schema
+        # is guaranteed consistent with how ingest_quest_packet flattened
+        # the values into the CSV (see QUEST_JOINT_CHANNEL_ORDER docstring).
+        ordering = list(QUEST_JOINT_CHANNEL_ORDER)
+        n_floats = len(ordering)
+        # Build the explicit column->(joint, channel) map so consumers
+        # don't have to re-derive it from joint order.
+        columns = []
+        for ji, jn in enumerate(joint_names):
+            for ci, ch in enumerate(ordering):
+                columns.append({
+                    "name": f"label_{_quest_label_column(ji, ci)}",
+                    "joint": jn,
+                    "channel": ch,
+                })
+        n_label_columns = len(joint_names) * n_floats
+        # Lock the CSV label width to what this first label packet described,
+        # so _record_packet can pad/truncate every paired row to match the
+        # schema and keep the CSV rectangular. (Well-behaved clients send a
+        # fixed-length joint array every frame, so this almost never triggers
+        # a pad/truncate -- it's a safety net against partial-tracking frames
+        # and any client that emits a variable-length payload.)
+        rec.locked_label_count = n_label_columns
+        schema = {
+            "label_source": "quest_hand",
+            "handedness": handedness,
+            "ordering": ordering,
+            "floats_per_joint": n_floats,
+            "n_joints": len(joint_names),
+            "n_label_columns": n_label_columns,
+            "joint_names": joint_names,
+            "columns": columns,
+        }
+        try:
+            with open(rec.labels_schema_path, "w") as f:
+                json.dump(schema, f, indent=2)
+            rec.labels_schema_written = True
+            self.log_buffer.info(
+                "recording",
+                f"labels-schema written: {rec.labels_schema_path.name} "
+                f"({len(joint_names)} joints, {len(columns)} columns)")
+        except OSError as e:
+            self.log_buffer.warn(
+                "recording", f"labels-schema write failed: {e}")
 
     @staticmethod
     def _write_jsonl(stream: Optional[IO], pkt: OpenMusclePacket):
@@ -530,6 +766,11 @@ class AppState:
                 "sensor_frames_seen": r.sensor_frames_seen,
                 "label_packets_seen": r.label_packets_seen,
                 "match_rate": round(r.match_rate, 3),
+                # Rows that had to be padded/truncated to the locked label
+                # width (variable-length label frames, e.g. partial hand
+                # tracking). Surfaced live so the in-VR header can warn the
+                # operator that joints are dropping mid-capture.
+                "label_width_mismatch": r.label_width_mismatch_count,
             }
         return {
             "type": "tick",
@@ -537,6 +778,11 @@ class AppState:
             "recording": rec,
             "inference": self._inference_snapshot(),
             "active_session": self.active_session,
+            # Native V4 discovery: known sources + subscription state. Empty
+            # list when discovery is disabled. Devices that are subscribed and
+            # streaming also appear in `devices` above (via their frames); this
+            # adds the ones that are known-but-silent plus per-device sub status.
+            "discovery": self.discovery.snapshot() if self.discovery else [],
         }
 
     def _inference_snapshot(self) -> dict:
@@ -607,18 +853,34 @@ class AppState:
                 return d.device_id
         return None
 
+    # Order in which auto-pick prefers label-producing device types when
+    # the operator doesn't pick one explicitly. Quest first because it's
+    # the richer ground-truth source -- if both are connected during a
+    # comparison session, we want the wider label vector by default.
+    AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5")
+
     def _auto_pick_label(self) -> Optional[str]:
-        """First connected label-producing device (LASK5), if any."""
-        for d in self.devices.values():
-            if d.device_type == "lask5":
-                return d.device_id
+        """First connected label-producing device, by type preference."""
+        for preferred_type in self.AUTO_LABEL_TYPE_PREFERENCE:
+            for d in self.devices.values():
+                if d.device_type == preferred_type:
+                    return d.device_id
         return None
+
+    # Default match windows per label-device family. Quest WebXR has higher
+    # end-to-end latency than LASK5's ESP-NOW path (browser -> WS -> server),
+    # so a tighter window would reject too many sensor frames as unpaired.
+    DEFAULT_WINDOW_MS_BY_TYPE = {
+        "lask5": 100,
+        "quest_hand": 175,
+    }
+    DEFAULT_WINDOW_MS_FALLBACK = 100
 
     def start_recording(self,
                         sensor_device_id: Optional[str] = None,
                         label_device_id: Optional[str] = None,
                         filename: Optional[str] = None,
-                        window_ms: int = 100,
+                        window_ms: Optional[int] = None,
                         label_count: int = 4) -> ActiveCapture:
         """Start a paired recording.
 
@@ -631,9 +893,13 @@ class AppState:
                               record sensor frames only (the paired CSV will
                               have no label columns).
             filename: CSV name. JSONL sidecars derived from it.
-            window_ms: temporal match window in milliseconds (default 100).
+            window_ms: temporal match window in milliseconds. If None, picked
+                       per-device-type from DEFAULT_WINDOW_MS_BY_TYPE
+                       (lask5=100, quest_hand=175, else 100).
             label_count: how many label_* columns to write per row (default 4
-                         for the standard LASK5 piston count).
+                         for the standard LASK5 piston count). Ignored when
+                         the label device is quest_hand -- in that case the
+                         writer infers from the first packet's values length.
         """
         if self.recording is not None:
             raise RuntimeError("Already recording -- stop the current capture first")
@@ -664,6 +930,22 @@ class AppState:
 
         effective_label_count = label_count if label_device_id else 0
 
+        # Quest hand tracking sends a wide joint vector whose width depends on
+        # the headset / WebXR implementation (Quest 3S = 26 joints * 7 floats =
+        # 182 per hand). Rather than hardcode it, pass None so CaptureWriter
+        # derives the column count from the first label packet.
+        label_dev_for_width = self.devices.get(label_device_id) if label_device_id else None
+        label_device_type = label_dev_for_width.device_type if label_dev_for_width else None
+        if label_device_type == "quest_hand":
+            effective_label_count = None
+
+        # Pick the match window: explicit arg wins; otherwise per-device-type
+        # default (Quest needs a wider window than LASK5 because WebXR
+        # latency is higher than ESP-NOW).
+        if window_ms is None:
+            window_ms = self.DEFAULT_WINDOW_MS_BY_TYPE.get(
+                label_device_type or "", self.DEFAULT_WINDOW_MS_FALLBACK)
+
         # Build paths
         name = filename or f"capture_{int(time.time())}.csv"
         if not name.endswith(".csv"):
@@ -673,6 +955,12 @@ class AppState:
         stem = csv_path.with_suffix("")           # data/raw/merged/foo (no .csv)
         sensor_sidecar = stem.with_suffix(".sensor.jsonl")
         label_sidecar  = stem.with_suffix(".label.jsonl")
+        # Labels-schema sidecar is only written for label sources whose
+        # column meaning isn't obvious from device_type alone -- v1: Quest.
+        labels_schema_sidecar: Optional[Path] = (
+            Path(str(stem) + ".labels.schema.json")
+            if label_device_type == "quest_hand" else None
+        )
 
         writer = CaptureWriter(
             output_path=str(csv_path),
@@ -709,6 +997,7 @@ class AppState:
             matcher=matcher,
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
+            labels_schema_path=labels_schema_sidecar,
         )
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(
@@ -724,6 +1013,7 @@ class AppState:
         auto = {
             "sensor_device_id": sensor_device_id,
             "label_device_id": label_device_id,
+            "label_source": label_device_type,   # "lask5" | "quest_hand" | None
             "window_ms": window_ms,
             "sensor_shape": [sensor_dev.rows, sensor_dev.cols],
             "started_at": self.recording.started_at,
@@ -779,6 +1069,17 @@ class AppState:
             "stopped: {} -- {} matched / {} sensor frames ({}%), {}s".format(
                 rec.path.name, rec.matched_count, rec.sensor_frames_seen,
                 round(rec.match_rate * 100, 1), round(rec.duration_s, 1)))
+        # If any rows had to be padded/truncated to the locked label width,
+        # call it out -- it means the label source sent variable-length
+        # frames (e.g. partial hand tracking), and those rows have some
+        # zero-filled joint columns.
+        if rec.label_width_mismatch_count:
+            self.log_buffer.warn("recording",
+                "{}: {} row(s) padded/truncated to locked label width {} "
+                "(variable-length label frames -- some joint columns are "
+                "zero-filled)".format(
+                    rec.path.name, rec.label_width_mismatch_count,
+                    rec.locked_label_count))
         result = {
             "filename": rec.path.name,
             "rows": rec.row_count,
@@ -791,10 +1092,14 @@ class AppState:
             "unpaired_sensor": rec.unpaired_sensor_count,
             "sensor_frames_seen": rec.sensor_frames_seen,
             "label_packets_seen": rec.label_packets_seen,
+            "label_width_mismatch": rec.label_width_mismatch_count,
             "match_rate": round(rec.match_rate, 3),
             "sidecars": {
                 "sensor": str(rec.path.with_suffix("")) + ".sensor.jsonl",
                 "label": (str(rec.path.with_suffix("")) + ".label.jsonl") if rec.label_jsonl else None,
+                "labels_schema": (str(rec.labels_schema_path)
+                                  if (rec.labels_schema_path and rec.labels_schema_written)
+                                  else None),
             },
         }
         self.recording = None
@@ -851,7 +1156,7 @@ class AppState:
         p.unlink()
         # Also delete sidecars if present
         stem = p.with_suffix("")
-        for suffix in (".sensor.jsonl", ".label.jsonl", ".meta.json"):
+        for suffix in (".sensor.jsonl", ".label.jsonl", ".meta.json", ".labels.schema.json"):
             sidecar = Path(str(stem) + suffix)
             if sidecar.exists():
                 try:

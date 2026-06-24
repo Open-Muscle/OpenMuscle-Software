@@ -1269,3 +1269,96 @@ footer {
     font-size: 12px;
     text-align: center;
 }
+
+/* ---- quest_hand 3D viewer (Studio Live stage) ----
+   Shown in place of the LASK5 piston comparator when a quest_hand label
+   source is streaming. Toggled by app.js adding .hand-mode to .comparator;
+   the viewer's own visibility is also set imperatively by OMHandViewer
+   (inline display), which defers to these rules when shown. */
+.hand-viewer {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+}
+.comparator.hand-mode .comparator-row { display: none; }
+.comparator.hand-mode .hand-viewer { display: flex; }
+
+.hand-viewer-canvas {
+    width: 100%;
+    height: 240px;
+    border-radius: 8px;
+    background: radial-gradient(ellipse at center, #11161f 0%, #0b0e14 100%);
+    border: 1px solid var(--border, #23262d);
+    touch-action: none;          /* let pointer-drag rotate instead of scroll */
+}
+.hand-viewer-canvas canvas { display: block; border-radius: 8px; }
+
+.hand-viewer-legend {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--fg-faint, #8b96a8);
+    align-items: center;
+}
+.hand-viewer-legend .hv-real { color: #34d399; }
+.hand-viewer-legend .hv-pred { color: #fbbf24; }
+.hand-viewer-legend .hv-hint { margin-left: auto; opacity: 0.7; font-style: italic; }
+
+/* ---- native V4 discovery: Sources rail ----
+   Discovered sources (announce beacon / cache / manual probe) with a per-source
+   subscribe toggle. Rendered by app.js renderDiscovery() from the WS snapshot's
+   `discovery` array. */
+.rail-head-sources { margin-top: 16px; display: flex; align-items: baseline; gap: 8px; }
+.rail-count { font-size: 11px; font-weight: 400; color: var(--fg-faint, #8b96a8); }
+
+.discovery-compact .src {
+    border: 1px solid var(--border, #23262d);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: var(--panel, #14171d);
+}
+.discovery-compact .src.subscribed { border-left: 3px solid #34d399; }
+.discovery-compact .src.err        { border-left: 3px solid #f87171; }
+.discovery-compact .src.known      { border-left: 3px solid #6b7280; }
+
+.src-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.src-id { font-weight: 600; font-size: 13px; word-break: break-all; }
+.src-state {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+}
+.src-state.subscribed { color: #34d399; background: rgba(52, 211, 153, 0.12); }
+.src-state.err        { color: #f87171; background: rgba(248, 113, 113, 0.12); }
+.src-state.known      { color: #9ca3af; background: rgba(156, 163, 175, 0.12); }
+
+.src-meta {
+    display: flex; flex-wrap: wrap; gap: 6px 10px;
+    font-size: 11px; color: var(--fg-faint, #8b96a8); margin-top: 4px;
+}
+.src-err { font-size: 11px; color: #f87171; margin-top: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.src-btn {
+    margin-top: 8px; width: 100%; padding: 5px 8px;
+    font-size: 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border, #23262d);
+    background: var(--panel-2, #1b1f27); color: var(--fg, #e6e9ef);
+}
+.src-btn:hover:not(:disabled) { background: var(--panel-3, #232834); }
+.src-btn:disabled { opacity: 0.6; cursor: default; }
+.src.subscribed .src-btn { border-color: rgba(248, 113, 113, 0.4); }
+
+.discovery-probe { display: flex; gap: 6px; margin-top: 8px; }
+.discovery-probe input {
+    flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px;
+    border-radius: 6px; border: 1px solid var(--border, #23262d);
+    background: var(--panel, #14171d); color: var(--fg, #e6e9ef);
+}
+.discovery-probe button {
+    width: 32px; border-radius: 6px; cursor: pointer; font-size: 16px;
+    border: 1px solid var(--border, #23262d);
+    background: var(--panel-2, #1b1f27); color: var(--fg, #e6e9ef);
+}
+.discovery-probe-msg { font-size: 11px; color: var(--fg-faint, #8b96a8); margin-top: 4px; min-height: 14px; }
+.discovery-probe-msg.err { color: #f87171; }

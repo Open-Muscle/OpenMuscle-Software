@@ -34,6 +34,20 @@ def parse_packet(raw_bytes: bytes) -> OpenMusclePacket | None:
 
     # New protocol: JSON object with "v" field
     if isinstance(obj, dict) and "v" in obj:
+        # V4 discovery announce beacons share UDP 3141 with sensor frames.
+        # They are NOT sensor data: route the whole announce dict through .data
+        # so the listener can hand it to the DiscoveryManager and keep it out of
+        # the sensor pipeline (otherwise it becomes a phantom "announce" device).
+        if obj.get("type") == "announce":
+            return OpenMusclePacket(
+                version=obj["v"],
+                device_type="announce",
+                device_id=obj.get("id", ""),
+                timestamp_ms=obj.get("ts", 0),
+                data=obj,
+                metadata={},
+                receive_time=recv_ts,
+            )
         return OpenMusclePacket(
             version=obj["v"],
             device_type=obj["type"],

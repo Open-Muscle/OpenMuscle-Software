@@ -98,6 +98,7 @@ function handleTick(msg) {
     }
     renderActiveSession();
     renderDevices();
+    renderDiscovery(msg.discovery || []);
     renderRecordPickers();
     renderRecording();
     const dev = selectedDevice();
@@ -115,6 +116,170 @@ function handleTick(msg) {
     // in lockstep with the underlying bars and the WS message.
     renderResiduals(lask, msg.inference);
     renderPipelinePills(msg, lask);
+    // quest_hand 3D viewer: when a hand label source is streaming, swap the
+    // LASK5 piston comparator for a live 3D hand (the pistons are zeros for
+    // a hand source). No-op when no quest_hand device is present.
+    renderHandViewer(lastDevices.find(d => d.device_type === 'quest_hand'),
+                     msg.inference);
+}
+
+// ---------- quest_hand 3D viewer ----------
+
+// Drives the Three.js hand viewer (window.OMHandViewer, loaded as a module).
+// Shows the REAL captured hand from the live quest_hand device's flat joint
+// `values`, plus the model's PREDICTED hand from inference.piston_values when
+// a quest-trained model (>= 25 joints * 7 floats) is running. Toggles the
+// .hand-mode class on .comparator so CSS hides the LASK5 pistons in favor of
+// the viewer.
+function renderHandViewer(questDev, inference) {
+    const comparator = document.querySelector('.comparator');
+    const viewerReady = window.OMHandViewer && window.OMHandViewer.isReady;
+    if (!questDev) {
+        if (comparator) comparator.classList.remove('hand-mode');
+        if (viewerReady && window.OMHandViewer.isReady()) window.OMHandViewer.setVisible(false);
+        return;
+    }
+    // Lazy-init the viewer on first quest_hand sighting (the module may still
+    // be loading right at page open; guard with isReady).
+    if (window.OMHandViewer && !window.OMHandViewer.isReady()) {
+        const el = document.getElementById('hand-viewer-canvas');
+        if (el) window.OMHandViewer.init(el);
+    }
+    if (!(window.OMHandViewer && window.OMHandViewer.isReady())) return;
+
+    if (comparator) comparator.classList.add('hand-mode');
+    window.OMHandViewer.setVisible(true);
+
+    const realFlat = Array.isArray(questDev.values) ? questDev.values : null;
+    // Predicted hand: only when the live model emits a full hand vector.
+    let predFlat = null;
+    const pv = inference && inference.piston_values;
+    if (Array.isArray(pv) && pv.length >= 25 * 7) predFlat = pv;
+    window.OMHandViewer.update(realFlat, predFlat);
+
+    // Reuse the existing GT meta slot to label the hand source.
+    const gtMeta = document.getElementById('lask-meta');
+    if (gtMeta) {
+        const hz = (typeof questDev.hz === 'number') ? questDev.hz.toFixed(0) : '0';
+        const nJoints = realFlat ? Math.floor(realFlat.length / 7) : 0;
+        gtMeta.textContent = `Quest hand · ${nJoints} joints · ${hz} Hz`;
+    }
+}
+
+// ---------- native V4 discovery (Sources rail) ----------
+
+let _discoveryProbeWired = false;
+
+function renderDiscovery(discovery) {
+    const list = document.getElementById('discovery-list');
+    const count = document.getElementById('discovery-count');
+    if (!list) return;
+    if (!_discoveryProbeWired) wireDiscoveryProbe();
+
+    const subs = discovery.filter(d => d.subscribed).length;
+    if (count) count.textContent = discovery.length
+        ? `${subs}/${discovery.length} subscribed` : '';
+
+    if (!discovery.length) {
+        list.innerHTML = '<li class="empty">No V4 sources discovered yet…</li>';
+        return;
+    }
+    list.innerHTML = discovery.map(d => {
+        // State badge: subscribed (green) / error (red) / known (grey).
+        let stateCls = 'known', stateTxt = 'known';
+        if (d.subscribed) { stateCls = 'subscribed'; stateTxt = 'subscribed'; }
+        else if (d.sub_error) { stateCls = 'err'; stateTxt = 'error'; }
+        const btnTxt = d.subscribed ? 'Unsubscribe' : 'Subscribe';
+        const btnAct = d.subscribed ? 'unsubscribe' : 'subscribe';
+        const age = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
+        const errLine = d.sub_error
+            ? `<div class="src-err" title="${escapeHtml(d.sub_error)}">${escapeHtml(d.sub_error)}</div>`
+            : '';
+        return `
+            <li class="src ${stateCls}" data-id="${escapeHtml(d.device_id)}">
+                <div class="src-top">
+                    <span class="src-id">${escapeHtml(d.device_id)}</span>
+                    <span class="src-state ${stateCls}">${stateTxt}</span>
+                </div>
+                <div class="src-meta">
+                    <span class="type">${escapeHtml(d.device_type)}</span>
+                    <span class="addr">${escapeHtml(d.ip)}:${d.cmd_port}</span>
+                    <span class="via">via ${escapeHtml(d.source)}</span>
+                    <span class="age">${age}</span>
+                </div>
+                ${errLine}
+                <button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(d.device_id)}">${btnTxt}</button>
+            </li>`;
+    }).join('');
+
+    list.querySelectorAll('.src-btn').forEach(btn => {
+        btn.onclick = async (e) => {
+            e.stopPropagation();
+            const id = btn.dataset.id;
+            const act = btn.dataset.act;
+            btn.disabled = true;
+            btn.textContent = act === 'subscribe' ? 'Subscribing…' : 'Unsubscribing…';
+            try {
+                const res = await fetch(`/api/discovery/${act}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: id }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    setProbeMsg(err.detail || `${act} failed`, true);
+                }
+            } catch (err) {
+                setProbeMsg(String(err), true);
+            }
+            // Next WS tick re-renders the true state; no manual refresh needed.
+        };
+    });
+}
+
+function wireDiscoveryProbe() {
+    const form = document.getElementById('discovery-probe-form');
+    const input = document.getElementById('discovery-probe-ip');
+    if (!form || !input) return;
+    _discoveryProbeWired = true;
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        const raw = input.value.trim();
+        if (!raw) return;
+        // Accept "ip" or "ip:port".
+        let ip = raw, cmd_port = null;
+        if (raw.includes(':')) {
+            const parts = raw.split(':');
+            ip = parts[0];
+            const p = parseInt(parts[1], 10);
+            if (!isNaN(p)) cmd_port = p;
+        }
+        setProbeMsg(`probing ${ip}…`, false);
+        try {
+            const res = await fetch('/api/discovery/probe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cmd_port ? { ip, cmd_port } : { ip }),
+            });
+            if (res.ok) {
+                const d = await res.json();
+                setProbeMsg(`found ${d.device_id} (${d.device_type})`, false);
+                input.value = '';
+            } else {
+                const err = await res.json().catch(() => ({}));
+                setProbeMsg(err.detail || `no V4 source at ${ip}`, true);
+            }
+        } catch (err) {
+            setProbeMsg(String(err), true);
+        }
+    };
+}
+
+function setProbeMsg(text, isError) {
+    const el = document.getElementById('discovery-probe-msg');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('err', !!isError);
 }
 
 // ---------- device list ----------

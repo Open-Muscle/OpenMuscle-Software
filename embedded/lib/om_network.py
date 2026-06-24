@@ -72,6 +72,32 @@ class NetworkManager:
         except Exception as e:
             log.error("UDP send error: " + str(e))
 
+    async def send_udp_to_subscribers(self, payload_bytes, subscribers):
+        """Fan out one UDP payload to every Wi-Fi subscriber in the list.
+
+        New in the discovery + subscribe protocol (spec section 5.1). The
+        existing send_udp() to a hardcoded target is kept for backward
+        compat with FlexGrid V1 and any device that has not yet been
+        migrated to discovery.
+
+        subscribers: om_subscribers.Subscribers instance.
+        """
+        if not self._sock:
+            return
+        targets = subscribers.wifi_targets()
+        if not targets:
+            return
+        for host, port in targets:
+            try:
+                self._sock.sendto(payload_bytes, (host, port))
+            except OSError as e:
+                errno = getattr(e, "errno", None) or (e.args[0] if e.args else None)
+                # ENOMEM (12) and EAGAIN (11) are non-fatal; next iter retries.
+                if errno not in (11, 12):
+                    log.warn("UDP send to {}:{} failed errno={} {}".format(host, port, errno, e))
+            except Exception as e:
+                log.warn("UDP send to {}:{} unexpected: {}".format(host, port, e))
+
     # --- ESPNOW (optional, for devices that need P2P communication) ---
 
     def init_espnow(self):

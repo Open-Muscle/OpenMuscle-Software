@@ -104,7 +104,11 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def no_cache_static(request: Request, call_next):
         response = await call_next(request)
         path = request.url.path
-        if path == "/" or path.startswith("/static/"):
+        # Cache-bust the HTML entry points + every static asset. Without
+        # /vr in this list, Quest Browser cached the old VR HTML (which
+        # pointed at app.js without the version querystring), so refreshes
+        # kept loading stale JS even after the file changed on disk.
+        if path == "/" or path == "/vr" or path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -113,6 +117,14 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/")
     async def index():
         return FileResponse(STATIC_DIR / "index.html")
+
+    # WebXR companion page served at /vr. Quest Browser loads this URL,
+    # negotiates 'hand-tracking', opens /ws/quest, and streams XRHand frames.
+    # WebXR requires a secure context -- HTTPS over LAN (mkcert) or
+    # http://localhost via `adb reverse tcp:8000 tcp:8000` over USB.
+    @app.get("/vr")
+    async def vr_page():
+        return FileResponse(STATIC_DIR / "vr" / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -134,11 +146,91 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         finally:
             state.ws_clients.discard(websocket)
 
+    # Inbound WS from the Quest headset. Browsers can't speak UDP so the
+    # WebXR client opens this socket and pushes XRHand joint frames as
+    # JSON. We feed each frame through ingest_quest_packet, which
+    # synthesizes a device_type="quest_hand" OpenMusclePacket and routes
+    # it through the same _handle_packet path as UDP devices. Net effect:
+    # the Quest looks like any other label-producing device to the
+    # recorder, matcher, snapshot, and meta-sidecar code.
+    @app.websocket("/ws/quest")
+    async def ws_quest(websocket: WebSocket):
+        await websocket.accept()
+        client = (f"{websocket.client.host}:{websocket.client.port}"
+                  if websocket.client else "unknown")
+        state.log_buffer.info("quest", f"connected: {client}")
+        frame_count = 0
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                try:
+                    state.ingest_quest_packet(payload)
+                    frame_count += 1
+                except Exception as e:
+                    # Per-frame errors shouldn't kill the socket -- a single
+                    # malformed frame happens; the next one is usually fine.
+                    state.log_buffer.warn(
+                        "quest", f"ingest failed at frame {frame_count}: "
+                                 f"{type(e).__name__}: {e}")
+        except WebSocketDisconnect:
+            state.log_buffer.info(
+                "quest", f"disconnected: {client} after {frame_count} frames")
+        except Exception as e:
+            state.log_buffer.error(
+                "quest", f"socket error from {client}: "
+                         f"{type(e).__name__}: {e}")
+
     # ----- REST: devices -----
 
     @app.get("/api/devices")
     async def list_devices():
         return JSONResponse(state._snapshot()["devices"])
+
+    # ----- REST: native V4 discovery -----
+
+    @app.get("/api/discovery")
+    async def list_discovery():
+        """Known V4 sources + subscription state (auto-discover replaces the
+        manual bridge_subscriber.py)."""
+        return JSONResponse(state.discovery.snapshot() if state.discovery else [])
+
+    class ProbeBody(BaseModel):
+        ip: str
+        cmd_port: Optional[int] = None      # try 8001 then 8002 when omitted
+
+    @app.post("/api/discovery/probe")
+    async def discovery_probe(body: ProbeBody):
+        """Manually probe an address (lab setup / device not beaconing)."""
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        dev = await asyncio.to_thread(state.discovery.probe, body.ip, body.cmd_port)
+        if dev is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no V4 command server responded at {body.ip}")
+        return dev.to_snapshot()
+
+    class DeviceIdBody(BaseModel):
+        device_id: str
+
+    @app.post("/api/discovery/subscribe")
+    async def discovery_subscribe(body: DeviceIdBody):
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        ok = await asyncio.to_thread(state.discovery.subscribe, body.device_id)
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not subscribe to {body.device_id} "
+                       f"(unknown, unreachable, or list full)")
+        return {"device_id": body.device_id, "subscribed": True}
+
+    @app.post("/api/discovery/unsubscribe")
+    async def discovery_unsubscribe(body: DeviceIdBody):
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        removed = state.discovery.unsubscribe(body.device_id)
+        return {"device_id": body.device_id, "unsubscribed": bool(removed)}
 
     # ----- REST: recording -----
 
@@ -149,7 +241,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         sensor_device_id: Optional[str] = None
         label_device_id: Optional[str] = None
         filename: Optional[str] = None
-        window_ms: int = 100
+        # If None, AppState picks per-device-type (lask5=100, quest_hand=175).
+        window_ms: Optional[int] = None
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):
@@ -510,8 +603,16 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
 def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           captures_dir: Optional[str] = None,
           model_path: Optional[str] = None,
-          hand_target: Optional[tuple] = None):
-    """Run the web UI server (blocks)."""
+          hand_target: Optional[tuple] = None,
+          ssl_certfile: Optional[str] = None,
+          ssl_keyfile: Optional[str] = None):
+    """Run the web UI server (blocks).
+
+    Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
+    WebXR /vr page since Quest Browser refuses hand-tracking on plain
+    HTTP. Generate certs locally with mkcert and install the root CA
+    on the headset (see README).
+    """
     import uvicorn
     app = create_app(
         udp_port=udp_port,
@@ -519,4 +620,5 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         model_path=model_path,
         hand_target=hand_target,
     )
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info",
+                ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
