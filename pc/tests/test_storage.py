@@ -87,3 +87,70 @@ class TestCaptureWriterLazyHeader:
         # 1 timestamp + 60 sensor + 0 label columns
         assert len(header) == 1 + 60
         path.unlink()
+
+
+class TestCaptureWriterV2Golden:
+    """The PC CaptureWriter v2 output must match the schema-v2 byte golden
+    (OpenMuscle-Connect tools/make_golden_csv_v2.py, board #0073) byte-for-byte,
+    so the phone and PC writers stay interchangeable. Features are flattened with
+    the canonical row-major helper (flat_sensor_values, fixed in 0bbd6e4)."""
+
+    # Pinned canonical bytes copied from the golden generator's EXPECTED_*.
+    EXPECTED_SINGLE = (
+        b"ts_hub_ms,role,device_id,R0C0,R0C1,R1C0,R1C1,label_0,label_1\r\n"
+        b"1718000000000,left,fg-left,12,18,20,25,1.0,0.5\r\n"
+        b"1718000000033,left,fg-left,13,19,21,24,0.8,0.5\r\n"
+    )
+    EXPECTED_BILATERAL = (
+        b"ts_hub_ms,role,device_id,R0C0,R0C1,R1C0,R1C1,label_0,label_1\r\n"
+        b"1718000000000,left,fg-left,12,18,20,25,1.0,0.5\r\n"
+        b"1718000000007,right,fg-right,30,28,22,19,1.0,0.5\r\n"
+        b"1718000000033,left,fg-left,13,19,21,24,0.8,0.5\r\n"
+        b"1718000000040,right,fg-right,31,27,23,18,0.8,0.5\r\n"
+    )
+
+    @staticmethod
+    def _rowmajor(matrix):
+        # Flatten via the production canonical helper (row-major), not a local copy.
+        from openmuscle.protocol.schema import OpenMusclePacket
+        return OpenMusclePacket(
+            version="1.0", device_type="flexgrid", device_id="x",
+            timestamp_ms=0, data={"matrix": matrix},
+        ).flat_sensor_values()
+
+    def _write(self, path, rows_data):
+        rm = self._rowmajor
+        w = CaptureWriter(output_path=str(path), matrix_rows=2, matrix_cols=2,
+                          label_count=2, schema_version="v2")
+        for ts, role, dev, matrix, labels in rows_data:
+            w.write_row_v2(ts, role, dev, rm(matrix), labels)
+        w.close()
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_single_source_matches_golden(self):
+        with tempfile.TemporaryDirectory() as d:
+            got = self._write(Path(d) / "v2single.csv", [
+                (1718000000000, "left", "fg-left", [[12, 20], [18, 25]], [1.0, 0.5]),
+                (1718000000033, "left", "fg-left", [[13, 21], [19, 24]], [0.8, 0.5]),
+            ])
+        assert got == self.EXPECTED_SINGLE
+
+    def test_bilateral_matches_golden(self):
+        with tempfile.TemporaryDirectory() as d:
+            got = self._write(Path(d) / "v2bi.csv", [
+                (1718000000000, "left",  "fg-left",  [[12, 20], [18, 25]], [1.0, 0.5]),
+                (1718000000007, "right", "fg-right", [[30, 22], [28, 19]], [1.0, 0.5]),
+                (1718000000033, "left",  "fg-left",  [[13, 21], [19, 24]], [0.8, 0.5]),
+                (1718000000040, "right", "fg-right", [[31, 23], [27, 18]], [0.8, 0.5]),
+            ])
+        assert got == self.EXPECTED_BILATERAL
+
+    def test_write_row_v2_requires_v2_schema(self):
+        import pytest
+        with tempfile.TemporaryDirectory() as d:
+            w = CaptureWriter(output_path=str(Path(d) / "v1.csv"),
+                              matrix_rows=2, matrix_cols=2, label_count=2)
+            with pytest.raises(ValueError):
+                w.write_row_v2(1, "left", "fg", [1, 2, 3, 4], [0.0, 0.0])
+            w.close()

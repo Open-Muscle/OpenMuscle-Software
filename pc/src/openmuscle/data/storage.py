@@ -22,7 +22,8 @@ class CaptureWriter:
     """
 
     def __init__(self, output_path: str = None, matrix_rows: int = 4,
-                 matrix_cols: int = 16, label_count: Optional[int] = 4):
+                 matrix_cols: int = 16, label_count: Optional[int] = 4,
+                 schema_version: str = "v1"):
         if output_path is None:
             os.makedirs("data/raw/merged", exist_ok=True)
             output_path = f"data/raw/merged/capture_{int(time.time())}.csv"
@@ -33,6 +34,11 @@ class CaptureWriter:
         self._matrix_rows = matrix_rows
         self._matrix_cols = matrix_cols
         self._label_count: Optional[int] = label_count   # None = infer on first row
+        # "v1" = `timestamp, R{r}C{c}.., label_*` (single source).
+        # "v2" = `ts_hub_ms, role, device_id, R{r}C{c}.., label_*` (multi-device,
+        # one row per source frame). Byte-for-byte target is the schema-v2 golden
+        # (OpenMuscle-Connect tools/make_golden_csv_v2.py, board #0073).
+        self._schema_version = schema_version
 
         self._file = open(self.path, "w", newline="")
         self._writer = csv.writer(self._file)
@@ -43,7 +49,11 @@ class CaptureWriter:
         sensor_cols = [f"R{r}C{c}" for r in range(self._matrix_rows)
                                      for c in range(self._matrix_cols)]
         label_cols = [f"label_{i}" for i in range(label_count)]
-        self._writer.writerow(["timestamp"] + sensor_cols + label_cols)
+        if self._schema_version == "v2":
+            lead = ["ts_hub_ms", "role", "device_id"]
+        else:
+            lead = ["timestamp"]
+        self._writer.writerow(lead + sensor_cols + label_cols)
         self._label_count = label_count
         self._header_written = True
 
@@ -53,6 +63,24 @@ class CaptureWriter:
                      else len(label_values))
             self._write_header(count)
         self._writer.writerow([timestamp] + sensor_values + label_values)
+        self._count += 1
+
+    def write_row_v2(self, ts_hub_ms: int, role: str, device_id: str,
+                     sensor_values: list, label_values: list):
+        """Write one schema-v2 row: ts_hub_ms, role, device_id, then row-major
+        sensor features and labels. `sensor_values` MUST already be flattened
+        row-major (R{r}C{c}, r outer) to match the header + the byte golden.
+        The writer is role-agnostic: bilateral captures are just interleaved
+        rows with different role/device_id, written by the caller in arrival
+        order."""
+        if self._schema_version != "v2":
+            raise ValueError("write_row_v2 requires schema_version='v2'")
+        if not self._header_written:
+            count = (self._label_count if self._label_count is not None
+                     else len(label_values))
+            self._write_header(count)
+        self._writer.writerow([ts_hub_ms, role, device_id]
+                              + sensor_values + label_values)
         self._count += 1
 
     @property
