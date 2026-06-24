@@ -245,6 +245,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         filename: Optional[str] = None
         # If None, AppState picks per-device-type (lask5=100, quest_hand=175).
         window_ms: Optional[int] = None
+        # schema-v2 role tag for the sensor band: left / right / labeler
+        # (lowercase wire tokens). Defaults to left for a single-source capture.
+        role: Optional[str] = "left"
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):
@@ -254,6 +257,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 label_device_id=body.label_device_id,
                 filename=body.filename,
                 window_ms=body.window_ms,
+                role=body.role or "left",
             )
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))

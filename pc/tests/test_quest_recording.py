@@ -103,8 +103,13 @@ class TestQuestRecordingRectangular:
             widths = {len(r) for r in rows}
             assert len(widths) == 1, f"ragged CSV! column counts seen: {widths}"
 
-            # Width = 1 timestamp + 60 sensor + 175 label (25 joints * 7).
-            assert len(header) == 1 + 60 + 175, len(header)
+            # Schema v2 width = 3 lead (ts_hub_ms, role, device_id) + 60 sensor
+            # + 175 label (25 joints * 7).
+            assert len(header) == 3 + 60 + 175, len(header)
+            assert header[:3] == ["ts_hub_ms", "role", "device_id"], header[:3]
+            # Every data row carries the lowercase role token + the sensor id.
+            assert data_rows[0][1] == "left"
+            assert data_rows[0][2] == "fg-test"
 
             # The 20-joint frame should have tripped exactly one width mismatch.
             assert result["label_width_mismatch"] == 1, result["label_width_mismatch"]

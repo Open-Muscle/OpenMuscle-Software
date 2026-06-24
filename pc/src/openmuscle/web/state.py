@@ -176,6 +176,9 @@ class ActiveCapture:
     cols: int
     window_s: float
     matcher: TemporalMatcher
+    # Hub-assigned role for the sensor source in schema-v2 captures (one of the
+    # lowercase wire tokens left/right/labeler; board #0091 interop contract).
+    role: str = "left"
     sensor_jsonl: Optional[IO] = None
     label_jsonl: Optional[IO] = None
     # Path for a per-capture labels-schema sidecar. Written on the first
@@ -535,7 +538,12 @@ class AppState:
         rows = len(mat[0])
         cols = len(mat)
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
-        rec.writer.write_row(pkt.receive_time, flat, label_values)
+        # Schema v2: one long row per sensor frame, tagged with the source's
+        # role + device_id and a hub-arrival epoch-ms timestamp. Features are
+        # already row-major (above); labels are the matched label vector.
+        ts_hub_ms = int(pkt.receive_time * 1000)
+        rec.writer.write_row_v2(ts_hub_ms, rec.role, rec.sensor_device_id,
+                                flat, label_values)
 
     def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
         """Emit the per-capture labels-schema sidecar.
@@ -758,6 +766,8 @@ class AppState:
             r = self.recording
             rec = {
                 "filename": r.path.name,
+                "schema_version": "v2",
+                "role": r.role,
                 "sensor_device_id": r.sensor_device_id,
                 "label_device_id": r.label_device_id,
                 "rows": r.row_count,
@@ -885,7 +895,8 @@ class AppState:
                         label_device_id: Optional[str] = None,
                         filename: Optional[str] = None,
                         window_ms: Optional[int] = None,
-                        label_count: int = 4) -> ActiveCapture:
+                        label_count: int = 4,
+                        role: str = "left") -> ActiveCapture:
         """Start a paired recording.
 
         Args:
@@ -907,6 +918,15 @@ class AppState:
         """
         if self.recording is not None:
             raise RuntimeError("Already recording -- stop the current capture first")
+
+        # Normalize the role to the schema-v2 wire vocabulary (lowercase
+        # left/right/labeler, board #0091). A single sensor band is left/right;
+        # default + warn on anything unexpected so a bad token can't reach the CSV.
+        role = (role or "left").strip().lower()
+        if role not in ("left", "right", "labeler"):
+            self.log_buffer.warn("recording",
+                "unknown role '{}', defaulting to 'left' (valid: left/right/labeler)".format(role))
+            role = "left"
 
         # Auto-pick devices if not specified
         if not sensor_device_id:
@@ -971,6 +991,7 @@ class AppState:
             matrix_rows=sensor_dev.rows,
             matrix_cols=sensor_dev.cols,
             label_count=effective_label_count,
+            schema_version="v2",
         )
 
         # Open sidecars block-buffered (4 KB). Earlier we used buffering=1
@@ -999,6 +1020,7 @@ class AppState:
             cols=sensor_dev.cols,
             window_s=window_ms / 1000.0,
             matcher=matcher,
+            role=role,
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
             labels_schema_path=labels_schema_sidecar,
