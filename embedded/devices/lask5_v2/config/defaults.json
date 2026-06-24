@@ -1,7 +1,7 @@
 {
     "device_id": "lask5-01",
-    "wifi_ssid": "OpenMuscle",
-    "wifi_password": "3141592653",
+    "wifi_ssid": "",
+    "wifi_password": "",
     "udp_target_ip": "192.168.1.48",
     "udp_port": 3141,
     "scl_pin": 9,
