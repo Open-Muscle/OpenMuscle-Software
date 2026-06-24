@@ -186,6 +186,52 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def list_devices():
         return JSONResponse(state._snapshot()["devices"])
 
+    # ----- REST: native V4 discovery -----
+
+    @app.get("/api/discovery")
+    async def list_discovery():
+        """Known V4 sources + subscription state (auto-discover replaces the
+        manual bridge_subscriber.py)."""
+        return JSONResponse(state.discovery.snapshot() if state.discovery else [])
+
+    class ProbeBody(BaseModel):
+        ip: str
+        cmd_port: Optional[int] = None      # try 8001 then 8002 when omitted
+
+    @app.post("/api/discovery/probe")
+    async def discovery_probe(body: ProbeBody):
+        """Manually probe an address (lab setup / device not beaconing)."""
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        dev = await asyncio.to_thread(state.discovery.probe, body.ip, body.cmd_port)
+        if dev is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no V4 command server responded at {body.ip}")
+        return dev.to_snapshot()
+
+    class DeviceIdBody(BaseModel):
+        device_id: str
+
+    @app.post("/api/discovery/subscribe")
+    async def discovery_subscribe(body: DeviceIdBody):
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        ok = await asyncio.to_thread(state.discovery.subscribe, body.device_id)
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not subscribe to {body.device_id} "
+                       f"(unknown, unreachable, or list full)")
+        return {"device_id": body.device_id, "subscribed": True}
+
+    @app.post("/api/discovery/unsubscribe")
+    async def discovery_unsubscribe(body: DeviceIdBody):
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        removed = state.discovery.unsubscribe(body.device_id)
+        return {"device_id": body.device_id, "unsubscribed": bool(removed)}
+
     # ----- REST: recording -----
 
     class StartRecordingBody(BaseModel):

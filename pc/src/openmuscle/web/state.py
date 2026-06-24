@@ -56,6 +56,7 @@ def _quest_label_column(joint_index: int, channel_index: int) -> int:
     return joint_index * len(QUEST_JOINT_CHANNEL_ORDER) + channel_index
 from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
+from openmuscle.discovery import DiscoveryManager
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
@@ -220,11 +221,15 @@ class AppState:
 
     def __init__(self, udp_port: int = 3141, captures_dir: Path | None = None,
                  model_path: Optional[str] = None,
-                 hand_target: Optional[tuple] = None):
+                 hand_target: Optional[tuple] = None,
+                 enable_discovery: bool = True):
         """
         Args:
             udp_port: incoming device telemetry port (FlexGrid + LASK5)
             captures_dir: where recorded CSVs go
+            enable_discovery: run native V4 discovery + auto-subscribe (replaces
+                        the interim bridge_subscriber.py). Set False to bind the
+                        UDP port only and rely on an external subscriber/bridge.
             model_path: optional path to a trained model .pkl. When set, every
                         FlexGrid packet is run through the model and its
                         predictions populate the WS snapshot's `inference`
@@ -246,7 +251,17 @@ class AppState:
         self.log_buffer.info("server", "AppState init  udp_port={}  captures_dir={}".format(
             udp_port, str(self.captures_dir)))
 
-        self.listener = UDPListener(port=udp_port)
+        # Native V4 discovery + subscribe. Discovers announcing sources, keeps a
+        # TCP subscription + 1 Hz heartbeat to each, and re-probes cached devices
+        # on startup (a device's beacon goes silent once any hub subscribes, so
+        # the cache is how we recover one another hub already holds). Replaces
+        # pc/bridge_subscriber.py. The listener hands announce beacons straight
+        # to it; subscribed devices' sensor frames flow through the normal queue.
+        self.discovery: Optional[DiscoveryManager] = (
+            DiscoveryManager(udp_port=udp_port, auto_subscribe=True)
+            if enable_discovery else None)
+        announce_handler = self.discovery.on_announce if self.discovery else None
+        self.listener = UDPListener(port=udp_port, announce_handler=announce_handler)
         self.devices: dict[str, DeviceInfo] = {}
         self.recording: Optional[ActiveCapture] = None
         # At most one active session at a time. Recordings made while a
@@ -288,10 +303,16 @@ class AppState:
         if self._started:
             return
         self.listener.start()
+        if self.discovery:
+            # Re-probe cached devices in the background so we recover sources
+            # whose beacon is silent (held by another hub) at startup.
+            self.discovery.recover_cache()
         self._started = True
 
     def stop(self):
         self.listener.stop()
+        if self.discovery:
+            self.discovery.stop()
         if self.recording:
             self.stop_recording()
         if self._hand_sock is not None:
@@ -757,6 +778,11 @@ class AppState:
             "recording": rec,
             "inference": self._inference_snapshot(),
             "active_session": self.active_session,
+            # Native V4 discovery: known sources + subscription state. Empty
+            # list when discovery is disabled. Devices that are subscribed and
+            # streaming also appear in `devices` above (via their frames); this
+            # adds the ones that are known-but-silent plus per-device sub status.
+            "discovery": self.discovery.snapshot() if self.discovery else [],
         }
 
     def _inference_snapshot(self) -> dict:
