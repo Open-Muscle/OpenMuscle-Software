@@ -210,3 +210,34 @@ class TestRecordingDefaults:
             meta = s.read_capture_meta("lm.csv")
             assert meta["auto"]["label_source"] == "lask5"
             assert meta["auto"]["window_ms"] == 100
+
+    def test_v2_interop_meta_keys_top_level(self):
+        # Phone interop keys (board #0097) live at the TOP LEVEL, matching the
+        # phone meta.json shape, not nested under auto/extras.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())     # device_id "fg-test"
+            s._handle_packet(_lask5_packet())
+            s.start_recording(filename="im.csv", role="right")
+            s.stop_recording()
+            meta = s.read_capture_meta("im.csv")
+            assert meta["schema"] == "v2"
+            assert meta["mirror"] is False
+            assert meta["label_source"] == "lask5"
+            assert meta["roles"] == {"fg-test": "right"}
+            assert isinstance(meta["created_ms"], int)
+            # Not dumped under extras.
+            assert "schema" not in meta.get("extras", {})
+
+    def test_v2_interop_label_source_quest_vocab(self):
+        # PC internal device_type is quest_hand; the interop label_source uses
+        # the phone wire vocabulary (quest). The raw value stays under .auto.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s.ingest_quest_packet(_quest_payload(25))
+            s.start_recording(filename="iq.csv")
+            s.stop_recording()
+            meta = s.read_capture_meta("iq.csv")
+            assert meta["label_source"] == "quest"
+            assert meta["auto"]["label_source"] == "quest_hand"

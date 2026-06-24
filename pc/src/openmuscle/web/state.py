@@ -1065,11 +1065,28 @@ class AppState:
             session_tag = "session:" + str(sid)
             seed_user["tags"] = (self.active_session.get("tags") or []) + [session_tag]
 
+        # Schema-v2 interop metadata at the TOP LEVEL, matching the phone
+        # meta.json keys (board #0097) so phone- and PC-captured sessions carry
+        # identical metadata. label_source uses the phone wire vocabulary
+        # (lask5 / quest / manual); roles maps device_id -> role token. mirror is
+        # False here (one-limb mirroring is a multi-band concern, PROTOCOL.md 8.5).
+        # The PC-specific provenance stays under .auto (which keeps its own
+        # label_source = the raw device_type).
+        label_source_wire = {"lask5": "lask5", "quest_hand": "quest"}.get(
+            label_device_type, label_device_type)
+        interop_meta = {
+            "schema": "v2",
+            "mirror": False,
+            "label_source": label_source_wire,
+            "roles": {sensor_device_id: self.recording.role},
+            "created_ms": int(self.recording.started_at * 1000),
+        }
+
         # write_capture_meta routes 'auto' into the .auto sub-dict and
-        # user-fields (arm, subject, tags) into their top-level slots --
-        # so a single call seeds everything correctly.
+        # user-fields (arm, subject, tags) + the interop keys into their
+        # top-level slots -- so a single call seeds everything correctly.
         try:
-            self.write_capture_meta(name, {"auto": auto, **seed_user})
+            self.write_capture_meta(name, {"auto": auto, **interop_meta, **seed_user})
         except Exception as e:
             self.log_buffer.warn("meta", "could not seed meta for {}: {}".format(name, e))
 
@@ -1382,6 +1399,10 @@ class AppState:
     # user PUTs lands under `extras` so the JSON stays self-describing but
     # doesn't accidentally collide with reserved fields.
     META_USER_KEYS = ("arm", "subject", "gesture", "tags", "notes")
+    # Machine-set schema-v2 interop keys, written at the TOP LEVEL (not under
+    # extras) so they match the phone meta.json shape byte-for-key (board #0097):
+    # the trainer reads the same keys whether a session was captured on phone or PC.
+    META_INTEROP_KEYS = ("schema", "mirror", "label_source", "roles", "created_ms")
 
     def _meta_path(self, csv_name: str) -> Optional[Path]:
         """Sidecar path for a capture's metadata JSON. Whitelist-guarded so
@@ -1440,7 +1461,7 @@ class AppState:
             elif k == "created_at":
                 # Don't let clients rewrite this
                 continue
-            elif k in self.META_USER_KEYS:
+            elif k in self.META_USER_KEYS or k in self.META_INTEROP_KEYS:
                 existing[k] = v
             else:
                 # Land unknown keys under `extras` so user can attach arbitrary
