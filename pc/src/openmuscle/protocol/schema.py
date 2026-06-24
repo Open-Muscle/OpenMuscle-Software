@@ -36,10 +36,21 @@ class OpenMusclePacket:
         """Extract a flat list of sensor values from the data payload.
 
         Works for both flexgrid (flattens matrix) and lask5/sensorband (returns values).
+
+        FlexGrid matrices arrive column-major on the wire ([cols][rows]) and are
+        flattened ROW-major here (rows outer, cols inner: index k holds
+        matrix[k % cols][k // cols], the cell named R{k//cols}C{k%cols}). This is
+        the canonical convention used by the production CSV writer (web/state.py),
+        web/inference.py, the R{r}C{c} header, and every trained model. Flattening
+        column-major transposes features vs the training data (the bug fixed in
+        245cb8f); the CLI record + predict paths consume this helper, so it must
+        agree with the web path.
         """
         if "matrix" in self.data:
             matrix = self.data["matrix"]
-            return [v for col in matrix for v in col]
+            cols = len(matrix)
+            rows = len(matrix[0]) if cols else 0
+            return [matrix[c][r] for r in range(rows) for c in range(cols)]
         if "values" in self.data:
             return list(self.data["values"])
         return []
