@@ -290,6 +290,32 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "filename": rec.path.name,
             "sensor_device_id": rec.sensor_device_id,
             "label_device_id": rec.label_device_id,
+            "sensors": dict(rec.sensors),
+            "window_ms": int(rec.window_s * 1000),
+            "shape": [rec.rows, rec.cols],
+        }
+
+    class MultibandBody(BaseModel):
+        filename: Optional[str] = None
+        window_ms: Optional[int] = None
+
+    @app.post("/api/recording/multiband")
+    async def start_multiband(body: MultibandBody):
+        """Start a multi-band capture from the Sources-panel role tags: every
+        flexgrid tagged left/right is a band, the labeler-tagged device is the
+        label source (else auto-picked)."""
+        try:
+            rec = state.start_multiband_recording(
+                filename=body.filename, window_ms=body.window_ms)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to create capture file: {e}")
+        return {
+            "filename": rec.path.name,
+            "sensors": dict(rec.sensors),
+            "label_device_id": rec.label_device_id,
             "window_ms": int(rec.window_s * 1000),
             "shape": [rec.rows, rec.cols],
         }
@@ -310,6 +336,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "recording": True,
             "filename": r.path.name,
             "sensor_device_id": r.sensor_device_id,
+            "sensors": dict(r.sensors),
             "label_device_id": r.label_device_id,
             "window_ms": int(r.window_s * 1000),
             "rows": r.row_count,

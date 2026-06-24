@@ -1135,6 +1135,40 @@ class AppState:
 
         return self.recording
 
+    def start_multiband_recording(self, filename: Optional[str] = None,
+                                  window_ms: Optional[int] = None) -> ActiveCapture:
+        """Start a multi-band capture from the role tags set in the Sources panel.
+
+        Gathers every flexgrid tagged left/right as a band and the device tagged
+        labeler (if any, else auto-pick) as the label source, then delegates to
+        start_recording. The operator tags sources once in the Sources panel and
+        records with one click.
+        """
+        if not self.discovery:
+            raise RuntimeError("discovery is disabled; can't gather role tags")
+        snap = self.discovery.snapshot()
+        bands = [(d["device_id"], d.get("role"))
+                 for d in snap
+                 if d.get("device_type") == "flexgrid"
+                 and d.get("role") in ("left", "right")]
+        if not bands:
+            raise RuntimeError(
+                "no flexgrid bands tagged left/right; tag sources in the "
+                "Sources panel first")
+        # Deterministic order: left band(s) before right, so the trainer's
+        # Left||Right concat is stable regardless of discovery iteration order.
+        bands.sort(key=lambda b: (b[1] != "left", b[0]))
+        labeler = next((d["device_id"] for d in snap
+                        if d.get("role") == "labeler"), None)
+
+        primary_id, primary_role = bands[0]
+        extras = [{"device_id": did, "role": role} for did, role in bands[1:]]
+        return self.start_recording(
+            sensor_device_id=primary_id, role=primary_role,
+            extra_sensors=extras,
+            label_device_id=labeler,   # None -> start_recording auto-picks
+            filename=filename, window_ms=window_ms)
+
     def stop_recording(self) -> Optional[dict]:
         if self.recording is None:
             return None

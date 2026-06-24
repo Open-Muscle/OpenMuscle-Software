@@ -278,3 +278,38 @@ class TestRecordingDefaults:
             X, y = load_training_data(str(Path(d) / "mb.csv"))
             assert X.shape[1] == 120
             assert X.shape[0] >= 1
+
+    def test_start_multiband_from_role_tags(self):
+        # The record FLOW: tag bands + labeler in discovery (Sources-panel
+        # role-UX), then start_multiband_recording gathers them automatically.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.discovery.auto_subscribe = False               # no TCP attempts
+            s.discovery.cache_path = str(Path(d) / "disc.json")  # isolate the cache
+            s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+            s._handle_packet(_flexgrid_packet(device_id="fg-right"))
+            s._handle_packet(_lask5_packet(device_id="lask5-test"))
+            for did, dev in [("fg-left", "flexgrid"), ("fg-right", "flexgrid"),
+                             ("lask5-test", "lask5")]:
+                s.discovery.on_announce(
+                    {"v": "1.0", "type": "announce", "id": did, "role": "source",
+                     "dev": dev, "caps": [], "matrix": [15, 4],
+                     "services": {"cmd": 8001}}, "127.0.0.1")
+            s.discovery.set_role("fg-left", "left")
+            s.discovery.set_role("fg-right", "right")
+            s.discovery.set_role("lask5-test", "labeler")
+
+            rec = s.start_multiband_recording(filename="mbflow.csv")
+            s.stop_recording()
+            assert rec.sensors == {"fg-left": "left", "fg-right": "right"}
+            assert rec.label_device_id == "lask5-test"
+
+    def test_start_multiband_requires_tagged_bands(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.discovery.auto_subscribe = False
+            s.discovery.cache_path = str(Path(d) / "disc.json")
+            s._handle_packet(_flexgrid_packet(device_id="fg-untagged"))
+            # No role tags set -> refuse rather than guess.
+            with __import__("pytest").raises(RuntimeError):
+                s.start_multiband_recording(filename="x.csv")
