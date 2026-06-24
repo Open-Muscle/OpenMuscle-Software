@@ -30,6 +30,19 @@ import om_logger as log
 _OK  = "ok"
 _ERR = "error"
 
+# Supervisor backoff after the listener task dies. Keep it short; the listener
+# being down means hubs cannot subscribe, so faster restart wins over backoff.
+_SUPERVISOR_RESTART_DELAY_S = 1
+
+# CancelledError is a BaseException subclass in modern asyncio. We MUST let it
+# propagate when a task is deliberately cancelled (e.g. shutdown). Older
+# MicroPython builds may not expose it; fall back to a sentinel that never
+# matches so the BaseException catch still works.
+try:
+    _CancelledError = asyncio.CancelledError
+except AttributeError:
+    _CancelledError = type("_NoCancelledError", (BaseException,), {})
+
 
 class CommandServer:
     def __init__(self, port, handlers):
@@ -43,10 +56,36 @@ class CommandServer:
         self.handlers = handlers
         self._server = None
 
-    async def start(self):
-        """Bind and start accepting connections in the background."""
-        self._server = await asyncio.start_server(self._handle_client, "0.0.0.0", self.port)
-        log.info("Command server listening on TCP {}".format(self.port))
+    async def serve_forever(self):
+        """Supervised bind + accept loop. Spawn as a background task.
+
+        Without supervision, an mpremote-induced KeyboardInterrupt (a
+        BaseException, not Exception) can land on the asyncio accept task
+        and silently kill the listener while the rest of the device keeps
+        running. Hubs then see a black hole. This loop catches
+        BaseException (except CancelledError), logs, sleeps briefly, and
+        rebinds. PROTOCOL.md section 10 requires this for v1.0 conformance.
+        """
+        while True:
+            try:
+                self._server = await asyncio.start_server(
+                    self._handle_client, "0.0.0.0", self.port)
+                log.info("Command server listening on TCP {}".format(self.port))
+                while True:
+                    await asyncio.sleep(60)
+            except _CancelledError:
+                log.info("Command server cancelled; exiting supervisor")
+                raise
+            except BaseException as e:
+                log.warn("Command server died: {} ({}); restarting in {}s".format(
+                    type(e).__name__, e, _SUPERVISOR_RESTART_DELAY_S))
+                try:
+                    if self._server is not None:
+                        self._server.close()
+                except Exception:
+                    pass
+                self._server = None
+                await asyncio.sleep(_SUPERVISOR_RESTART_DELAY_S)
 
     async def _handle_client(self, reader, writer):
         peer = writer.get_extra_info("peername") or ("?", 0)
@@ -62,8 +101,14 @@ class CommandServer:
                 ack = await self._handle_one(line, peer)
                 writer.write(ujson.dumps(ack).encode("utf-8") + b"\n")
                 await writer.drain()
-        except Exception as e:
-            log.warn("Command client {} errored: {}".format(peer, e))
+        except _CancelledError:
+            raise
+        except BaseException as e:
+            # Catch BaseException so a KeyboardInterrupt doesn't propagate
+            # past this boundary and take down the listener task. The
+            # supervisor in serve_forever is the safety net.
+            log.warn("Command client {} errored: {} ({})".format(
+                peer, type(e).__name__, e))
         finally:
             try:
                 writer.close()

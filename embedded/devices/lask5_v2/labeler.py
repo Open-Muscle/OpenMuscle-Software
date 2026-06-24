@@ -202,16 +202,19 @@ class LASK5(BaseDevice):
             fw_version=self.fw_version,
             device_id=self.device_id,
         )
+        # Cmd server runs under a supervisor (serve_forever) so an asyncio
+        # interruption (e.g. mpremote-induced KeyboardInterrupt) cannot
+        # silently kill the listener. See PROTOCOL.md section 10.
         self._cmd_server = CommandServer(
             port=self.settings.get("cmd_port", 8002),
             handlers=build_standard_handlers(self),
         )
-        await self._cmd_server.start()
 
         # Streaming + display + menu + discovery + subscriber pruning + reboot
         # watcher all run concurrently. UDP fans out to subscribers and ESPNow
         # broadcasts to the paired bracelet in parallel; both kept independent
         # so a Wi-Fi flap does not disturb the ESP-NOW link.
+        asyncio.create_task(self._cmd_server.serve_forever())
         asyncio.create_task(self._send_loop())
         asyncio.create_task(self._espnow_loop())
         asyncio.create_task(self._display_loop())
