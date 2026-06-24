@@ -98,13 +98,15 @@ class DiscoveredDevice:
         self.sub_error = ""
 
     def to_cache(self):
-        """Minimal persisted form (enough to re-probe next run)."""
+        """Persisted form. PROTOCOL.md v1.0 S5.3 requires the cache hold at
+        minimum the last known IP, cmd port, and last-contact timestamp."""
         return {
             "device_id": self.device_id,
             "device_type": self.device_type,
             "ip": self.ip,
             "cmd_port": self.cmd_port,
             "sensor_port": self.sensor_port,
+            "last_contact": self.last_seen,
         }
 
     def to_snapshot(self, now=None):
