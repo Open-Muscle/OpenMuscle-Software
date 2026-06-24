@@ -59,7 +59,8 @@ class LASK5(BaseDevice):
         # unicast to subscribed hubs only. ESP-NOW path is unchanged.
         "fw_version":           "v3.0.0",
         "cmd_port":             8002,
-        "udp_sensor_port":      3141,   # broadcast beacon port; hubs also pick this for default
+        "udp_announce_port":    3140,   # broadcast announce port (PROTOCOL.md v1.0 port split)
+        "udp_sensor_port":      3141,   # unicast data port for sensor/label frames
         "announce_interval_s":  1,
         "max_subscribers":      4,
         "heartbeat_timeout_s":  5,
@@ -197,7 +198,7 @@ class LASK5(BaseDevice):
             },
             caps=self.caps,
             extra_fields={"pistons": 4, "joystick": True},
-            beacon_port=self.settings.get("udp_sensor_port", 3141),
+            beacon_port=self.settings.get("udp_announce_port", 3140),
             announce_interval_s=self.settings.get("announce_interval_s", 1),
             fw_version=self.fw_version,
             device_id=self.device_id,
