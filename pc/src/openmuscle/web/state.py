@@ -176,6 +176,15 @@ class ActiveCapture:
     cols: int
     window_s: float
     matcher: TemporalMatcher
+    # Hub-assigned role for the PRIMARY sensor source in schema-v2 captures (one
+    # of the lowercase wire tokens left/right/labeler; board #0091).
+    role: str = "left"
+    # All recorded bands as {device_id: role}. Single-source = one entry (the
+    # primary). Multi-band capture adds more (each a feature source tagged with
+    # its own role); every band's frames are matched against the one labeler and
+    # written as its own interleaved v2 row. Defaults to {} and is filled in by
+    # start_recording so existing constructions stay valid.
+    sensors: dict = field(default_factory=dict)
     sensor_jsonl: Optional[IO] = None
     label_jsonl: Optional[IO] = None
     # Path for a per-capture labels-schema sidecar. Written on the first
@@ -222,7 +231,8 @@ class AppState:
     def __init__(self, udp_port: int = 3141, captures_dir: Path | None = None,
                  model_path: Optional[str] = None,
                  hand_target: Optional[tuple] = None,
-                 enable_discovery: bool = True):
+                 enable_discovery: bool = True,
+                 discovery_announce_port: int = 3140):
         """
         Args:
             udp_port: incoming device telemetry port (FlexGrid + LASK5)
@@ -258,7 +268,9 @@ class AppState:
         # pc/bridge_subscriber.py. The listener hands announce beacons straight
         # to it; subscribed devices' sensor frames flow through the normal queue.
         self.discovery: Optional[DiscoveryManager] = (
-            DiscoveryManager(udp_port=udp_port, auto_subscribe=True)
+            DiscoveryManager(udp_port=udp_port,
+                             announce_port=discovery_announce_port,
+                             auto_subscribe=True)
             if enable_discovery else None)
         announce_handler = self.discovery.on_announce if self.discovery else None
         self.listener = UDPListener(port=udp_port, announce_handler=announce_handler)
@@ -304,9 +316,10 @@ class AppState:
             return
         self.listener.start()
         if self.discovery:
-            # Re-probe cached devices in the background so we recover sources
-            # whose beacon is silent (held by another hub) at startup.
-            self.discovery.recover_cache()
+            # Starts the dedicated announce-beacon listener (UDP 3140) and
+            # re-probes cached devices so we recover sources whose beacon is
+            # silent (held by another hub) at startup.
+            self.discovery.start()
         self._started = True
 
     def stop(self):
@@ -478,7 +491,9 @@ class AppState:
             return
 
         # --- Sensor stream: write JSONL sidecar always, paired CSV when matched ---
-        if pkt.device_id != rec.sensor_device_id:
+        # Multi-band: any recorded band (device_id in rec.sensors) produces rows,
+        # each tagged with its own role. Single-source = one entry in rec.sensors.
+        if pkt.device_id not in rec.sensors:
             return  # ignore packets from third-party devices during this recording
 
         mat = pkt.data.get("matrix")
@@ -531,7 +546,12 @@ class AppState:
         rows = len(mat[0])
         cols = len(mat)
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
-        rec.writer.write_row(pkt.receive_time, flat, label_values)
+        # Schema v2: one long row per sensor frame, tagged with the source's
+        # role + device_id and a hub-arrival epoch-ms timestamp. Features are
+        # already row-major (above); labels are the matched label vector.
+        ts_hub_ms = int(pkt.receive_time * 1000)
+        rec.writer.write_row_v2(ts_hub_ms, rec.sensors[pkt.device_id],
+                                pkt.device_id, flat, label_values)
 
     def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
         """Emit the per-capture labels-schema sidecar.
@@ -754,6 +774,9 @@ class AppState:
             r = self.recording
             rec = {
                 "filename": r.path.name,
+                "schema_version": "v2",
+                "role": r.role,
+                "sensors": dict(r.sensors),   # {device_id: role} for every band
                 "sensor_device_id": r.sensor_device_id,
                 "label_device_id": r.label_device_id,
                 "rows": r.row_count,
@@ -881,7 +904,9 @@ class AppState:
                         label_device_id: Optional[str] = None,
                         filename: Optional[str] = None,
                         window_ms: Optional[int] = None,
-                        label_count: int = 4) -> ActiveCapture:
+                        label_count: int = 4,
+                        role: str = "left",
+                        extra_sensors: Optional[list] = None) -> ActiveCapture:
         """Start a paired recording.
 
         Args:
@@ -904,6 +929,15 @@ class AppState:
         if self.recording is not None:
             raise RuntimeError("Already recording -- stop the current capture first")
 
+        # Normalize the role to the schema-v2 wire vocabulary (lowercase
+        # left/right/labeler, board #0091). A single sensor band is left/right;
+        # default + warn on anything unexpected so a bad token can't reach the CSV.
+        role = (role or "left").strip().lower()
+        if role not in ("left", "right", "labeler"):
+            self.log_buffer.warn("recording",
+                "unknown role '{}', defaulting to 'left' (valid: left/right/labeler)".format(role))
+            role = "left"
+
         # Auto-pick devices if not specified
         if not sensor_device_id:
             sensor_device_id = self._auto_pick_sensor()
@@ -924,6 +958,33 @@ class AppState:
             raise RuntimeError(
                 f"Sensor device '{sensor_device_id}' has not sent a matrix payload yet"
             )
+
+        # Build the recorded-bands map {device_id: role}. The primary sensor is
+        # the first band; extra_sensors adds more for a multi-band capture. Every
+        # band must be a seen flexgrid that has sent a matrix of the SAME dims as
+        # the primary (the v2 CSV has one fixed R{r}C{c} feature block, and the
+        # trainer's Left||Right concat assumes equal per-band feature width).
+        sensors_map = {sensor_device_id: role}
+        for entry in (extra_sensors or []):
+            if isinstance(entry, dict):
+                did, drole = entry.get("device_id"), entry.get("role", "left")
+            else:
+                did, drole = entry[0], (entry[1] if len(entry) > 1 else "left")
+            drole = (drole or "left").strip().lower()
+            if drole not in ("left", "right", "labeler"):
+                raise RuntimeError(f"Invalid role '{drole}' for band '{did}'")
+            if did in sensors_map:
+                raise RuntimeError(f"Band '{did}' listed twice")
+            band = self.devices.get(did)
+            if band is None:
+                raise RuntimeError(f"Extra sensor band '{did}' not seen yet")
+            if band.rows == 0 or band.cols == 0:
+                raise RuntimeError(f"Extra sensor band '{did}' has not sent a matrix yet")
+            if (band.rows, band.cols) != (sensor_dev.rows, sensor_dev.cols):
+                raise RuntimeError(
+                    f"Band '{did}' is {band.rows}x{band.cols} but the primary is "
+                    f"{sensor_dev.rows}x{sensor_dev.cols}; all bands must match dims")
+            sensors_map[did] = drole
 
         if label_device_id is not None and label_device_id not in self.devices:
             raise RuntimeError(f"Label device '{label_device_id}' not seen yet")
@@ -967,6 +1028,7 @@ class AppState:
             matrix_rows=sensor_dev.rows,
             matrix_cols=sensor_dev.cols,
             label_count=effective_label_count,
+            schema_version="v2",
         )
 
         # Open sidecars block-buffered (4 KB). Earlier we used buffering=1
@@ -995,6 +1057,8 @@ class AppState:
             cols=sensor_dev.cols,
             window_s=window_ms / 1000.0,
             matcher=matcher,
+            role=role,
+            sensors=sensors_map,
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
             labels_schema_path=labels_schema_sidecar,
@@ -1039,11 +1103,28 @@ class AppState:
             session_tag = "session:" + str(sid)
             seed_user["tags"] = (self.active_session.get("tags") or []) + [session_tag]
 
+        # Schema-v2 interop metadata at the TOP LEVEL, matching the phone
+        # meta.json keys (board #0097) so phone- and PC-captured sessions carry
+        # identical metadata. label_source uses the phone wire vocabulary
+        # (lask5 / quest / manual); roles maps device_id -> role token. mirror is
+        # False here (one-limb mirroring is a multi-band concern, PROTOCOL.md 8.5).
+        # The PC-specific provenance stays under .auto (which keeps its own
+        # label_source = the raw device_type).
+        label_source_wire = {"lask5": "lask5", "quest_hand": "quest"}.get(
+            label_device_type, label_device_type)
+        interop_meta = {
+            "schema": "v2",
+            "mirror": False,
+            "label_source": label_source_wire,
+            "roles": dict(sensors_map),   # {device_id: role} for every band
+            "created_ms": int(self.recording.started_at * 1000),
+        }
+
         # write_capture_meta routes 'auto' into the .auto sub-dict and
-        # user-fields (arm, subject, tags) into their top-level slots --
-        # so a single call seeds everything correctly.
+        # user-fields (arm, subject, tags) + the interop keys into their
+        # top-level slots -- so a single call seeds everything correctly.
         try:
-            self.write_capture_meta(name, {"auto": auto, **seed_user})
+            self.write_capture_meta(name, {"auto": auto, **interop_meta, **seed_user})
         except Exception as e:
             self.log_buffer.warn("meta", "could not seed meta for {}: {}".format(name, e))
 
@@ -1053,6 +1134,40 @@ class AppState:
             self.link_capture_to_session(self.active_session["id"], name)
 
         return self.recording
+
+    def start_multiband_recording(self, filename: Optional[str] = None,
+                                  window_ms: Optional[int] = None) -> ActiveCapture:
+        """Start a multi-band capture from the role tags set in the Sources panel.
+
+        Gathers every flexgrid tagged left/right as a band and the device tagged
+        labeler (if any, else auto-pick) as the label source, then delegates to
+        start_recording. The operator tags sources once in the Sources panel and
+        records with one click.
+        """
+        if not self.discovery:
+            raise RuntimeError("discovery is disabled; can't gather role tags")
+        snap = self.discovery.snapshot()
+        bands = [(d["device_id"], d.get("role"))
+                 for d in snap
+                 if d.get("device_type") == "flexgrid"
+                 and d.get("role") in ("left", "right")]
+        if not bands:
+            raise RuntimeError(
+                "no flexgrid bands tagged left/right; tag sources in the "
+                "Sources panel first")
+        # Deterministic order: left band(s) before right, so the trainer's
+        # Left||Right concat is stable regardless of discovery iteration order.
+        bands.sort(key=lambda b: (b[1] != "left", b[0]))
+        labeler = next((d["device_id"] for d in snap
+                        if d.get("role") == "labeler"), None)
+
+        primary_id, primary_role = bands[0]
+        extras = [{"device_id": did, "role": role} for did, role in bands[1:]]
+        return self.start_recording(
+            sensor_device_id=primary_id, role=primary_role,
+            extra_sensors=extras,
+            label_device_id=labeler,   # None -> start_recording auto-picks
+            filename=filename, window_ms=window_ms)
 
     def stop_recording(self) -> Optional[dict]:
         if self.recording is None:
@@ -1356,6 +1471,10 @@ class AppState:
     # user PUTs lands under `extras` so the JSON stays self-describing but
     # doesn't accidentally collide with reserved fields.
     META_USER_KEYS = ("arm", "subject", "gesture", "tags", "notes")
+    # Machine-set schema-v2 interop keys, written at the TOP LEVEL (not under
+    # extras) so they match the phone meta.json shape byte-for-key (board #0097):
+    # the trainer reads the same keys whether a session was captured on phone or PC.
+    META_INTEROP_KEYS = ("schema", "mirror", "label_source", "roles", "created_ms")
 
     def _meta_path(self, csv_name: str) -> Optional[Path]:
         """Sidecar path for a capture's metadata JSON. Whitelist-guarded so
@@ -1414,7 +1533,7 @@ class AppState:
             elif k == "created_at":
                 # Don't let clients rewrite this
                 continue
-            elif k in self.META_USER_KEYS:
+            elif k in self.META_USER_KEYS or k in self.META_INTEROP_KEYS:
                 existing[k] = v
             else:
                 # Land unknown keys under `extras` so user can attach arbitrary

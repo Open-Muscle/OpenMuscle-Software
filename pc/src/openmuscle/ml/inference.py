@@ -80,7 +80,10 @@ def run_inference(model_path: str, port: int = 3141):
                 stats["flex_cnt"] += 1
                 flat = pkt.flat_sensor_values()
                 if len(flat) == 64:
-                    sensor_mat[:] = np.array(flat).reshape(16, 4).T
+                    # flat is row-major (R{r}C{c}, r outer); reshape straight to
+                    # (rows, cols) = (4, 16) for display. No transpose now that
+                    # flat_sensor_values is canonical row-major.
+                    sensor_mat[:] = np.array(flat).reshape(4, 16)
 
                     matched = matcher.match(pkt)
                     label_vals = matched.data.get("values", [0, 0, 0, 0]) if matched else [0] * 4

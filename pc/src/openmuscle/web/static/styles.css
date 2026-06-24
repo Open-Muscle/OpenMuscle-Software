@@ -1362,3 +1362,16 @@ footer {
 }
 .discovery-probe-msg { font-size: 11px; color: var(--fg-faint, #8b96a8); margin-top: 4px; min-height: 14px; }
 .discovery-probe-msg.err { color: #f87171; }
+
+/* role selector per source in the Sources rail (multi-band capture tagging) */
+.src-role {
+    display: flex; align-items: center; gap: 6px; margin-top: 8px;
+    font-size: 11px; color: var(--fg-faint, #8b96a8);
+}
+.src-role-sel {
+    flex: 1; min-width: 0; padding: 3px 6px; font-size: 12px;
+    border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border, #23262d);
+    background: var(--panel, #14171d); color: var(--fg, #e6e9ef);
+}
+.src.subscribed .src-role-sel { border-color: rgba(52, 211, 153, 0.35); }

@@ -289,6 +289,34 @@ def test_probe_unreachable_returns_none(mgr):
 
 # ---- auto-subscribe path --------------------------------------------------
 
+def test_dedicated_announce_listener_discovers(tmp_path):
+    """The dedicated announce-beacon listener (port-split: 3140 in prod) binds
+    its own UDP socket and discovers a device from a real beacon datagram."""
+    # Grab a free UDP port for the listener.
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    m = DiscoveryManager(pc_host="127.0.0.1", announce_port=port,
+                         cache_path=str(tmp_path / "c.json"),
+                         auto_subscribe=False)
+    m.start()
+    try:
+        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        beacon = json.dumps(_announce(device_id="flexgrid-bcn")).encode("utf-8")
+        deadline = time.time() + 3.0
+        found = False
+        while time.time() < deadline and not found:
+            tx.sendto(beacon, ("127.0.0.1", port))
+            time.sleep(0.1)
+            found = any(d["device_id"] == "flexgrid-bcn" for d in m.snapshot())
+        tx.close()
+        assert found, "announce listener did not discover the beaconed device"
+    finally:
+        m.stop()
+
+
 def test_auto_subscribe_on_announce(server, tmp_path):
     m = DiscoveryManager(pc_host="127.0.0.1", udp_port=3141,
                          cache_path=str(tmp_path / "c.json"),
@@ -305,3 +333,30 @@ def test_auto_subscribe_on_announce(server, tmp_path):
         assert ("127.0.0.1", 3141) in server.subscribers
     finally:
         m.stop()
+
+
+# ---- role tagging (multi-band capture) ------------------------------------
+
+def test_set_role(mgr):
+    mgr.on_announce(_announce(device_id="flexgrid-r"), "10.0.0.5")
+    assert mgr.set_role("flexgrid-r", "left") is True
+    assert mgr.snapshot()[0]["role"] == "left"
+    assert mgr.set_role("flexgrid-r", "Right") is True       # normalized to lowercase
+    assert mgr.snapshot()[0]["role"] == "right"
+    assert mgr.set_role("flexgrid-r", "") is True            # clear the tag
+    assert mgr.snapshot()[0]["role"] == ""
+    assert mgr.set_role("unknown-dev", "left") is False      # unknown device
+    assert mgr.set_role("flexgrid-r", "bogus") is False      # invalid role token
+
+
+def test_role_persists_in_cache(tmp_path):
+    path = str(tmp_path / "c.json")
+    m1 = DiscoveryManager(pc_host="127.0.0.1", cache_path=path, auto_subscribe=False)
+    m1.on_announce(_announce(device_id="flexgrid-p"), "10.0.0.6")
+    m1.set_role("flexgrid-p", "right")
+    m1.stop()
+    m2 = DiscoveryManager(pc_host="127.0.0.1", cache_path=path, auto_subscribe=False)
+    cached = m2._load_cache()
+    entry = next(e for e in cached if e["device_id"] == "flexgrid-p")
+    assert entry["role"] == "right"
+    m2.stop()

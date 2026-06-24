@@ -40,11 +40,15 @@ class TestNewProtocol:
         assert result.metadata["battery"] == 85
 
     def test_flat_sensor_values_matrix(self):
+        # Matrix is column-major [cols][rows]: 3 cols x 2 rows. flat_sensor_values
+        # flattens ROW-major (rows outer, cols inner) to match the canonical CSV /
+        # model convention, so the result is [r0c0,r0c1,r0c2, r1c0,r1c1,r1c2] =
+        # [matrix[0][0],matrix[1][0],matrix[2][0], matrix[0][1],matrix[1][1],matrix[2][1]].
         pkt = OpenMusclePacket(
             version="1.0", device_type="flexgrid", device_id="fg",
             timestamp_ms=0, data={"matrix": [[1, 2], [3, 4], [5, 6]]},
         )
-        assert pkt.flat_sensor_values() == [1, 2, 3, 4, 5, 6]
+        assert pkt.flat_sensor_values() == [1, 3, 5, 2, 4, 6]
 
     def test_flat_sensor_values_list(self):
         pkt = OpenMusclePacket(

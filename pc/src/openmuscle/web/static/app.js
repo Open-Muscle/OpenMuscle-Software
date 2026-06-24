@@ -7,6 +7,7 @@ const canvas      = document.getElementById('heatmap');
 const ctx         = canvas.getContext('2d');
 const heatmapMeta = document.getElementById('heatmap-meta');
 const recordBtn   = document.getElementById('record-btn');
+const recordMultibandBtn = document.getElementById('record-multiband-btn');
 const recordStatus= document.getElementById('record-status');
 const captureName = document.getElementById('capture-name');
 const capturesBody= document.getElementById('captures-body');
@@ -208,9 +209,39 @@ function renderDiscovery(discovery) {
                     <span class="age">${age}</span>
                 </div>
                 ${errLine}
+                <label class="src-role">role
+                    <select class="src-role-sel" data-id="${escapeHtml(d.device_id)}">
+                        <option value=""${d.role ? '' : ' selected'}>untagged</option>
+                        <option value="left"${d.role === 'left' ? ' selected' : ''}>left</option>
+                        <option value="right"${d.role === 'right' ? ' selected' : ''}>right</option>
+                        <option value="labeler"${d.role === 'labeler' ? ' selected' : ''}>labeler</option>
+                    </select>
+                </label>
                 <button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(d.device_id)}">${btnTxt}</button>
             </li>`;
     }).join('');
+
+    list.querySelectorAll('.src-role-sel').forEach(sel => {
+        sel.onchange = async () => {
+            const id = sel.dataset.id;
+            const role = sel.value;
+            try {
+                const res = await fetch('/api/discovery/role', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: id, role }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    setProbeMsg(err.detail || 'set role failed', true);
+                } else {
+                    setProbeMsg(`${id} → ${role || 'untagged'}`, false);
+                }
+            } catch (err) {
+                setProbeMsg(String(err), true);
+            }
+        };
+    });
 
     list.querySelectorAll('.src-btn').forEach(btn => {
         btn.onclick = async (e) => {
@@ -898,6 +929,7 @@ function renderRecording() {
     if (recordingState) {
         recordBtn.textContent = '■ Stop recording';
         recordBtn.classList.add('recording');
+        if (recordMultibandBtn) recordMultibandBtn.disabled = true;
 
         const r = recordingState;
         const rate = (r.match_rate ?? 0);
@@ -906,12 +938,17 @@ function renderRecording() {
         if (rate < 0.5)      rateCls = 'match-rate-bad';
         else if (rate < 0.9) rateCls = 'match-rate-warn';
 
-        const sensor = r.sensor_device_id || '?';
         const label  = r.label_device_id  || '(none)';
+        // Multi-band: show every tagged band; single-source: just the sensor.
+        const sensorsMap = r.sensors || {};
+        const sensorLine = Object.keys(sensorsMap).length > 1
+            ? 'bands: <b>' + Object.entries(sensorsMap)
+                .map(([id, role]) => `${escapeHtml(role)}:${escapeHtml(id)}`).join(', ') + '</b>'
+            : `sensor: <b>${escapeHtml(r.sensor_device_id || '?')}</b>`;
 
         recordStatus.innerHTML = `
             <div>${escapeHtml(r.filename)} · ${r.rows} paired rows · ${r.duration_s}s · win ${r.window_ms ?? 100}ms</div>
-            <div>sensor: <b>${escapeHtml(sensor)}</b> &nbsp; label: <b>${escapeHtml(label)}</b></div>
+            <div>${sensorLine} &nbsp; label: <b>${escapeHtml(label)}</b></div>
             <div>matched: ${r.matched ?? 0} / ${r.sensor_frames_seen ?? 0}
                  (<span class="${rateCls}">${ratePct}%</span>)
                  · unpaired sensor: ${r.unpaired_sensor ?? 0}
@@ -920,6 +957,7 @@ function renderRecording() {
     } else {
         recordBtn.textContent = '● Start recording';
         recordBtn.classList.remove('recording');
+        if (recordMultibandBtn) recordMultibandBtn.disabled = false;
         recordStatus.textContent = '';
     }
 }
@@ -981,6 +1019,26 @@ recordBtn.onclick = async () => {
         alert(`Error: ${e.message}`);
     }
 };
+
+// Multi-band: record every flexgrid tagged left/right in the Sources panel
+// plus the labeler. Start-only; use the main Stop button to stop.
+if (recordMultibandBtn) {
+    recordMultibandBtn.onclick = async () => {
+        if (recordingState) return;
+        try {
+            const body = { filename: captureName.value.trim() || null };
+            const r = await fetch('/api/recording/multiband', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!r.ok) throw new Error(await readError(r));
+            captureName.value = '';
+        } catch (e) {
+            alert(`Error: ${e.message}`);
+        }
+    };
+}
 
 // ---------- captures list ----------
 

@@ -32,7 +32,11 @@ def receive(port, save_dir):
 @main.command()
 @click.option("--host", default="0.0.0.0", help="HTTP bind address")
 @click.option("--port", default=8000, help="HTTP port")
-@click.option("--udp-port", default=3141, help="UDP port to listen on for device telemetry")
+@click.option("--udp-port", default=3141, help="UDP port for sensor/label data frames")
+@click.option("--announce-port", default=3140,
+              help="UDP port for V4 discovery announce beacons (PROTOCOL.md v1.0 "
+                   "splits beacons onto 3140; 3141 is data-only). The shared-3141 "
+                   "type-tap stays as a fallback.")
 @click.option("--captures-dir", default=None,
               help="Directory to save captures (default: data/raw/merged)")
 @click.option("--model", "model_path", default=None, type=click.Path(),
@@ -50,7 +54,7 @@ def receive(port, save_dir):
                    "on the headset (Settings -> Security -> Install a certificate).")
 @click.option("--ssl-keyfile", default=None, type=click.Path(exists=True, dir_okay=False),
               help="Path to TLS private key (PEM). Pair with --ssl-certfile.")
-def web(host, port, udp_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
+def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
     # mkcert produces a cert AND key; we need both or neither.
@@ -77,7 +81,8 @@ def web(host, port, udp_port, captures_dir, model_path, hand, ssl_certfile, ssl_
         click.echo(f"Forwarding inference to robot hand at {hand_target[0]}:{hand_target[1]}")
     serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
           model_path=model_path, hand_target=hand_target,
-          ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
+          ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
+          announce_port=announce_port)
 
 
 @main.command()
@@ -85,49 +90,76 @@ def web(host, port, udp_port, captures_dir, model_path, hand, ssl_certfile, ssl_
 @click.option("--output", "-o", required=True, help="Output CSV path")
 @click.option("--duration", "-d", default=0, type=int,
               help="Recording duration in seconds (0=until Ctrl+C)")
-def record(port, output, duration):
-    """Record paired sensor + label data to CSV."""
+@click.option("--role", default="left",
+              help="schema-v2 role tag for the sensor band: left / right / labeler")
+def record(port, output, duration, role):
+    """Record paired sensor + label data to a schema-v2 CSV.
+
+    Writes the v2 layout (ts_hub_ms, role, device_id, R{r}C{c}.., label_*),
+    matching the web recorder + the byte golden. Mirrors openmuscle web so every
+    non-multi-band capture path produces one CSV format.
+    """
     import time
     from openmuscle.receiver.udp_listener import UDPListener
     from openmuscle.receiver.matcher import TemporalMatcher
     from openmuscle.data.storage import CaptureWriter
 
+    role = (role or "left").strip().lower()
+    if role not in ("left", "right", "labeler"):
+        raise click.BadParameter("--role must be left, right, or labeler")
+
     listener = UDPListener(port=port)
     listener.start()
     matcher = TemporalMatcher(window_s=0.100)
 
-    with CaptureWriter(output_path=output) as writer:
-        print(f"Recording to {output} (Ctrl+C to stop)")
-        start = time.time()
-        last_report = start
+    # The writer is created lazily on the first FlexGrid frame so its header uses
+    # the device's REAL matrix dims (a V4 band is 15x4, not the 16x4 default --
+    # creating it up front produced a ragged header on V4) and the v2 row layout.
+    writer = None
+    print(f"Recording to {output} (role={role}, Ctrl+C to stop)")
+    start = time.time()
+    last_report = start
 
-        try:
-            while True:
-                if duration > 0 and time.time() - start >= duration:
-                    break
+    try:
+        while True:
+            if duration > 0 and time.time() - start >= duration:
+                break
 
-                if not listener.packet_queue.empty():
-                    pkt = listener.packet_queue.get()
+            if not listener.packet_queue.empty():
+                pkt = listener.packet_queue.get()
 
-                    if pkt.device_type == "lask5":
-                        matcher.add_label(pkt)
-                    elif pkt.device_type == "flexgrid":
-                        flat = pkt.flat_sensor_values()
-                        matched = matcher.match(pkt)
-                        labels = matched.data.get("values", [0] * 4) if matched else [0] * 4
-                        writer.write_row(pkt.receive_time, flat, labels[:4])
+                if pkt.device_type == "lask5":
+                    matcher.add_label(pkt)
+                elif pkt.device_type == "flexgrid":
+                    matrix = pkt.data.get("matrix")
+                    if not matrix:
+                        continue
+                    if writer is None:
+                        writer = CaptureWriter(
+                            output_path=output,
+                            matrix_rows=len(matrix[0]), matrix_cols=len(matrix),
+                            label_count=4, schema_version="v2")
+                    flat = pkt.flat_sensor_values()
+                    matched = matcher.match(pkt)
+                    labels = matched.data.get("values", [0] * 4) if matched else [0] * 4
+                    writer.write_row_v2(int(pkt.receive_time * 1000), role,
+                                        pkt.device_id, flat, labels[:4])
 
-                if time.time() - last_report >= 1:
-                    print(f"Rows: {writer.row_count}  "
-                          f"Unpaired: {matcher.unpaired_count}")
-                    last_report = time.time()
+            if time.time() - last_report >= 1:
+                rc = writer.row_count if writer else 0
+                print(f"Rows: {rc}  Unpaired: {matcher.unpaired_count}")
+                last_report = time.time()
 
-                time.sleep(0.001)
-        except KeyboardInterrupt:
-            pass
+            time.sleep(0.001)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        listener.stop()
+        if writer is not None:
+            writer.close()
 
-    listener.stop()
-    print(f"\nSaved {writer.row_count} rows to {output}")
+    rc = writer.row_count if writer else 0
+    print(f"\nSaved {rc} rows to {output}")
 
 
 @main.command()

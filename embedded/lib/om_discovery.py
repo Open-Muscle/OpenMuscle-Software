@@ -5,9 +5,10 @@
 #      which some MicroPython builds publish as an mDNS A record). The
 #      `_openmuscle._udp` service type with TXT records is not registered
 #      via this path; the UDP broadcast beacon below covers the gap.
-#   2. UDP broadcast beacon to 255.255.255.255:beacon_port (default 3141)
-#      carrying the announce JSON. Reliable; works across consumer routers
-#      that disable mDNS / multicast.
+#   2. UDP broadcast beacon to 255.255.255.255:beacon_port (default 3140
+#      in PROTOCOL.md v1.0; was 3141 pre-spec, hubs dual-listen during the
+#      migration window per section 9.3) carrying the announce JSON.
+#      Reliable; works across consumer routers that disable mDNS / multicast.
 #
 # Cadence: ~1 Hz while no hub is subscribed. Once subscribers.has_any()
 # returns True the beacon stops to keep the channel quiet, and resumes
@@ -24,7 +25,7 @@ class Discovery:
     def __init__(self, settings, subscribers, sta,
                  device_type, services, caps,
                  extra_fields=None,
-                 beacon_port=3141, announce_interval_s=1,
+                 beacon_port=3140, announce_interval_s=1,
                  fw_version=None,
                  device_id=None,
                  mdns_service="_openmuscle._udp"):
@@ -38,7 +39,8 @@ class Discovery:
         caps:         list of capability strings, e.g. ["label","status","cmd"]
         extra_fields: optional dict merged into the announce payload
                       (e.g. {"matrix": [15,4]} for FlexGrid)
-        beacon_port:  UDP port to broadcast announces to (default 3141)
+        beacon_port:  UDP port to broadcast announces to (default 3140 per
+                      PROTOCOL.md v1.0; data frames stay on 3141)
         device_id:    optional override; defaults to settings["device_id"]
         fw_version:   optional override; defaults to settings.get("fw_version","unknown")
         mdns_service: mDNS service type string for documentation

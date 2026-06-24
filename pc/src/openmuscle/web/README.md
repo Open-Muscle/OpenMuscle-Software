@@ -105,11 +105,14 @@ A single recording produces **three files** under `--captures-dir`:
 
 | File | Format | Purpose |
 |---|---|---|
-| `<name>.csv` | row-major CSV: `timestamp, R0C0..R3Cn, label_0..label_3` | The trainable file. One row per sensor frame **that found a label within the temporal window**. Unpaired sensor frames are dropped. |
+| `<name>.csv` | schema-v2 row-major CSV: `ts_hub_ms, role, device_id, R0C0..R3Cn, label_0..label_M` | The trainable file. One row per sensor frame **that found a label within the temporal window**. Unpaired sensor frames are dropped. |
 | `<name>.sensor.jsonl` | one packet per line: `{t, device_id, device_type, data}` | Raw sensor stream. Every received frame, regardless of pairing. |
 | `<name>.label.jsonl`  | same shape | Raw label stream. Every received label packet. |
+| `<name>.meta.json` | recording context + interop keys | `schema/mirror/label_source/roles/created_ms` at the top level (matches the phone sidecar) plus PC-specific provenance under `.auto`. |
 
 The two JSONL sidecars exist so you can **re-pair offline with a different window** without re-capturing. A 5-line Python script using `TemporalMatcher(window_s=0.05)` over the two JSONL files reproduces the CSV with whatever temporal tolerance you want. Cheap insurance (~10-50 KB/s extra disk at typical rates).
+
+**Schema v2.** The capture CSV is the multi-device schema v2 (the canonical spec is `OpenMuscle-Connect/docs/CSV-SCHEMA-V2.md`): each row is one source frame, tagged with `ts_hub_ms` (hub arrival, epoch ms), the hub-assigned `role` (lowercase `left`/`right`/`labeler`), and the source `device_id`, followed by row-major `R{r}C{c}` features and the matched `label_*` values. A single-band capture is the long format with one role on every row; multiple bands interleave by arrival time, and the trainer pivots them into the wide Left||Right matrix (see `data/dataset.py pivot_bilateral`). Both `openmuscle web` and the CLI `openmuscle record` write this exact format.
 
 ### Pairing algorithm
 

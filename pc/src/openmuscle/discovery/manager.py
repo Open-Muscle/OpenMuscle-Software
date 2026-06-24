@@ -24,12 +24,19 @@ coordination board (vrpc #0008).
 """
 
 import json
+import logging
 import os
 import socket
 import threading
 import time
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_UDP_PORT = 3141          # where we ask sources to unicast sensor frames
+# Announce/discovery beacon port. PROTOCOL.md v1.0 (frozen 2026-06-23) splits the
+# ports: beacons move to 3140, and 3141 becomes data-only. We bind a dedicated
+# listener here; the shared-3141 type=="announce" tap remains a fallback only.
+DEFAULT_ANNOUNCE_PORT = 3140
 DEFAULT_CMD_PORTS = (8001, 8002)  # flexgrid cmd, lask5 cmd (probe order)
 HEARTBEAT_S = 1.0                # firmware drops a subscriber after ~5 s silence
 TCP_TIMEOUT_S = 3.0
@@ -72,11 +79,11 @@ class DiscoveredDevice:
 
     __slots__ = ("device_id", "device_type", "ip", "cmd_port", "sensor_port",
                  "fw", "caps", "matrix", "source", "last_seen",
-                 "subscribed", "sub_error")
+                 "subscribed", "sub_error", "role")
 
     def __init__(self, device_id, device_type, ip, cmd_port,
                  sensor_port=DEFAULT_UDP_PORT, fw="", caps=None, matrix=None,
-                 source="beacon", last_seen=0.0):
+                 source="beacon", last_seen=0.0, role=""):
         self.device_id = device_id
         self.device_type = device_type
         self.ip = ip
@@ -89,15 +96,21 @@ class DiscoveredDevice:
         self.last_seen = last_seen
         self.subscribed = False
         self.sub_error = ""
+        # Hub-assigned role for capture (left / right / labeler), or "" if
+        # untagged. Persisted per device_id so it survives restarts + churn.
+        self.role = role
 
     def to_cache(self):
-        """Minimal persisted form (enough to re-probe next run)."""
+        """Persisted form. PROTOCOL.md v1.0 S5.3 requires the cache hold at
+        minimum the last known IP, cmd port, and last-contact timestamp."""
         return {
             "device_id": self.device_id,
             "device_type": self.device_type,
             "ip": self.ip,
             "cmd_port": self.cmd_port,
             "sensor_port": self.sensor_port,
+            "last_contact": self.last_seen,
+            "role": self.role,
         }
 
     def to_snapshot(self, now=None):
@@ -115,6 +128,7 @@ class DiscoveredDevice:
             "age_s": round(now - self.last_seen, 2) if self.last_seen else None,
             "subscribed": self.subscribed,
             "sub_error": self.sub_error,
+            "role": self.role,
         }
 
 
@@ -248,14 +262,20 @@ class DiscoveryManager:
     """
 
     def __init__(self, pc_host=None, udp_port=DEFAULT_UDP_PORT,
+                 announce_port=DEFAULT_ANNOUNCE_PORT,
                  cache_path=None, auto_subscribe=True):
         self.pc_host = pc_host or default_lan_ip()
-        self.udp_port = udp_port
+        self.udp_port = udp_port              # data frames land here (3141)
+        self.announce_port = announce_port    # dedicated beacon port (3140)
         self.cache_path = cache_path if cache_path is not None else default_cache_path()
         self.auto_subscribe = auto_subscribe
         self._devices = {}     # device_id -> DiscoveredDevice
         self._keepers = {}     # device_id -> _SubscriptionKeeper
         self._lock = threading.Lock()
+        # Dedicated announce-beacon listener (started in start()).
+        self._announce_thread = None
+        self._announce_stop = threading.Event()
+        self._announce_started = False
 
     # ---- discovery inputs -------------------------------------------------
 
@@ -327,14 +347,68 @@ class DiscoveryManager:
             for entry in cached:
                 ip = entry.get("ip")
                 port = entry.get("cmd_port")
+                role = entry.get("role", "")
                 if ip:
-                    self.probe(ip, port)
+                    dev = self.probe(ip, port)
+                    # Restore the hub-assigned role onto the recovered device
+                    # (probe builds a fresh DiscoveredDevice with role="").
+                    if dev is not None and role:
+                        with self._lock:
+                            dev.role = role
 
         if background:
             threading.Thread(target=_work, name="om-cache-recover",
                              daemon=True).start()
         else:
             _work()
+
+    # ---- lifecycle --------------------------------------------------------
+
+    def start(self):
+        """Start the dedicated announce-beacon listener and recover cached
+        devices. Idempotent. The dedicated port (3140 per PROTOCOL.md v1.0) is
+        the primary discovery path; the shared-3141 type-tap (wired via the data
+        listener's announce_handler) stays a fallback only."""
+        if not self._announce_started:
+            self._announce_started = True
+            self._announce_stop.clear()
+            self._announce_thread = threading.Thread(
+                target=self._announce_listen, name="om-announce-listener",
+                daemon=True)
+            self._announce_thread.start()
+        self.recover_cache()
+
+    def _announce_listen(self):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(1.0)
+            sock.bind(("0.0.0.0", self.announce_port))
+        except OSError as e:
+            # Port busy / unavailable: fall back to the shared-3141 type-tap.
+            logger.warning(
+                "discovery: announce listener could not bind UDP %d (%s); "
+                "relying on the 3141 fallback tap", self.announce_port, e)
+            self._announce_started = False
+            return
+        logger.info("discovery: announce listener on UDP %d", self.announce_port)
+        while not self._announce_stop.is_set():
+            try:
+                data, addr = sock.recvfrom(8192)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                obj = json.loads(data.decode("utf-8", "replace"))
+            except Exception:
+                continue
+            if isinstance(obj, dict) and obj.get("type") == "announce":
+                try:
+                    self.on_announce(obj, addr[0])
+                except Exception as e:
+                    logger.warning("discovery: on_announce failed: %s", e)
+        sock.close()
 
     # ---- subscription control --------------------------------------------
 
@@ -364,6 +438,24 @@ class DiscoveryManager:
             return True
         return False
 
+    def set_role(self, device_id, role):
+        """Assign a capture role to a known device, persisted per device_id.
+
+        role is one of the lowercase wire tokens left/right/labeler, or "" to
+        clear the tag. Returns True if the device is known. Hub-local state
+        (PROTOCOL.md 8.1: roles are assigned by the hub, never on-wire).
+        """
+        role = (role or "").strip().lower()
+        if role not in ("", "left", "right", "labeler"):
+            return False
+        with self._lock:
+            dev = self._devices.get(device_id)
+            if dev is None:
+                return False
+            dev.role = role
+        self._save_cache()
+        return True
+
     def snapshot(self):
         """List of device dicts for the web UI / API."""
         now = time.time()
@@ -371,6 +463,8 @@ class DiscoveryManager:
             return [d.to_snapshot(now) for d in self._devices.values()]
 
     def stop(self):
+        self._announce_stop.set()
+        self._announce_started = False
         with self._lock:
             keepers = list(self._keepers.values())
             self._keepers.clear()

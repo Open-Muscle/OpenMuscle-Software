@@ -71,12 +71,14 @@ def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
 
 def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                model_path: Optional[str] = None,
-               hand_target: Optional[tuple] = None) -> FastAPI:
+               hand_target: Optional[tuple] = None,
+               announce_port: int = 3140) -> FastAPI:
     state = AppState(
         udp_port=udp_port,
         captures_dir=captures_dir,
         model_path=model_path,
         hand_target=hand_target,
+        discovery_announce_port=announce_port,
     )
 
     @asynccontextmanager
@@ -232,6 +234,24 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         removed = state.discovery.unsubscribe(body.device_id)
         return {"device_id": body.device_id, "unsubscribed": bool(removed)}
 
+    class RoleBody(BaseModel):
+        device_id: str
+        role: str = ""      # left / right / labeler, or "" to clear
+
+    @app.post("/api/discovery/role")
+    async def discovery_set_role(body: RoleBody):
+        """Tag a discovered device with a capture role (hub-local, per device_id).
+        Drives multi-band capture: tag two bands left/right + the labeler."""
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        ok = state.discovery.set_role(body.device_id, body.role)
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not set role for {body.device_id} "
+                       f"(unknown device, or invalid role)")
+        return {"device_id": body.device_id, "role": (body.role or "").strip().lower()}
+
     # ----- REST: recording -----
 
     class StartRecordingBody(BaseModel):
@@ -243,6 +263,12 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         filename: Optional[str] = None
         # If None, AppState picks per-device-type (lask5=100, quest_hand=175).
         window_ms: Optional[int] = None
+        # schema-v2 role tag for the sensor band: left / right / labeler
+        # (lowercase wire tokens). Defaults to left for a single-source capture.
+        role: Optional[str] = "left"
+        # Additional bands for a multi-band capture: [{"device_id":..,"role":..}].
+        # Each must be a seen flexgrid of the same matrix dims as the primary.
+        extra_sensors: Optional[list] = None
 
     @app.post("/api/recording")
     async def start_recording(body: StartRecordingBody):
@@ -252,6 +278,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 label_device_id=body.label_device_id,
                 filename=body.filename,
                 window_ms=body.window_ms,
+                role=body.role or "left",
+                extra_sensors=body.extra_sensors,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -261,6 +289,32 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         return {
             "filename": rec.path.name,
             "sensor_device_id": rec.sensor_device_id,
+            "label_device_id": rec.label_device_id,
+            "sensors": dict(rec.sensors),
+            "window_ms": int(rec.window_s * 1000),
+            "shape": [rec.rows, rec.cols],
+        }
+
+    class MultibandBody(BaseModel):
+        filename: Optional[str] = None
+        window_ms: Optional[int] = None
+
+    @app.post("/api/recording/multiband")
+    async def start_multiband(body: MultibandBody):
+        """Start a multi-band capture from the Sources-panel role tags: every
+        flexgrid tagged left/right is a band, the labeler-tagged device is the
+        label source (else auto-picked)."""
+        try:
+            rec = state.start_multiband_recording(
+                filename=body.filename, window_ms=body.window_ms)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to create capture file: {e}")
+        return {
+            "filename": rec.path.name,
+            "sensors": dict(rec.sensors),
             "label_device_id": rec.label_device_id,
             "window_ms": int(rec.window_s * 1000),
             "shape": [rec.rows, rec.cols],
@@ -282,6 +336,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "recording": True,
             "filename": r.path.name,
             "sensor_device_id": r.sensor_device_id,
+            "sensors": dict(r.sensors),
             "label_device_id": r.label_device_id,
             "window_ms": int(r.window_s * 1000),
             "rows": r.row_count,
@@ -605,7 +660,8 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           model_path: Optional[str] = None,
           hand_target: Optional[tuple] = None,
           ssl_certfile: Optional[str] = None,
-          ssl_keyfile: Optional[str] = None):
+          ssl_keyfile: Optional[str] = None,
+          announce_port: int = 3140):
     """Run the web UI server (blocks).
 
     Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
@@ -619,6 +675,7 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         captures_dir=captures_dir,
         model_path=model_path,
         hand_target=hand_target,
+        announce_port=announce_port,
     )
     uvicorn.run(app, host=host, port=port, log_level="info",
                 ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)

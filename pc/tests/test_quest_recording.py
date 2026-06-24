@@ -103,8 +103,13 @@ class TestQuestRecordingRectangular:
             widths = {len(r) for r in rows}
             assert len(widths) == 1, f"ragged CSV! column counts seen: {widths}"
 
-            # Width = 1 timestamp + 60 sensor + 175 label (25 joints * 7).
-            assert len(header) == 1 + 60 + 175, len(header)
+            # Schema v2 width = 3 lead (ts_hub_ms, role, device_id) + 60 sensor
+            # + 175 label (25 joints * 7).
+            assert len(header) == 3 + 60 + 175, len(header)
+            assert header[:3] == ["ts_hub_ms", "role", "device_id"], header[:3]
+            # Every data row carries the lowercase role token + the sensor id.
+            assert data_rows[0][1] == "left"
+            assert data_rows[0][2] == "fg-test"
 
             # The 20-joint frame should have tripped exactly one width mismatch.
             assert result["label_width_mismatch"] == 1, result["label_width_mismatch"]
@@ -205,3 +210,106 @@ class TestRecordingDefaults:
             meta = s.read_capture_meta("lm.csv")
             assert meta["auto"]["label_source"] == "lask5"
             assert meta["auto"]["window_ms"] == 100
+
+    def test_v2_interop_meta_keys_top_level(self):
+        # Phone interop keys (board #0097) live at the TOP LEVEL, matching the
+        # phone meta.json shape, not nested under auto/extras.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())     # device_id "fg-test"
+            s._handle_packet(_lask5_packet())
+            s.start_recording(filename="im.csv", role="right")
+            s.stop_recording()
+            meta = s.read_capture_meta("im.csv")
+            assert meta["schema"] == "v2"
+            assert meta["mirror"] is False
+            assert meta["label_source"] == "lask5"
+            assert meta["roles"] == {"fg-test": "right"}
+            assert isinstance(meta["created_ms"], int)
+            # Not dumped under extras.
+            assert "schema" not in meta.get("extras", {})
+
+    def test_v2_interop_label_source_quest_vocab(self):
+        # PC internal device_type is quest_hand; the interop label_source uses
+        # the phone wire vocabulary (quest). The raw value stays under .auto.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s.ingest_quest_packet(_quest_payload(25))
+            s.start_recording(filename="iq.csv")
+            s.stop_recording()
+            meta = s.read_capture_meta("iq.csv")
+            assert meta["label_source"] == "quest"
+            assert meta["auto"]["label_source"] == "quest_hand"
+
+    def test_multiband_interleaved_v2_rows_and_pivot(self):
+        # Two bands (left + right) + a labeler -> one interleaved v2 CSV, each
+        # row tagged with its band's role/device_id; the trainer then pivots it
+        # to the 120-wide Left||Right matrix. The PC half of P4 end-to-end.
+        from openmuscle.data.dataset import load_training_data
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+            s._handle_packet(_flexgrid_packet(device_id="fg-right"))
+            s._handle_packet(_lask5_packet(device_id="lask5-test"))
+            s.start_recording(
+                filename="mb.csv",
+                sensor_device_id="fg-left", role="left",
+                extra_sensors=[{"device_id": "fg-right", "role": "right"}],
+                label_device_id="lask5-test",
+            )
+            for _ in range(3):
+                t = time.time()
+                s._handle_packet(_lask5_packet(device_id="lask5-test", recv_time=t))
+                s._handle_packet(_flexgrid_packet(device_id="fg-left", recv_time=t + 0.001))
+                s._handle_packet(_flexgrid_packet(device_id="fg-right", recv_time=t + 0.002))
+                time.sleep(0.005)
+            s.stop_recording()
+
+            rows = [r for r in csv.reader(open(Path(d) / "mb.csv"))]
+            assert rows[0][:3] == ["ts_hub_ms", "role", "device_id"]
+            data = rows[1:]
+            assert {r[1] for r in data} == {"left", "right"}
+            assert {r[2] for r in data} == {"fg-left", "fg-right"}
+            # meta roles map carries both bands
+            meta = s.read_capture_meta("mb.csv")
+            assert meta["roles"] == {"fg-left": "left", "fg-right": "right"}
+            # The long multi-role CSV pivots to the wide 120-col matrix (15x4 = 60/side).
+            X, y = load_training_data(str(Path(d) / "mb.csv"))
+            assert X.shape[1] == 120
+            assert X.shape[0] >= 1
+
+    def test_start_multiband_from_role_tags(self):
+        # The record FLOW: tag bands + labeler in discovery (Sources-panel
+        # role-UX), then start_multiband_recording gathers them automatically.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.discovery.auto_subscribe = False               # no TCP attempts
+            s.discovery.cache_path = str(Path(d) / "disc.json")  # isolate the cache
+            s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+            s._handle_packet(_flexgrid_packet(device_id="fg-right"))
+            s._handle_packet(_lask5_packet(device_id="lask5-test"))
+            for did, dev in [("fg-left", "flexgrid"), ("fg-right", "flexgrid"),
+                             ("lask5-test", "lask5")]:
+                s.discovery.on_announce(
+                    {"v": "1.0", "type": "announce", "id": did, "role": "source",
+                     "dev": dev, "caps": [], "matrix": [15, 4],
+                     "services": {"cmd": 8001}}, "127.0.0.1")
+            s.discovery.set_role("fg-left", "left")
+            s.discovery.set_role("fg-right", "right")
+            s.discovery.set_role("lask5-test", "labeler")
+
+            rec = s.start_multiband_recording(filename="mbflow.csv")
+            s.stop_recording()
+            assert rec.sensors == {"fg-left": "left", "fg-right": "right"}
+            assert rec.label_device_id == "lask5-test"
+
+    def test_start_multiband_requires_tagged_bands(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.discovery.auto_subscribe = False
+            s.discovery.cache_path = str(Path(d) / "disc.json")
+            s._handle_packet(_flexgrid_packet(device_id="fg-untagged"))
+            # No role tags set -> refuse rather than guess.
+            with __import__("pytest").raises(RuntimeError):
+                s.start_multiband_recording(filename="x.csv")
