@@ -208,9 +208,39 @@ function renderDiscovery(discovery) {
                     <span class="age">${age}</span>
                 </div>
                 ${errLine}
+                <label class="src-role">role
+                    <select class="src-role-sel" data-id="${escapeHtml(d.device_id)}">
+                        <option value=""${d.role ? '' : ' selected'}>untagged</option>
+                        <option value="left"${d.role === 'left' ? ' selected' : ''}>left</option>
+                        <option value="right"${d.role === 'right' ? ' selected' : ''}>right</option>
+                        <option value="labeler"${d.role === 'labeler' ? ' selected' : ''}>labeler</option>
+                    </select>
+                </label>
                 <button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(d.device_id)}">${btnTxt}</button>
             </li>`;
     }).join('');
+
+    list.querySelectorAll('.src-role-sel').forEach(sel => {
+        sel.onchange = async () => {
+            const id = sel.dataset.id;
+            const role = sel.value;
+            try {
+                const res = await fetch('/api/discovery/role', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: id, role }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    setProbeMsg(err.detail || 'set role failed', true);
+                } else {
+                    setProbeMsg(`${id} → ${role || 'untagged'}`, false);
+                }
+            } catch (err) {
+                setProbeMsg(String(err), true);
+            }
+        };
+    });
 
     list.querySelectorAll('.src-btn').forEach(btn => {
         btn.onclick = async (e) => {

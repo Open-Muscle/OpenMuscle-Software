@@ -79,11 +79,11 @@ class DiscoveredDevice:
 
     __slots__ = ("device_id", "device_type", "ip", "cmd_port", "sensor_port",
                  "fw", "caps", "matrix", "source", "last_seen",
-                 "subscribed", "sub_error")
+                 "subscribed", "sub_error", "role")
 
     def __init__(self, device_id, device_type, ip, cmd_port,
                  sensor_port=DEFAULT_UDP_PORT, fw="", caps=None, matrix=None,
-                 source="beacon", last_seen=0.0):
+                 source="beacon", last_seen=0.0, role=""):
         self.device_id = device_id
         self.device_type = device_type
         self.ip = ip
@@ -96,6 +96,9 @@ class DiscoveredDevice:
         self.last_seen = last_seen
         self.subscribed = False
         self.sub_error = ""
+        # Hub-assigned role for capture (left / right / labeler), or "" if
+        # untagged. Persisted per device_id so it survives restarts + churn.
+        self.role = role
 
     def to_cache(self):
         """Persisted form. PROTOCOL.md v1.0 S5.3 requires the cache hold at
@@ -107,6 +110,7 @@ class DiscoveredDevice:
             "cmd_port": self.cmd_port,
             "sensor_port": self.sensor_port,
             "last_contact": self.last_seen,
+            "role": self.role,
         }
 
     def to_snapshot(self, now=None):
@@ -124,6 +128,7 @@ class DiscoveredDevice:
             "age_s": round(now - self.last_seen, 2) if self.last_seen else None,
             "subscribed": self.subscribed,
             "sub_error": self.sub_error,
+            "role": self.role,
         }
 
 
@@ -342,8 +347,14 @@ class DiscoveryManager:
             for entry in cached:
                 ip = entry.get("ip")
                 port = entry.get("cmd_port")
+                role = entry.get("role", "")
                 if ip:
-                    self.probe(ip, port)
+                    dev = self.probe(ip, port)
+                    # Restore the hub-assigned role onto the recovered device
+                    # (probe builds a fresh DiscoveredDevice with role="").
+                    if dev is not None and role:
+                        with self._lock:
+                            dev.role = role
 
         if background:
             threading.Thread(target=_work, name="om-cache-recover",
@@ -426,6 +437,24 @@ class DiscoveryManager:
             keeper.stop()
             return True
         return False
+
+    def set_role(self, device_id, role):
+        """Assign a capture role to a known device, persisted per device_id.
+
+        role is one of the lowercase wire tokens left/right/labeler, or "" to
+        clear the tag. Returns True if the device is known. Hub-local state
+        (PROTOCOL.md 8.1: roles are assigned by the hub, never on-wire).
+        """
+        role = (role or "").strip().lower()
+        if role not in ("", "left", "right", "labeler"):
+            return False
+        with self._lock:
+            dev = self._devices.get(device_id)
+            if dev is None:
+                return False
+            dev.role = role
+        self._save_cache()
+        return True
 
     def snapshot(self):
         """List of device dicts for the web UI / API."""

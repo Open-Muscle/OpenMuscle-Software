@@ -234,6 +234,24 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         removed = state.discovery.unsubscribe(body.device_id)
         return {"device_id": body.device_id, "unsubscribed": bool(removed)}
 
+    class RoleBody(BaseModel):
+        device_id: str
+        role: str = ""      # left / right / labeler, or "" to clear
+
+    @app.post("/api/discovery/role")
+    async def discovery_set_role(body: RoleBody):
+        """Tag a discovered device with a capture role (hub-local, per device_id).
+        Drives multi-band capture: tag two bands left/right + the labeler."""
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        ok = state.discovery.set_role(body.device_id, body.role)
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not set role for {body.device_id} "
+                       f"(unknown device, or invalid role)")
+        return {"device_id": body.device_id, "role": (body.role or "").strip().lower()}
+
     # ----- REST: recording -----
 
     class StartRecordingBody(BaseModel):

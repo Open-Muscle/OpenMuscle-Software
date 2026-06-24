@@ -333,3 +333,30 @@ def test_auto_subscribe_on_announce(server, tmp_path):
         assert ("127.0.0.1", 3141) in server.subscribers
     finally:
         m.stop()
+
+
+# ---- role tagging (multi-band capture) ------------------------------------
+
+def test_set_role(mgr):
+    mgr.on_announce(_announce(device_id="flexgrid-r"), "10.0.0.5")
+    assert mgr.set_role("flexgrid-r", "left") is True
+    assert mgr.snapshot()[0]["role"] == "left"
+    assert mgr.set_role("flexgrid-r", "Right") is True       # normalized to lowercase
+    assert mgr.snapshot()[0]["role"] == "right"
+    assert mgr.set_role("flexgrid-r", "") is True            # clear the tag
+    assert mgr.snapshot()[0]["role"] == ""
+    assert mgr.set_role("unknown-dev", "left") is False      # unknown device
+    assert mgr.set_role("flexgrid-r", "bogus") is False      # invalid role token
+
+
+def test_role_persists_in_cache(tmp_path):
+    path = str(tmp_path / "c.json")
+    m1 = DiscoveryManager(pc_host="127.0.0.1", cache_path=path, auto_subscribe=False)
+    m1.on_announce(_announce(device_id="flexgrid-p"), "10.0.0.6")
+    m1.set_role("flexgrid-p", "right")
+    m1.stop()
+    m2 = DiscoveryManager(pc_host="127.0.0.1", cache_path=path, auto_subscribe=False)
+    cached = m2._load_cache()
+    entry = next(e for e in cached if e["device_id"] == "flexgrid-p")
+    assert entry["role"] == "right"
+    m2.stop()
