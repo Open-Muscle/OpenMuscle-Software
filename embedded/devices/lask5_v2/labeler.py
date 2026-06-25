@@ -312,7 +312,7 @@ class LASK5(BaseDevice):
                 if dropped:
                     log.info("Pruned {} stale subscriber(s); remaining={}".format(
                         dropped, self.subscribers.count()))
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, SystemExit):
                 raise
             except BaseException as e:
                 log.warn("subscriber_prune_loop failed: {} ({})".format(
@@ -327,7 +327,7 @@ class LASK5(BaseDevice):
                     log.info("Soft-resetting in 500 ms...")
                     await asyncio.sleep_ms(500)
                     machine.reset()
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, SystemExit):
                 raise
             except BaseException as e:
                 log.warn("reboot_watcher failed: {} ({})".format(
@@ -371,7 +371,7 @@ class LASK5(BaseDevice):
                     # the work above is wasted when idle; we still do it so the
                     # very first frame after a subscribe is ready to go.
                     await self.network.send_udp_to_subscribers(packet, self.subscribers)
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, SystemExit):
                 raise
             except BaseException as e:
                 log.warn("send_loop iter failed: {} ({})".format(
@@ -400,7 +400,7 @@ class LASK5(BaseDevice):
                     joy_x_raw = self.joystick_x.read()
                     scaled.append(int((joy_x_raw / 4095.0) * 800))
                     self.network.espnow_send(self.peer, str(scaled))
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, SystemExit):
                 raise
             except BaseException as e:
                 log.warn("espnow_loop iter failed: {} ({})".format(
@@ -425,7 +425,7 @@ class LASK5(BaseDevice):
                         joystick_y=self.joystick_y.read(),
                         mode=self._stream_mode(),
                     )
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, SystemExit):
                 raise
             except BaseException as e:
                 log.warn("display_loop iter failed: {} ({})".format(

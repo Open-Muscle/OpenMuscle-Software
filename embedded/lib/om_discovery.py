@@ -117,7 +117,7 @@ class Discovery:
             try:
                 if not self.subscribers.has_any():
                     self._send_beacon()
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, SystemExit):
                 raise
             except BaseException as e:
                 log.warn("announce_loop iter failed: {} ({})".format(
