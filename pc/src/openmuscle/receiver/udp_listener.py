@@ -19,9 +19,15 @@ class UDPListener:
     """
 
     def __init__(self, port: int = 3141, bind_ip: str = "0.0.0.0",
-                 announce_handler=None):
+                 announce_handler=None, rcvbuf: int = 4 * 1024 * 1024):
         self.port = port
         self.bind_ip = bind_ip
+        # Requested UDP receive-buffer size. The default OS buffer (~64-256 KB on
+        # Windows) overflows and silently drops datagrams when the device streams
+        # at higher rates and the consumer stalls briefly (board #0184: device
+        # emitted 18-19 Hz, the receiver saw ~8 Hz). 4 MB absorbs the bursts; the
+        # OS may clamp to its max (raise the registry/sysctl limit for more).
+        self.rcvbuf = rcvbuf
         self.packet_queue: Queue = Queue()
         # Optional callback(announce_dict, src_ip) for V4 discovery beacons.
         # When set, announce packets are routed here and NOT enqueued as sensor
@@ -41,9 +47,15 @@ class UDPListener:
     def _listen(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Enlarge the receive buffer to avoid dropping frames at rate (#0184).
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self.rcvbuf)
+        except OSError:
+            pass
+        granted = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
         sock.settimeout(1.0)
         sock.bind((self.bind_ip, self.port))
-        print(f"Listening on {self.bind_ip}:{self.port}")
+        print(f"Listening on {self.bind_ip}:{self.port} (rcvbuf={granted})")
 
         while self._running:
             try:
