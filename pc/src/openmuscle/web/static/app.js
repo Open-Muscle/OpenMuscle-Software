@@ -360,8 +360,9 @@ function renderDevices() {
 // Battery + uptime + rssi line under the device meta row. Returns '' when
 // the device never reported a meta field (legacy firmware).
 function renderDeviceStatus(d) {
-    const s = d.status;
-    if (!s) return '';
+    // status (slow ~1Hz meta) may be absent while imu (fast data.imu) is present,
+    // so default s to {} and let each status part guard itself.
+    const s = d.status || {};
 
     const parts = [];
 
@@ -403,6 +404,14 @@ function renderDeviceStatus(d) {
             : '?';
         const why = d.last_reset_cause ? ` (${escapeHtml(String(d.last_reset_cause))})` : '';
         parts.push(`<span class="reboots">⟳ ${d.reboot_count} reboot${d.reboot_count === 1 ? '' : 's'}, last ${age}${why}</span>`);
+    }
+
+    // IMU readout (fast data.imu path, ~18-20Hz): per-axis gyro + accel raw
+    // counts. Matches phone's readout; the 3D orientation widget builds on this.
+    if (d.imu && Array.isArray(d.imu.gyro) && Array.isArray(d.imu.accel)) {
+        const g = d.imu.gyro, a = d.imu.accel;
+        parts.push(`<span class="imu" title="data.imu (raw counts): gyro then accel">`
+            + `🧭 g ${g[0]},${g[1]},${g[2]} · a ${a[0]},${a[1]},${a[2]}</span>`);
     }
 
     if (!parts.length) return '';

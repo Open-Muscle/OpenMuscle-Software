@@ -77,6 +77,10 @@ class DeviceInfo:
     last_matrix: list = field(default_factory=list)   # [cols][rows] flexgrid
     last_values: list = field(default_factory=list)   # generic 1-D payload (LASK5 pistons, sensorband, ...)
     last_joystick: dict = field(default_factory=dict) # LASK5 joystick {"x": v, "y": v}
+    # Fast IMU path: data.imu = {gyro[3], accel[3]} on every flexgrid frame
+    # (PROTOCOL.md 7.1, ~18-20Hz). The gyro/orientation viz reads this, not the
+    # ~1Hz status meta.imu.
+    last_imu: dict = field(default_factory=dict)
     # Device-status telemetry from the v1.0 packet's `meta` field. Stays
     # whatever the device last reported -- a missing key in a later packet
     # doesn't clobber an earlier value. Common keys: vbat, pct, uptime_s,
@@ -114,6 +118,13 @@ class DeviceInfo:
         joy = pkt.data.get("joystick")
         if isinstance(joy, dict):
             self.last_joystick = joy
+
+        # Fast IMU path: data.imu {gyro[3], accel[3]} on every flexgrid frame
+        # (~18-20Hz) drives the gyro/orientation viz. Distinct from the ~1Hz
+        # status meta.imu (kept for the device card).
+        imu = pkt.data.get("imu")
+        if isinstance(imu, dict):
+            self.last_imu = imu
 
         # Telemetry from the v1.0 envelope's `meta` field -- e.g. {vbat, pct,
         # uptime_s, free_mem, rssi, imu, reset_cause_name}. Merge keys (don't
@@ -762,6 +773,7 @@ class AppState:
                 "matrix": d.last_matrix,
                 "values": d.last_values,         # LASK5 piston ADCs etc.
                 "joystick": d.last_joystick,     # LASK5 joystick {"x", "y"}
+                "imu": d.last_imu,               # fast data.imu {gyro[3], accel[3]}
                 "status": d.status if d.status else None,   # vbat/pct/uptime/...
                 "status_age": status_age,
                 "reboot_count": d.reboot_count,
