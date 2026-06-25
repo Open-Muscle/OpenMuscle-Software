@@ -174,6 +174,12 @@ async function preflightChecks() {
 
 let scene, camera, renderer;
 let heatmapMesh, heatmapCanvas, heatmapCtx, heatmapTex;
+// IMU band-orientation widget: a small 3D band below the heatmap that tilts with
+// the FlexGrid's live data.imu (accel-tilt, matching the desktop imu-viewer).
+let imuBandMesh;
+const _imuUp = new THREE.Vector3();
+const _imuNormal = new THREE.Vector3(0, 1, 0);
+const _imuTargetQuat = new THREE.Quaternion();
 let headerCanvas, headerTex, headerMesh;
 let statusMesh, statusCanvas, statusTex;
 // Sync slate: big high-contrast splash that appears for SYNC_SLATE_MS ms
@@ -330,6 +336,23 @@ function initScene() {
     heatmapMesh = new THREE.Mesh(new THREE.PlaneGeometry(HEATMAP_W, HEATMAP_H),
                                   heatMat);
     infoGroup.add(heatmapMesh);
+
+    // IMU band-orientation widget: a small 3D band anchored below the heatmap,
+    // tilting with the FlexGrid's live data.imu (accel-tilt). Child of infoGroup
+    // so it moves with the panel. (Placement/scale may want on-headset tuning.)
+    imuBandMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.005, 0.032),
+        new THREE.MeshBasicMaterial({ color: 0x3b82f6 }));
+    imuBandMesh.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(imuBandMesh.geometry),
+        new THREE.LineBasicMaterial({ color: 0x93c5fd })));
+    const imuEdge = new THREE.Mesh(
+        new THREE.BoxGeometry(0.007, 0.008, 0.036),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));   // +X end marker
+    imuEdge.position.set(0.06, 0, 0);
+    imuBandMesh.add(imuEdge);
+    imuBandMesh.position.set(0, -(HEATMAP_H * 0.5 + 0.07), 0.02);
+    infoGroup.add(imuBandMesh);
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -1673,11 +1696,27 @@ function drawHeader(text, isRecording, qualityColor) {
     headerTex.needsUpdate = true;
 }
 
+// Tilt the IMU band widget from the FlexGrid's live data.imu. Accel-tilt: the
+// normalized accel is gravity-up in the band frame, so the band's normal follows
+// it (correct pitch/roll, no gyro-scale dependency; yaw stable). Same axis
+// mapping as the desktop imu-viewer for cross-hub consistency (the mapping is the
+// one tunable to align with phone, board #0197).
+function updateImuBand(imu) {
+    if (!imuBandMesh || !imu) return;
+    const a = imu.accel;
+    if (!Array.isArray(a) || a.length < 3) return;
+    if (Math.hypot(a[0], a[1], a[2]) < 1e-3) return;   // freefall / bad read
+    _imuUp.set(a[0], a[2], -a[1]).normalize();          // sensor -> model axes
+    _imuTargetQuat.setFromUnitVectors(_imuNormal, _imuUp);
+    imuBandMesh.quaternion.slerp(_imuTargetQuat, 0.3);  // smooth the jitter
+}
+
 function updateFromSnapshot(snap, timestampMs) {
     if (!snap) return;
     // Pick the first flexgrid device's matrix to paint
     const fg = (snap.devices || []).find(d => d.device_type === 'flexgrid' && d.matrix?.length);
     if (fg) drawHeatmap(fg.matrix);
+    if (fg && fg.imu) updateImuBand(fg.imu);
     // Header text: while recording, include filename + ms clock so the
     // headset's screen recording captures sync info every frame the user
     // happens to look at the heatmap. Without it, the operator would have
