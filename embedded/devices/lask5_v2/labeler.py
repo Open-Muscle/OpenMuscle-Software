@@ -22,6 +22,7 @@ from om_device import BaseDevice
 from om_subscribers import Subscribers
 from om_discovery import Discovery
 from om_commands import CommandServer, build_standard_handlers
+import om_provisioning
 from sensor_pistons import SensorPistons
 from display_lask5 import draw_taskbar, play_splash
 
@@ -180,11 +181,66 @@ class LASK5(BaseDevice):
             await asyncio.sleep_ms(poll_ms)
 
     async def start(self):
-        """Override BaseDevice.start to play the splash before WiFi connect."""
+        """Override BaseDevice.start to play the splash before WiFi connect.
+
+        State-machine fork (PROVISIONING.md section 2): if wifi_ssid is
+        empty (factory-fresh or reprovision-reset) we route to AP mode +
+        HTTP provisioning instead of trying STA. om_provisioning.serve
+        ends in machine.soft_reset() when /provision lands, so this
+        branch never returns to normal startup.
+        """
         # Splash first (no network required); skips silently if frames missing.
         play_splash(self.display)
+
+        if not (self.settings.get("wifi_ssid") or "").strip():
+            await self._run_provisioning_mode()
+            return  # om_provisioning.serve soft_resets; never reached
+
         # Then the standard connect-then-run lifecycle.
         await super().start()
+
+    async def _run_provisioning_mode(self):
+        """Boot a WPA2-PSK AP and serve the provisioning HTTP server until
+        the user POSTs /provision. Mints + persists provisioning_psk on
+        first entry. Displays SSID + PSK on the OLED for the no-app path
+        and sets the LED solid-on as the "setup mode active" indicator.
+        """
+        log.info("LASK5 unprovisioned (wifi_ssid empty); entering AP mode")
+        save_fn = lambda: self.settings.save()
+        psk = om_provisioning.start_ap(
+            self.settings, save_fn, self.DEVICE_TYPE, self.device_id)
+        ssid = om_provisioning.ssid_for(self.DEVICE_TYPE, self.device_id)
+
+        # OLED cheat sheet: device id, banner, SSID, PSK on a 128x32 4-line
+        # display. The Connect app can derive nothing from the SSID alone,
+        # so the user MUST read the PSK off this screen (or skip the app
+        # and visit 192.168.4.1 in a browser instead).
+        if self.display.available:
+            self.display.fill(0)
+            self.display.text(self.device_id, 0, 0)
+            self.display.text("WIFI SETUP", 0, 8)
+            self.display.text(ssid, 0, 16)
+            self.display.text("PSK " + psk, 0, 24)
+            self.display.show()
+
+        # LED solid on as the "setup mode active" indicator. LASK5's LED is
+        # on/off only (no PWM channel hookup); a blink would need a small
+        # async task. Solid is fine for v1.0 UX.
+        try:
+            self.led.value(1)
+        except Exception:
+            pass
+
+        info_extras = {
+            "caps": self.caps,
+            "pistons": 4,
+            "joystick": True,
+        }
+        state = om_provisioning._ProvisioningState(
+            self.settings, save_fn, info_extras=info_extras)
+        await om_provisioning.serve(state)
+        # serve() ends in machine.soft_reset(); if it somehow returns the
+        # caller's `return` shuts us down cleanly without re-entering STA.
 
     async def run(self):
         self.blink(2)
@@ -228,6 +284,21 @@ class LASK5(BaseDevice):
         asyncio.create_task(self._discovery.announce_loop())
         asyncio.create_task(self._subscriber_prune_loop())
         asyncio.create_task(self._reboot_watcher())
+
+        # STA-mode provisioning admin per PROVISIONING.md section 4.3:
+        # serve GET /info + POST /reprovision on TCP 80 bound to the LAN
+        # IP. Phones reach this over the home Wi-Fi to reset the device
+        # back to AP mode without needing a USB cable. Bound to the STA
+        # interface IP only so we never double-expose on AP + STA.
+        sta_ip = self.network.get_ip()
+        if sta_ip:
+            sta_state = om_provisioning._ProvisioningState(
+                self.settings, lambda: self.settings.save(),
+                info_extras={"caps": self.caps, "pistons": 4, "joystick": True},
+                state="provisioned")
+            asyncio.create_task(om_provisioning.serve(sta_state, bind_ip=sta_ip))
+        else:
+            log.warn("No STA IP yet; skipping STA-mode reprovision listener")
 
         while True:
             await asyncio.sleep(1)
