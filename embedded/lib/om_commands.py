@@ -73,7 +73,7 @@ class CommandServer:
                 log.info("Command server listening on TCP {}".format(self.port))
                 while True:
                     await asyncio.sleep(60)
-            except _CancelledError:
+            except (_CancelledError, SystemExit):
                 log.info("Command server cancelled; exiting supervisor")
                 raise
             except BaseException as e:
@@ -101,7 +101,7 @@ class CommandServer:
                 ack = await self._handle_one(line, peer)
                 writer.write(ujson.dumps(ack).encode("utf-8") + b"\n")
                 await writer.drain()
-        except _CancelledError:
+        except (_CancelledError, SystemExit):
             raise
         except BaseException as e:
             # Catch BaseException so a KeyboardInterrupt doesn't propagate
@@ -137,10 +137,18 @@ class CommandServer:
 
         try:
             ack_data = await handler(data, peer)
-        except Exception as e:
-            log.warn("Command verb={} from {} raised: {}".format(verb, peer, e))
+        except (_CancelledError, SystemExit):
+            # Let deliberate cancel / soft_reset propagate so the asyncio
+            # runtime can act on them. Mirrors the audit-pass fix from the
+            # V4 cmd-server: BaseException catches must whitelist these.
+            raise
+        except BaseException as e:
+            log.warn("Command verb={} from {} raised: {} ({})".format(
+                verb, peer, type(e).__name__, e))
             return {"v": "1.0", "type": "ack", "status": _ERR,
-                    "msg_id": msg_id, "data": {"verb": verb, "message": str(e)}}
+                    "msg_id": msg_id,
+                    "data": {"verb": verb,
+                             "message": "{}: {}".format(type(e).__name__, e)}}
         return {"v": "1.0", "type": "ack", "status": _OK,
                 "msg_id": msg_id, "data": dict({"verb": verb}, **(ack_data or {}))}
 

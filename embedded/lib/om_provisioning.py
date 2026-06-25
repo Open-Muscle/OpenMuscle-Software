@@ -279,8 +279,13 @@ async def _handle(reader, writer, state):
                                   "data": {"message": "no_route", "method": method, "path": path}}))
 
         await writer.drain()
-    except Exception as e:
-        log.warn("Provisioning HTTP handler failed: {}".format(e))
+    except (asyncio.CancelledError, SystemExit):
+        # Let deliberate cancellation / soft_reset propagate; close cleanup
+        # still runs via the finally block.
+        raise
+    except BaseException as e:
+        log.warn("Provisioning HTTP handler failed: {} ({})".format(
+            type(e).__name__, e))
     finally:
         try:
             writer.close()
