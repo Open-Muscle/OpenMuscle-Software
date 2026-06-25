@@ -188,13 +188,23 @@ class LASK5(BaseDevice):
         HTTP provisioning instead of trying STA. om_provisioning.serve
         ends in machine.soft_reset() when /provision lands, so this
         branch never returns to normal startup.
-        """
-        # Splash first (no network required); skips silently if frames missing.
-        play_splash(self.display)
 
-        if not (self.settings.get("wifi_ssid") or "").strip():
-            await self._run_provisioning_mode()
-            return  # om_provisioning.serve soft_resets; never reached
+        Splash is gated behind settings["splash_enabled"], DEFAULT FALSE.
+        Reason: the 24-frame OLED animation has been observed to brown out
+        the chip on lask5-01 (reset_cause=PWRON_RESET=1 every ~3 s during
+        boot, breaking the device until splash was skipped). The brownout
+        is hardware-level and cannot be caught in Python. Operators on
+        units with stable USB power can re-enable splash via
+        config/settings.json: {"splash_enabled": true}. Best-effort
+        try/except around play_splash gives some defense against soft
+        failures (frame data mismatch, missing module) but does not help
+        with brownout.
+        """
+        if self.settings.get("splash_enabled", False):
+            try:
+                play_splash(self.display)
+            except Exception as e:
+                log.warn("play_splash failed: {} ({})".format(type(e).__name__, e))  # om_provisioning.serve soft_resets; never reached
 
         # Then the standard connect-then-run lifecycle.
         await super().start()
