@@ -2,6 +2,7 @@
     "device_id": "lask5-01",
     "wifi_ssid": "",
     "wifi_password": "",
+    "provisioning_psk": "",
     "udp_target_ip": "192.168.1.48",
     "udp_port": 3141,
     "udp_announce_port": 3140,

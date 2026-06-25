@@ -61,6 +61,11 @@ class LASK5(BaseDevice):
         "cmd_port":             8002,
         "udp_announce_port":    3140,   # broadcast announce port (PROTOCOL.md v1.0 port split)
         "udp_sensor_port":      3141,   # unicast data port for sensor/label frames
+        # Provisioning PSK. Per-device random 10-char string minted by
+        # om_provisioning.mint_psk on first AP-mode entry and persisted
+        # here. Out-of-band delivery via OLED per PROVISIONING.md section 3.
+        # Default empty; mints on first AP-mode entry.
+        "provisioning_psk":     "",
         "announce_interval_s":  1,
         "max_subscribers":      4,
         "heartbeat_timeout_s":  5,
