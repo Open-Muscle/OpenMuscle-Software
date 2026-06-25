@@ -313,3 +313,25 @@ class TestRecordingDefaults:
             # No role tags set -> refuse rather than guess.
             with __import__("pytest").raises(RuntimeError):
                 s.start_multiband_recording(filename="x.csv")
+
+    def test_flexgrid_data_imu_in_snapshot(self):
+        # Fast IMU path: data.imu={gyro,accel} on a flexgrid frame surfaces as
+        # device.imu in the WS snapshot (drives the gyro/orientation widgets).
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            pkt = OpenMusclePacket(
+                version=CURRENT_VERSION, device_type="flexgrid",
+                device_id="fg-imu", timestamp_ms=0,
+                data={"matrix": [[1, 2, 3, 4] for _ in range(15)],
+                      "imu": {"gyro": [10, -20, 3], "accel": [-440, 0, 2150]}},
+                receive_time=time.time(),
+            )
+            s._handle_packet(pkt)
+            dev = next(x for x in s._snapshot()["devices"]
+                       if x["device_id"] == "fg-imu")
+            assert dev["imu"] == {"gyro": [10, -20, 3], "accel": [-440, 0, 2150]}
+            # A later frame without imu must not clobber the last-known value.
+            s._handle_packet(_flexgrid_packet(device_id="fg-imu"))
+            dev = next(x for x in s._snapshot()["devices"]
+                       if x["device_id"] == "fg-imu")
+            assert dev["imu"]["accel"] == [-440, 0, 2150]
