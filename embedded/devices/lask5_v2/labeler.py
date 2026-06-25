@@ -223,13 +223,11 @@ class LASK5(BaseDevice):
             self.display.text("PSK " + psk, 0, 24)
             self.display.show()
 
-        # LED solid on as the "setup mode active" indicator. LASK5's LED is
-        # on/off only (no PWM channel hookup); a blink would need a small
-        # async task. Solid is fine for v1.0 UX.
-        try:
-            self.led.value(1)
-        except Exception:
-            pass
+        # LED slow blink (1 Hz) as the "setup mode active" indicator. The
+        # blink runs as a background asyncio task until machine.soft_reset
+        # terminates it. More obviously "device wants attention" than the
+        # solid-on the earlier version used.
+        asyncio.create_task(self._provisioning_led_blink())
 
         info_extras = {
             "caps": self.caps,
@@ -241,6 +239,25 @@ class LASK5(BaseDevice):
         await om_provisioning.serve(state)
         # serve() ends in machine.soft_reset(); if it somehow returns the
         # caller's `return` shuts us down cleanly without re-entering STA.
+
+    async def _provisioning_led_blink(self, period_ms=500):
+        """1 Hz on/off blink on the status LED while we are in AP mode.
+        Runs until the surrounding event loop terminates (which happens
+        when om_provisioning.serve calls machine.soft_reset on
+        /provision). Catches BaseException so a hardware glitch on
+        self.led can't kill the loop silently; CancelledError +
+        SystemExit re-raise so deliberate shutdown still works."""
+        on = True
+        while True:
+            try:
+                self.led.value(1 if on else 0)
+            except (asyncio.CancelledError, SystemExit):
+                raise
+            except BaseException as e:
+                log.warn("provisioning_led_blink iter failed: {} ({})".format(
+                    type(e).__name__, e))
+            on = not on
+            await asyncio.sleep_ms(period_ms)
 
     async def run(self):
         self.blink(2)
