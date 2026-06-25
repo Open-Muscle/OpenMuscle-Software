@@ -90,15 +90,22 @@ class Discovery:
         """Best-effort mDNS hostname registration. Some MicroPython builds
         publish the STA hostname as an mDNS A record (so `<device_id>.local`
         resolves); others do not. Either way the broadcast beacon is the
-        reliable discovery path."""
+        reliable discovery path.
+
+        Audit-pass fix (board #0189): only mark _mdns_registered=True on
+        actual success so a Wi-Fi-down boot does not poison the flag
+        permanently; announce_loop's Wi-Fi-reconnect path can then retry."""
         if self._mdns_registered:
             return
+        success = False
         try:
             self.sta.config(hostname=self.device_id)
+            success = True
         except Exception as e:
             log.warn("mDNS hostname set failed (beacon will cover it): {}".format(e))
-        self._mdns_registered = True
-        log.info("mDNS hostname best-effort registered as {}".format(self.device_id))
+        if success:
+            self._mdns_registered = True
+            log.info("mDNS hostname best-effort registered as {}".format(self.device_id))
 
     async def announce_loop(self):
         """Periodic broadcast beacon. Goes quiet once at least one hub is
@@ -107,14 +114,30 @@ class Discovery:
         Catches BaseException (except CancelledError) so an interrupt
         during sendto cannot silently kill the announce task. Matches the
         FlexGridV4 hardening (firmware board #0166 WDT root-cause work).
+
+        Re-registers mDNS on Wi-Fi reconnect (audit pass, board #0189):
+        the sta.config(hostname=...) call only takes effect while STA is
+        up, and after a flap the hostname binding can be lost. Tracks the
+        connected edge per loop iter and re-fires register_mdns() on the
+        rising transition. Cheap; keeps `<device-id>.local` resolution
+        alive across reconnects.
         """
         try:
             self.register_mdns()
         except Exception:
             pass
 
+        was_connected = False
         while True:
             try:
+                now_connected = self.sta.isconnected()
+                if now_connected and not was_connected:
+                    self._mdns_registered = False
+                    try:
+                        self.register_mdns()
+                    except Exception as e:
+                        log.warn("mDNS re-register on reconnect failed: {}".format(e))
+                was_connected = now_connected
                 if not self.subscribers.has_any():
                     self._send_beacon()
             except (asyncio.CancelledError, SystemExit):
