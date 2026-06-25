@@ -102,7 +102,12 @@ class Discovery:
 
     async def announce_loop(self):
         """Periodic broadcast beacon. Goes quiet once at least one hub is
-        subscribed; resumes when the subscriber list empties."""
+        subscribed; resumes when the subscriber list empties.
+
+        Catches BaseException (except CancelledError) so an interrupt
+        during sendto cannot silently kill the announce task. Matches the
+        FlexGridV4 hardening (firmware board #0166 WDT root-cause work).
+        """
         try:
             self.register_mdns()
         except Exception:
@@ -112,8 +117,11 @@ class Discovery:
             try:
                 if not self.subscribers.has_any():
                     self._send_beacon()
-            except Exception as e:
-                log.warn("announce_loop iter failed: {}".format(e))
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                log.warn("announce_loop iter failed: {} ({})".format(
+                    type(e).__name__, e))
             await asyncio.sleep(self.announce_interval_s)
 
     def _send_beacon(self):

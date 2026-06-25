@@ -236,17 +236,26 @@ class LASK5(BaseDevice):
                 if dropped:
                     log.info("Pruned {} stale subscriber(s); remaining={}".format(
                         dropped, self.subscribers.count()))
-            except Exception as e:
-                log.warn("subscriber_prune_loop failed: {}".format(e))
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                log.warn("subscriber_prune_loop failed: {} ({})".format(
+                    type(e).__name__, e))
             await asyncio.sleep(1)
 
     async def _reboot_watcher(self):
         """Polls the reboot flag set by a `reboot` command verb."""
         while True:
-            if self._reboot_requested:
-                log.info("Soft-resetting in 500 ms...")
-                await asyncio.sleep_ms(500)
-                machine.reset()
+            try:
+                if self._reboot_requested:
+                    log.info("Soft-resetting in 500 ms...")
+                    await asyncio.sleep_ms(500)
+                    machine.reset()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                log.warn("reboot_watcher failed: {} ({})".format(
+                    type(e).__name__, e))
             await asyncio.sleep_ms(200)
 
     # ----- streaming -----
@@ -262,20 +271,35 @@ class LASK5(BaseDevice):
         V3 protocol change: replaces send_udp() to a hardcoded udp_target_ip
         with send_udp_to_subscribers() that fans out to every entry in the
         live subscriber list. The list is populated by hubs talking to the
-        cmd server (see om_commands)."""
+        cmd server (see om_commands).
+
+        BaseException catch: matches the FlexGridV4 sensor_loop hardening
+        (firmware board #0166). A BaseException (MemoryError, KeyboardInterrupt
+        from a dev tool, or asyncio internals raising one of these) used to
+        propagate past `except Exception` and silently kill this task; once
+        dead, label frames stopped flowing to subscribed hubs and the device
+        looked like a black hole until rebooted. CancelledError still
+        re-raises so deliberate shutdown works.
+        """
         interval = 1.0 / self.settings.get("sample_rate_hz", 25)
         while True:
-            if self._stream_mode() == "udp" and self._streaming:
-                data = self.sensor.read()  # {"values": [0..1, ...]}
-                data["joystick"] = {
-                    "x": self.joystick_x.read(),
-                    "y": self.joystick_y.read(),
-                }
-                packet = self.make_packet(data)
-                # send_udp_to_subscribers no-ops when the list is empty, so
-                # the work above is wasted when idle; we still do it so the
-                # very first frame after a subscribe is ready to go.
-                await self.network.send_udp_to_subscribers(packet, self.subscribers)
+            try:
+                if self._stream_mode() == "udp" and self._streaming:
+                    data = self.sensor.read()  # {"values": [0..1, ...]}
+                    data["joystick"] = {
+                        "x": self.joystick_x.read(),
+                        "y": self.joystick_y.read(),
+                    }
+                    packet = self.make_packet(data)
+                    # send_udp_to_subscribers no-ops when the list is empty, so
+                    # the work above is wasted when idle; we still do it so the
+                    # very first frame after a subscribe is ready to go.
+                    await self.network.send_udp_to_subscribers(packet, self.subscribers)
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                log.warn("send_loop iter failed: {} ({})".format(
+                    type(e).__name__, e))
             await asyncio.sleep(interval)
 
     async def _espnow_loop(self):
@@ -286,18 +310,25 @@ class LASK5(BaseDevice):
         piston is calibrated to 0..1 then scaled to 0..800 (int), and jx is
         the raw joystick X ADC scaled to 0..800. This keeps existing
         bracelet receivers compatible with no firmware changes on their end.
+
+        BaseException catch matches _send_loop; an espnow_send hardware
+        glitch should not silently kill the loop and starve the paired
+        OpenHand motor.
         """
         interval = 1.0 / self.settings.get("sample_rate_hz", 25)
         while True:
-            if self._stream_mode() == "espnow":
-                try:
+            try:
+                if self._stream_mode() == "espnow":
                     vals = self.sensor.read_calibrated()
                     scaled = [int(v * 800) for v in vals]
                     joy_x_raw = self.joystick_x.read()
                     scaled.append(int((joy_x_raw / 4095.0) * 800))
                     self.network.espnow_send(self.peer, str(scaled))
-                except Exception as e:
-                    log.warn("ESPNow send error: {}".format(e))
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                log.warn("espnow_loop iter failed: {} ({})".format(
+                    type(e).__name__, e))
             await asyncio.sleep(interval)
 
     # ----- display -----
@@ -306,17 +337,23 @@ class LASK5(BaseDevice):
         """Renders the live taskbar at ~10 Hz. Yields the OLED when a menu or
         modal owns the display."""
         while True:
-            if self._display_owner == "live":
-                values = self.sensor.read_raw()
-                draw_taskbar(
-                    self.display,
-                    values,
-                    self.sensor.mins,
-                    self.sensor.maxes,
-                    joystick_x=self.joystick_x.read(),
-                    joystick_y=self.joystick_y.read(),
-                    mode=self._stream_mode(),
-                )
+            try:
+                if self._display_owner == "live":
+                    values = self.sensor.read_raw()
+                    draw_taskbar(
+                        self.display,
+                        values,
+                        self.sensor.mins,
+                        self.sensor.maxes,
+                        joystick_x=self.joystick_x.read(),
+                        joystick_y=self.joystick_y.read(),
+                        mode=self._stream_mode(),
+                    )
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:
+                log.warn("display_loop iter failed: {} ({})".format(
+                    type(e).__name__, e))
             await asyncio.sleep(0.1)
 
     # ----- menu -----
