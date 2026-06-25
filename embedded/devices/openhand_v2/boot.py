@@ -47,10 +47,27 @@ OLED_HEIGHT = 32
 #      hand even though both 'see' the radio.
 #   2. The PC's inference plug-in can forward predicted servo angles to
 #      this hand over UDP at <hand_ip>:3145.
-WIFI_SSID_DEFAULT = 'OpenMuscle'
-WIFI_PASS_DEFAULT = '3141592653'
+# Wi-Fi defaults are empty: never commit real SSID/password; the operator
+# supplies them via settings.json (gitignored), and a fresh device boots
+# straight to the menu since no STA join is possible. Mirrors the
+# security remediation that landed for FlexGridV4 + LASK5.
+WIFI_SSID_DEFAULT = ''
+WIFI_PASS_DEFAULT = ''
 WIFI_TIMEOUT_S = 10
 UDP_PORT = 3145
+
+# OpenMuscle protocol announce (PROTOCOL.md v1.0 section 5):
+# OpenHand is a SINK (it receives servo commands rather than emitting
+# sensor data) but the v1.0 protocol only has "source" role. We announce
+# anyway so phone + PC hubs can discover the device in the same
+# discovery UI as FlexGrid / LASK5; the caps list (`actuator`) and
+# empty `services` map tell hubs there is no cmd channel to subscribe
+# to. Servo commands continue on the existing UDP 3145 path.
+# A future v1.1 spec may add a "sink" role; this lives there cleanly.
+ANNOUNCE_PORT = 3140
+ANNOUNCE_INTERVAL_S = 1.0
+DEVICE_TYPE = 'openhand'
+DEVICE_FW = 'v2.0.0'
 
 # Servo: finger index 0-4 maps to PCA9685 odd channels
 FINGER_CHANNELS = [1, 3, 5, 7, 9]
@@ -84,8 +101,16 @@ SETTINGS_DEFAULTS = {
     # devices and the hand's IP is reachable for PC inference forwarding.
     'wifi_ssid': WIFI_SSID_DEFAULT,
     'wifi_password': WIFI_PASS_DEFAULT,
+    # Stable device id minted on first boot (openhand-<6hex from MAC>).
+    # Re-used across reboots so hubs see a stable identity in announces.
+    'device_id': '',
 }
 settings = dict(SETTINGS_DEFAULTS)
+
+# Announce-broadcast state. Populated lazily after Wi-Fi is up.
+_announce_sock = None
+_announce_last_t = 0.0
+_announce_device_id = None
 
 
 def settings_load():
@@ -162,6 +187,76 @@ def init_servos():
 # Global Wi-Fi station, brought up once at boot. Both espnow_listen and
 # udp_listen reuse it instead of bouncing STA active state.
 wlan_sta = None
+
+
+def _mint_device_id():
+    """Mint or read the stable device id. openhand-<6 hex chars from MAC tail>.
+    Persisted in settings on first boot so subsequent boots reuse it."""
+    global _announce_device_id
+    cur = settings.get('device_id') or ''
+    if cur:
+        _announce_device_id = cur
+        return cur
+    try:
+        import binascii
+        mac = network.WLAN(network.STA_IF).config('mac')
+        tail = binascii.hexlify(mac[-3:]).decode()
+        dev_id = 'openhand-' + tail
+    except Exception:
+        import time as _t
+        dev_id = 'openhand-{:06x}'.format(_t.ticks_ms() & 0xFFFFFF)
+    settings['device_id'] = dev_id
+    settings_save()
+    _announce_device_id = dev_id
+    return dev_id
+
+
+def maybe_announce():
+    """Send one broadcast announce on UDP 3140 if at least
+    ANNOUNCE_INTERVAL_S has passed since the last one. Cheap to call from
+    inside the synchronous receive / menu loops at high rate; the
+    timestamp throttle keeps the broadcast at ~1 Hz. No-op if Wi-Fi isn't
+    up. PROTOCOL.md v1.0 section 5.2 announce shape.
+    """
+    global _announce_last_t, _announce_sock
+    if wlan_sta is None or not wlan_sta.isconnected():
+        return
+    now = time.time()
+    if now - _announce_last_t < ANNOUNCE_INTERVAL_S:
+        return
+    _announce_last_t = now
+    if _announce_sock is None:
+        try:
+            _announce_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _announce_sock.setblocking(False)
+            try:
+                _announce_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            except Exception:
+                pass
+        except Exception as err:
+            print('announce sock init failed:', err)
+            return
+    payload = {
+        'v':          '1.0',
+        'type':       'announce',
+        'id':         _announce_device_id or 'openhand-?',
+        'role':       'source',     # v1.0 protocol only has "source"; "sink" is v1.1+
+        'dev':        DEVICE_TYPE,
+        'fw':         DEVICE_FW,
+        'transports': ['wifi'],
+        'caps':       ['actuator'], # tells hubs this is a destination for commands,
+                                    # not a source of sensor data; no cmd channel today
+        'services':   {},           # no cmd port to subscribe to in v2.0.0
+        'ts':         time.ticks_ms(),
+    }
+    try:
+        _announce_sock.sendto(ujson.dumps(payload).encode('utf-8'),
+                              ('255.255.255.255', ANNOUNCE_PORT))
+    except OSError:
+        # ENOMEM / EAGAIN on a busy lwip pbuf pool; non-fatal, retry next tick.
+        pass
+    except Exception as err:
+        print('announce send failed:', err)
 
 
 def connect_wifi_boot():
@@ -358,6 +453,8 @@ def espnow_listen():
                 if result:
                     device_id, values = result
                     apply_packet(device_id, values)
+            # Throttled to ~1 Hz internally; cheap to call here.
+            maybe_announce()
             if select_btn.value() == 0:
                 time.sleep(0.2)  # debounce
                 break
@@ -433,6 +530,10 @@ def udp_listen():
                     release_all()           # stop all 16 channels (servos go limp)
                     is_asleep = True
                     frint('Sleeping')
+
+            # Throttled to ~1 Hz internally; cheap to call from the tight
+            # awake loop AND the 20 Hz asleep loop.
+            maybe_announce()
 
             if select_btn.value() == 0:
                 time.sleep(0.2)  # debounce
@@ -557,6 +658,9 @@ def run_menu():
                 time.sleep(0.2)  # debounce
                 MENU_ACTIONS[selected]()
                 draw_menu(selected)
+            # Keep announcing while the operator browses the menu so the
+            # device stays discoverable even before a listen mode is entered.
+            maybe_announce()
             time.sleep(0.05)
     except KeyboardInterrupt:
         frint('Menu -> REPL')
@@ -579,6 +683,13 @@ frint('OM-HAND V2')
 # so a connected STA pins the channel to match paired devices. Failure is
 # non-fatal -- device continues to work via menu/USB even without Wi-Fi.
 connect_wifi_boot()
+
+# Mint/load the OpenMuscle device id and announce ourselves on UDP 3140
+# so the phone + PC hubs discover us in the V4 discovery UI. The id is
+# stable across reboots (persisted to settings.json on first mint).
+# Hub-side: caps=['actuator'] + services={} tells consumers there is no
+# cmd channel; existing servo commands keep flowing on UDP 3145 below.
+_mint_device_id()
 
 # Hold Select at boot to force the menu, regardless of auto_mode -- escape
 # hatch in case auto-mode is set to something that crashes or hangs.
