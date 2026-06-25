@@ -22,6 +22,7 @@ PUSH_LIST = [
     ("lib/om_subscribers.py",      "/lib/om_subscribers.py"),
     ("lib/om_discovery.py",        "/lib/om_discovery.py"),
     ("lib/om_commands.py",         "/lib/om_commands.py"),
+    ("lib/om_provisioning.py",     "/lib/om_provisioning.py"),
     ("devices/lask5_v2/labeler.py", "/labeler.py"),
 ]
 
