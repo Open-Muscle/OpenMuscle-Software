@@ -122,6 +122,34 @@ function handleTick(msg) {
     // a hand source). No-op when no quest_hand device is present.
     renderHandViewer(lastDevices.find(d => d.device_type === 'quest_hand'),
                      msg.inference);
+    // IMU orientation widget: drive from a device carrying the fast data.imu
+    // (prefer the selected device; else the first with imu).
+    renderImuViewer();
+}
+
+// ---------- IMU orientation widget ----------
+
+function renderImuViewer() {
+    const wrap = document.getElementById('imu-viewer');
+    if (!wrap || !window.OMImuViewer) return;
+    const sel = selectedDevice();
+    const dev = (sel && sel.imu && Array.isArray(sel.imu.accel)) ? sel
+        : lastDevices.find(d => d.imu && Array.isArray(d.imu.accel));
+    if (!dev) {
+        wrap.style.display = 'none';
+        if (window.OMImuViewer.isReady()) window.OMImuViewer.setVisible(false);
+        return;
+    }
+    if (!window.OMImuViewer.isReady()) {
+        const el = document.getElementById('imu-viewer-canvas');
+        if (el) window.OMImuViewer.init(el);
+    }
+    if (!window.OMImuViewer.isReady()) return;
+    wrap.style.display = 'flex';
+    window.OMImuViewer.setVisible(true);
+    window.OMImuViewer.update(dev.imu);
+    const axes = document.getElementById('imu-axes');
+    if (axes) axes.textContent = escapeHtml(dev.device_id);
 }
 
 // ---------- quest_hand 3D viewer ----------
