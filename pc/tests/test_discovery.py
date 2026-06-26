@@ -15,7 +15,7 @@ import time
 import pytest
 
 from openmuscle.discovery.manager import (
-    DiscoveryManager, DiscoveredDevice, _send_cmd,
+    DiscoveryManager, DiscoveredDevice, _send_cmd, subnet_base,
 )
 from openmuscle.protocol.parser import parse_packet
 
@@ -360,3 +360,45 @@ def test_role_persists_in_cache(tmp_path):
     entry = next(e for e in cached if e["device_id"] == "flexgrid-p")
     assert entry["role"] == "right"
     m2.stop()
+
+
+# ---- subnet scan (cold-cache discovery: P3 late-joiner path) ---------------
+
+def test_subnet_base():
+    assert subnet_base("10.0.0.23") == "10.0.0"
+    assert subnet_base("192.168.1.5") == "192.168.1"
+    assert subnet_base("127.0.0.1") is None      # loopback, no LAN to scan
+    assert subnet_base("") is None
+    assert subnet_base("not.an.ip.x") is None
+    assert subnet_base("1.2.3") is None           # malformed
+    assert subnet_base("10.0.0.999") is None      # octet out of range
+
+
+def test_scan_subnet_fans_probe_and_skips_self(tmp_path):
+    m = DiscoveryManager(pc_host="10.0.0.10", cache_path=str(tmp_path / "c.json"),
+                         auto_subscribe=False)
+    probed = []
+
+    def fake_probe(ip, cmd_port=None, timeout=None):
+        probed.append(ip)
+        if ip == "10.0.0.7":
+            d = DiscoveredDevice("flexgrid-scan", "flexgrid", ip, 8001)
+            m._devices[d.device_id] = d
+            return d
+        return None
+
+    m.probe = fake_probe
+    found = m.scan_subnet(start=1, end=20, background=False)
+    m.stop()
+    assert found == ["flexgrid-scan"]
+    assert "10.0.0.7" in probed
+    assert "10.0.0.10" not in probed     # own IP is skipped
+    assert len(probed) == 19             # 1..20 minus self (.10)
+
+
+def test_scan_subnet_skipped_without_lan_ip(tmp_path):
+    m = DiscoveryManager(pc_host="127.0.0.1", cache_path=str(tmp_path / "c.json"),
+                         auto_subscribe=False)
+    # Loopback has no /24 to scan -> the scan is a safe no-op.
+    assert m.scan_subnet(background=False) is None
+    m.stop()

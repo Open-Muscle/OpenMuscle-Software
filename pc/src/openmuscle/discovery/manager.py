@@ -70,6 +70,22 @@ def default_cache_path():
                         "discovered_devices.json")
 
 
+def subnet_base(ip):
+    """The /24 prefix of a dotted-quad IP ("10.0.0.23" -> "10.0.0"), or None if
+    it is not a usable IPv4 (loopback / malformed)."""
+    if not ip or ip.startswith("127."):
+        return None
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return None
+    try:
+        if not all(0 <= int(p) <= 255 for p in parts):
+            return None
+    except ValueError:
+        return None
+    return ".".join(parts[:3])
+
+
 class DiscoveredDevice:
     """A source we have discovered and may be subscribed to.
 
@@ -304,15 +320,17 @@ class DiscoveryManager:
         )
         return self._upsert(dev)
 
-    def probe(self, ip, cmd_port=None):
+    def probe(self, ip, cmd_port=None, timeout=None):
         """Actively query ip:cmd_port (or try the default ports) with get_info.
         Returns the DiscoveredDevice on success, or None. Used for cache
-        recovery and manual add."""
+        recovery, manual add, and the subnet scan (which passes a short timeout
+        so dead hosts fail fast)."""
         ports = [int(cmd_port)] if cmd_port else list(DEFAULT_CMD_PORTS)
+        to = TCP_TIMEOUT_S if timeout is None else timeout
         for port in ports:
             try:
                 tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                tcp.settimeout(TCP_TIMEOUT_S)
+                tcp.settimeout(to)
                 tcp.connect((ip, port))
                 ack = _send_cmd(tcp, 1, "get_info")
                 tcp.close()
@@ -361,6 +379,55 @@ class DiscoveryManager:
                              daemon=True).start()
         else:
             _work()
+
+    def scan_subnet(self, base=None, start=1, end=254, timeout=0.5,
+                    max_workers=32, background=True):
+        """Probe every host on the local /24 with get_info to find V4 devices.
+
+        The cold-cache discovery path: a device subscribed by another hub
+        suppresses its beacon, so a freshly started hub with no cache cannot see
+        it passively. Scanning the subnet reaches it without a manual IP (P3
+        exit: "a late-joining hub reaches a singly-subscribed device"). Found
+        devices flow through probe() -> _upsert (cache + auto-subscribe), exactly
+        like the other discovery paths. Non-blocking by default.
+
+        Returns the worker thread when background, else the list of device_ids
+        found this scan.
+        """
+        base = base or subnet_base(self.pc_host)
+        if not base:
+            logger.warning("discovery: subnet scan skipped, no usable LAN IP "
+                           "(pc_host=%s)", self.pc_host)
+            return None
+        lo, hi = max(1, int(start)), min(254, int(end))
+
+        def _scan_one(host):
+            ip = "%s.%d" % (base, host)
+            if ip == self.pc_host:
+                return None
+            dev = self.probe(ip, timeout=timeout)
+            return dev.device_id if dev is not None else None
+
+        def _work():
+            found = []
+            try:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    for did in pool.map(_scan_one, range(lo, hi + 1)):
+                        if did:
+                            found.append(did)
+            except Exception as e:
+                logger.warning("discovery: subnet scan failed: %s", e)
+            logger.info("discovery: subnet scan of %s.%d-%d found %d device(s)",
+                        base, lo, hi, len(found))
+            return found
+
+        if background:
+            t = threading.Thread(target=_work, name="om-subnet-scan",
+                                 daemon=True)
+            t.start()
+            return t
+        return _work()
 
     # ---- lifecycle --------------------------------------------------------
 

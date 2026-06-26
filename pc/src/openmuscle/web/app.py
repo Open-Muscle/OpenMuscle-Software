@@ -212,6 +212,24 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 detail=f"no V4 command server responded at {body.ip}")
         return dev.to_snapshot()
 
+    class ScanBody(BaseModel):
+        start: int = 1
+        end: int = 254
+        timeout: float = 0.5
+
+    @app.post("/api/discovery/scan")
+    async def discovery_scan(body: ScanBody):
+        """Probe the local /24 for V4 devices that are not beaconing (held by
+        another hub), with no manual IP. Cold-cache discovery, the P3
+        late-joiner path. Runs to completion (a few seconds) and returns the
+        device_ids found plus the refreshed device list."""
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        found = await asyncio.to_thread(
+            state.discovery.scan_subnet, None, body.start, body.end,
+            body.timeout, 32, False)      # background=False -> returns id list
+        return {"found": found or [], "devices": state.discovery.snapshot()}
+
     class DeviceIdBody(BaseModel):
         device_id: str
 

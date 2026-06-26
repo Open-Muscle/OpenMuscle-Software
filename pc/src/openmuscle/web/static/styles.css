@@ -1362,6 +1362,13 @@ footer {
 }
 .discovery-probe-msg { font-size: 11px; color: var(--fg-faint, #8b96a8); margin-top: 4px; min-height: 14px; }
 .discovery-probe-msg.err { color: #f87171; }
+.discovery-scan-btn {
+    width: 100%; margin-top: 6px; padding: 5px 8px; font-size: 12px;
+    border-radius: 6px; cursor: pointer; border: 1px solid var(--border, #23262d);
+    background: var(--panel-2, #1b1f27); color: var(--fg, #e6e9ef);
+}
+.discovery-scan-btn:hover:not(:disabled) { border-color: var(--accent, #3b82f6); }
+.discovery-scan-btn:disabled { opacity: 0.55; cursor: progress; }
 
 /* role selector per source in the Sources rail (multi-band capture tagging) */
 .src-role {

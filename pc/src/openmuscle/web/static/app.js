@@ -332,6 +332,34 @@ function wireDiscoveryProbe() {
             setProbeMsg(String(err), true);
         }
     };
+
+    const scanBtn = document.getElementById('discovery-scan-btn');
+    if (scanBtn) {
+        scanBtn.onclick = async () => {
+            scanBtn.disabled = true;
+            setProbeMsg('scanning subnet…', false);
+            try {
+                const res = await fetch('/api/discovery/scan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                });
+                if (res.ok) {
+                    const r = await res.json();
+                    const n = (r.found || []).length;
+                    setProbeMsg(n ? `scan found ${n}: ${r.found.join(', ')}`
+                                  : 'scan found no new sources', false);
+                } else {
+                    const err = await res.json().catch(() => ({}));
+                    setProbeMsg(err.detail || 'scan failed', true);
+                }
+            } catch (err) {
+                setProbeMsg(String(err), true);
+            } finally {
+                scanBtn.disabled = false;
+            }
+        };
+    }
 }
 
 function setProbeMsg(text, isError) {
