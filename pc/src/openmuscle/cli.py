@@ -29,6 +29,42 @@ def receive(port, save_dir):
     run_heatmap(port=port, save_dir=save_dir)
 
 
+def _resolve_tls(certfile, keyfile):
+    """Resolve the TLS cert/key for `openmuscle web`.
+
+    Explicit --ssl-certfile/--ssl-keyfile win. Otherwise AUTO-DISCOVER a mkcert
+    pair named vr-cert.pem + vr-key.pem from, in order:
+      1. env vars OPENMUSCLE_SSL_CERTFILE / OPENMUSCLE_SSL_KEYFILE
+      2. ~/.openmuscle/            (configure-once, works from any directory)
+      3. the current directory     (where docs/vr-setup.md + the .bat put them)
+    Returns (certfile, keyfile, source); source is None when nothing was found.
+    """
+    if certfile or keyfile:
+        return certfile, keyfile, "explicit flags"
+    import os
+    home = os.path.join(os.path.expanduser("~"), ".openmuscle")
+    candidates = [
+        (os.environ.get("OPENMUSCLE_SSL_CERTFILE"),
+         os.environ.get("OPENMUSCLE_SSL_KEYFILE"), "env OPENMUSCLE_SSL_*"),
+        (os.path.join(home, "vr-cert.pem"),
+         os.path.join(home, "vr-key.pem"), "~/.openmuscle/"),
+        ("vr-cert.pem", "vr-key.pem", "current directory"),
+    ]
+    for cert, key, source in candidates:
+        if cert and key and os.path.isfile(cert) and os.path.isfile(key):
+            return cert, key, source
+    return None, None, None
+
+
+def _lan_ip():
+    """Best-effort LAN IPv4 so the printed Quest URL is copy-pasteable."""
+    try:
+        from openmuscle.discovery.manager import default_lan_ip
+        return default_lan_ip()
+    except Exception:
+        return "<your-LAN-ip>"
+
+
 @main.command()
 @click.option("--host", default="0.0.0.0", help="HTTP bind address")
 @click.option("--port", default=8000, help="HTTP port")
@@ -57,6 +93,9 @@ def receive(port, save_dir):
 def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
+    # Auto-load the mkcert TLS pair if it's configured, so plain `openmuscle web`
+    # serves HTTPS for the Quest without re-passing --ssl-* every time.
+    ssl_certfile, ssl_keyfile, tls_source = _resolve_tls(ssl_certfile, ssl_keyfile)
     # mkcert produces a cert AND key; we need both or neither.
     if bool(ssl_certfile) != bool(ssl_keyfile):
         raise click.BadParameter("--ssl-certfile and --ssl-keyfile must be used together")
@@ -64,8 +103,19 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl
     click.echo(f"OpenMuscle web UI: {scheme}://{host if host != '0.0.0.0' else 'localhost'}:{port}")
     click.echo(f"Listening for devices on UDP {udp_port}")
     if ssl_certfile:
-        click.echo(f"TLS: cert={ssl_certfile}  key={ssl_keyfile}")
-        click.echo(f"WebXR URL for the Quest: {scheme}://<your-LAN-ip>:{port}/vr")
+        click.echo(f"TLS: cert={ssl_certfile}  key={ssl_keyfile}  (from {tls_source})")
+        click.echo(f"WebXR URL for the Quest: https://{_lan_ip()}:{port}/vr?mode=ar&arm=both")
+    else:
+        click.echo("")
+        click.echo("  !!  No TLS certificate found -- serving plain HTTP.")
+        click.echo("      WebXR hand-tracking on the Quest over the LAN REQUIRES HTTPS.")
+        click.echo("      One-time fix: make a mkcert pair named vr-cert.pem + vr-key.pem")
+        click.echo("      and drop it in ~/.openmuscle/ (auto-loaded from anywhere). See")
+        click.echo("      docs/vr-setup.md. Or set OPENMUSCLE_SSL_CERTFILE/KEYFILE, or pass")
+        click.echo("      --ssl-certfile/--ssl-keyfile, or run from a folder holding the pair.")
+        click.echo(f"      Tethered alt (no cert): adb reverse tcp:{port} tcp:{port}  ->  "
+                   f"http://localhost:{port}/vr")
+        click.echo("")
     if model_path:
         click.echo(f"Inference model: {model_path}")
     hand_target = None

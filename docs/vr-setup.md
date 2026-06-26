@@ -78,12 +78,19 @@ You only do this once per headset. The CA stays trusted across Horizon OS update
 
 ### 3. Start the server with HTTPS
 
-```powershell
-cd D:\path\to\OpenMuscle-Software\pc
-pip install -e .                       # first time only
+`openmuscle web` AUTO-LOADS the TLS pair when it's configured, so you do NOT have
+to pass `--ssl-*` every time. To configure it once for any directory, drop the
+mkcert pair into `~/.openmuscle/` (on Windows: `C:\Users\<you>\.openmuscle\`):
 
-openmuscle web --ssl-certfile vr-cert.pem `
-               --ssl-keyfile  vr-key.pem
+```powershell
+mkdir $HOME\.openmuscle -Force
+copy vr-cert.pem,vr-key.pem $HOME\.openmuscle\
+```
+
+Then, from anywhere:
+
+```powershell
+openmuscle web
 ```
 
 You'll see:
@@ -91,9 +98,16 @@ You'll see:
 ```
 OpenMuscle web UI: https://localhost:8000
 Listening for devices on UDP 3141
-TLS: cert=vr-cert.pem  key=vr-key.pem
-WebXR URL for the Quest: https://<your-LAN-ip>:8000/vr
+TLS: cert=...\vr-cert.pem  key=...\vr-key.pem  (from ~/.openmuscle/)
+WebXR URL for the Quest: https://<your-LAN-ip>:8000/vr?mode=ar&arm=both
 ```
+
+Search order (first match wins): explicit `--ssl-certfile/--ssl-keyfile` →
+`OPENMUSCLE_SSL_CERTFILE`/`OPENMUSCLE_SSL_KEYFILE` env vars → `~/.openmuscle/` →
+the current directory (`vr-cert.pem` + `vr-key.pem`). If NO pair is found,
+`openmuscle web` serves plain HTTP and prints a notice telling you WebXR needs
+HTTPS and how to fix it. `start-vr-https.bat` (which passes the flags explicitly
+from `pc/`) still works too.
 
 ## Per-session flow
 
