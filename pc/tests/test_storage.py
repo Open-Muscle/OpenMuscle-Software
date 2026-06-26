@@ -154,3 +154,61 @@ class TestCaptureWriterV2Golden:
             with pytest.raises(ValueError):
                 w.write_row_v2(1, "left", "fg", [1, 2, 3, 4], [0.0, 0.0])
             w.close()
+
+
+class TestImuColumns:
+    """with_imu appends raw-IMU columns after the labels: imu_* for the sensor
+    band, lbl_imu_* for the matched labeler (e.g. a LASK5 gyro for supination)."""
+
+    IMU_HEADER = ["imu_gx", "imu_gy", "imu_gz", "imu_ax", "imu_ay", "imu_az",
+                  "lbl_imu_gx", "lbl_imu_gy", "lbl_imu_gz",
+                  "lbl_imu_ax", "lbl_imu_ay", "lbl_imu_az"]
+
+    def test_header_and_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "imu.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=2,
+                              label_count=2, schema_version="v2", with_imu=True)
+            w.write_row_v2(1000, "left", "fg-1", [10, 20], [0.0, 1.0],
+                           sensor_imu={"gyro": [1, 2, 3], "accel": [4, 5, 6]},
+                           label_imu={"gyro": [7, 8, 9], "accel": [10, 11, 12]})
+            w.write_row_v2(1001, "left", "fg-1", [11, 21], [0.0, 1.0])  # no imu
+            w.close()
+            lines = _read_csv_lines(path)
+        assert lines[0][-12:] == self.IMU_HEADER
+        assert lines[1][-12:] == ["1", "2", "3", "4", "5", "6",
+                                  "7", "8", "9", "10", "11", "12"]
+        assert lines[2][-12:] == [""] * 12          # absent IMU -> empty cells
+
+    def test_short_imu_padded(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "short.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=1,
+                              label_count=1, schema_version="v2", with_imu=True)
+            # accel missing, gyro short -> padded to 6 cells, label imu absent.
+            w.write_row_v2(1, "left", "fg", [5], [0.0], sensor_imu={"gyro": [9]})
+            w.close()
+            lines = _read_csv_lines(path)
+        assert lines[1][-12:] == ["9", "", "", "", "", "", "", "", "", "", "", ""]
+
+    def test_default_off_no_imu_columns(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "off.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=2,
+                              label_count=2, schema_version="v2")  # default off
+            w.write_row_v2(1, "left", "fg", [1, 2], [0.0, 0.0],
+                           sensor_imu={"gyro": [1, 2, 3]})          # ignored
+            w.close()
+            header = _read_csv_lines(path)[0]
+        assert "imu_gx" not in header
+        assert header[-1] == "label_1"
+
+    def test_v1_ignores_with_imu(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "v1imu.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=2,
+                              label_count=1, schema_version="v1", with_imu=True)
+            w.write_row(1.0, [1, 2], [0.0])
+            w.close()
+            header = _read_csv_lines(path)[0]
+        assert "imu_gx" not in header     # IMU columns are v2-only

@@ -104,9 +104,11 @@ class TestQuestRecordingRectangular:
             assert len(widths) == 1, f"ragged CSV! column counts seen: {widths}"
 
             # Schema v2 width = 3 lead (ts_hub_ms, role, device_id) + 60 sensor
-            # + 175 label (25 joints * 7).
-            assert len(header) == 3 + 60 + 175, len(header)
+            # + 175 label (25 joints * 7) + 12 IMU (imu_* band + lbl_imu_*
+            # labeler; with_imu defaults on). Rectangularity must still hold.
+            assert len(header) == 3 + 60 + 175 + 12, len(header)
             assert header[:3] == ["ts_hub_ms", "role", "device_id"], header[:3]
+            assert "imu_gx" in header and "lbl_imu_gx" in header
             # Every data row carries the lowercase role token + the sensor id.
             assert data_rows[0][1] == "left"
             assert data_rows[0][2] == "fg-test"
@@ -313,6 +315,65 @@ class TestRecordingDefaults:
             # No role tags set -> refuse rather than guess.
             with __import__("pytest").raises(RuntimeError):
                 s.start_multiband_recording(filename="x.csv")
+
+    def test_imu_columns_recorded_sensor_and_labeler(self):
+        # data.imu on the sensor band -> imu_* columns; data.imu on the matched
+        # labeler (LASK5 gyro = supination ground-truth) -> lbl_imu_* columns.
+        def _fg(recv_time, imu):
+            return OpenMusclePacket(
+                version=CURRENT_VERSION, device_type="flexgrid",
+                device_id="fg-imu", timestamp_ms=int(recv_time * 1000),
+                data={"matrix": [[10, 11, 12, 13] for _ in range(15)],
+                      "rows": 4, "cols": 15, "imu": imu},
+                receive_time=recv_time)
+
+        def _lask5(recv_time, imu):
+            return OpenMusclePacket(
+                version=CURRENT_VERSION, device_type="lask5",
+                device_id="lask5-imu", timestamp_ms=int(recv_time * 1000),
+                data={"values": [100, 200, 300, 400], "imu": imu},
+                receive_time=recv_time)
+
+        s_imu = {"gyro": [1, 2, 3], "accel": [4, 5, 6]}
+        l_imu = {"gyro": [7, 8, 9], "accel": [10, 11, 12]}
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            s = _make_state(tmp)
+            s._handle_packet(_fg(time.time(), s_imu))
+            s._handle_packet(_lask5(time.time(), l_imu))
+            rec = s.start_recording(filename="imu.csv", label_count=4)
+            assert rec.label_device_id == "lask5-imu"   # auto-picked labeler
+            t = time.time()
+            s._handle_packet(_lask5(t, l_imu))           # label in window
+            s._handle_packet(_fg(t + 0.001, s_imu))      # sensor pairs with it
+            s.stop_recording()
+
+            with open(tmp / "imu.csv") as f:
+                rows = list(csv.reader(f))
+            header, data = rows[0], rows[1:]
+            assert data, "expected a paired row"
+            gi = header.index("imu_gx")
+            assert data[0][gi:gi + 6] == ["1", "2", "3", "4", "5", "6"]
+            li = header.index("lbl_imu_gx")
+            assert data[0][li:li + 6] == ["7", "8", "9", "10", "11", "12"]
+            assert s.read_capture_meta("imu.csv")["auto"]["imu_columns"] is True
+
+    def test_imu_columns_opt_out(self):
+        # with_imu=False keeps the legacy schema-v2 columns (no imu_*).
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            s = _make_state(tmp)
+            s._handle_packet(_flexgrid_packet())
+            s._handle_packet(_lask5_packet())
+            s.start_recording(filename="noimu.csv", with_imu=False)
+            t = time.time()
+            s._handle_packet(_lask5_packet(recv_time=t))
+            s._handle_packet(_flexgrid_packet(recv_time=t + 0.001))
+            s.stop_recording()
+            with open(tmp / "noimu.csv") as f:
+                header = next(csv.reader(f))
+            assert "imu_gx" not in header
+            assert s.read_capture_meta("noimu.csv")["auto"]["imu_columns"] is False
 
     def test_flexgrid_data_imu_in_snapshot(self):
         # Fast IMU path: data.imu={gyro,accel} on a flexgrid frame surfaces as

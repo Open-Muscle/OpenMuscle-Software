@@ -21,9 +21,18 @@ class CaptureWriter:
     and the writer derives it from the first row.
     """
 
+    # IMU columns (board: LASK5 gyro + flexgrid band orientation into the
+    # training set). Two groups per row: the SENSOR band that produced the row,
+    # and the matched LABELER (e.g. a LASK5 whose gyro is the supination
+    # ground-truth). Appended AFTER the labels so name-addressable readers stay
+    # backward compatible and the label-count inference is unaffected.
+    _IMU_SENSOR_COLS = ["imu_gx", "imu_gy", "imu_gz", "imu_ax", "imu_ay", "imu_az"]
+    _IMU_LABEL_COLS = ["lbl_imu_gx", "lbl_imu_gy", "lbl_imu_gz",
+                       "lbl_imu_ax", "lbl_imu_ay", "lbl_imu_az"]
+
     def __init__(self, output_path: str = None, matrix_rows: int = 4,
                  matrix_cols: int = 16, label_count: Optional[int] = 4,
-                 schema_version: str = "v1"):
+                 schema_version: str = "v1", with_imu: bool = False):
         if output_path is None:
             os.makedirs("data/raw/merged", exist_ok=True)
             output_path = f"data/raw/merged/capture_{int(time.time())}.csv"
@@ -39,6 +48,9 @@ class CaptureWriter:
         # one row per source frame). Byte-for-byte target is the schema-v2 golden
         # (OpenMuscle-Connect tools/make_golden_csv_v2.py, board #0073).
         self._schema_version = schema_version
+        # Append raw-IMU columns (sensor band + matched labeler). v2 only; opt-in
+        # so the schema-v2 byte golden (no IMU) stays the default.
+        self._with_imu = bool(with_imu) and schema_version == "v2"
 
         self._file = open(self.path, "w", newline="")
         self._writer = csv.writer(self._file)
@@ -53,9 +65,24 @@ class CaptureWriter:
             lead = ["ts_hub_ms", "role", "device_id"]
         else:
             lead = ["timestamp"]
-        self._writer.writerow(lead + sensor_cols + label_cols)
+        imu_cols = (self._IMU_SENSOR_COLS + self._IMU_LABEL_COLS
+                    if self._with_imu else [])
+        self._writer.writerow(lead + sensor_cols + label_cols + imu_cols)
         self._label_count = label_count
         self._header_written = True
+
+    @staticmethod
+    def _imu_cells(imu) -> list:
+        """Flatten {gyro:[gx,gy,gz], accel:[ax,ay,az]} to 6 cells. Absent or
+        short -> empty cells (distinguishable from a real 0 reading)."""
+        if not isinstance(imu, dict):
+            return [""] * 6
+
+        def three(key):
+            v = list(imu.get(key) or [])[:3]
+            return v + [""] * (3 - len(v))
+
+        return three("gyro") + three("accel")
 
     def write_row(self, timestamp: float, sensor_values: list, label_values: list):
         if not self._header_written:
@@ -66,21 +93,28 @@ class CaptureWriter:
         self._count += 1
 
     def write_row_v2(self, ts_hub_ms: int, role: str, device_id: str,
-                     sensor_values: list, label_values: list):
+                     sensor_values: list, label_values: list,
+                     sensor_imu=None, label_imu=None):
         """Write one schema-v2 row: ts_hub_ms, role, device_id, then row-major
         sensor features and labels. `sensor_values` MUST already be flattened
         row-major (R{r}C{c}, r outer) to match the header + the byte golden.
         The writer is role-agnostic: bilateral captures are just interleaved
         rows with different role/device_id, written by the caller in arrival
-        order."""
+        order.
+
+        sensor_imu / label_imu are {gyro,accel} dicts (or None) for the band
+        that produced the row and the matched labeler; only written when the
+        writer was built with_imu=True (else ignored)."""
         if self._schema_version != "v2":
             raise ValueError("write_row_v2 requires schema_version='v2'")
         if not self._header_written:
             count = (self._label_count if self._label_count is not None
                      else len(label_values))
             self._write_header(count)
-        self._writer.writerow([ts_hub_ms, role, device_id]
-                              + sensor_values + label_values)
+        row = [ts_hub_ms, role, device_id] + sensor_values + label_values
+        if self._with_imu:
+            row += self._imu_cells(sensor_imu) + self._imu_cells(label_imu)
+        self._writer.writerow(row)
         self._count += 1
 
     @property

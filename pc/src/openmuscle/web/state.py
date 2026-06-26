@@ -521,6 +521,7 @@ class AppState:
                 pass
 
         # Try to pair this sensor frame with the closest label in window
+        label_imu = None
         if rec.label_device_id is None:
             # Sensor-only mode (no label device): just write sensor + empty labels.
             label_values = []
@@ -531,6 +532,9 @@ class AppState:
                 return  # drop unpaired sensor frames from the paired CSV
             rec.matched_count += 1
             label_values = list(matched.data.get("values", []))
+            # The matched labeler's IMU = the orientation ground-truth (e.g. a
+            # LASK5 gyro for supination). Recorded into the lbl_imu_* columns.
+            label_imu = matched.data.get("imu")
 
         # Guarantee a rectangular CSV. If the label width was locked (quest_hand)
         # and this matched label has a different length, pad with zeros or
@@ -562,7 +566,9 @@ class AppState:
         # already row-major (above); labels are the matched label vector.
         ts_hub_ms = int(pkt.receive_time * 1000)
         rec.writer.write_row_v2(ts_hub_ms, rec.sensors[pkt.device_id],
-                                pkt.device_id, flat, label_values)
+                                pkt.device_id, flat, label_values,
+                                sensor_imu=pkt.data.get("imu"),
+                                label_imu=label_imu)
 
     def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
         """Emit the per-capture labels-schema sidecar.
@@ -918,7 +924,8 @@ class AppState:
                         window_ms: Optional[int] = None,
                         label_count: int = 4,
                         role: str = "left",
-                        extra_sensors: Optional[list] = None) -> ActiveCapture:
+                        extra_sensors: Optional[list] = None,
+                        with_imu: bool = True) -> ActiveCapture:
         """Start a paired recording.
 
         Args:
@@ -1041,6 +1048,7 @@ class AppState:
             matrix_cols=sensor_dev.cols,
             label_count=effective_label_count,
             schema_version="v2",
+            with_imu=with_imu,
         )
 
         # Open sidecars block-buffered (4 KB). Earlier we used buffering=1
@@ -1092,6 +1100,9 @@ class AppState:
             "label_source": label_device_type,   # "lask5" | "quest_hand" | None
             "window_ms": window_ms,
             "sensor_shape": [sensor_dev.rows, sensor_dev.cols],
+            # When set, the CSV carries imu_* (sensor band) + lbl_imu_* (matched
+            # labeler, e.g. LASK5 gyro for supination) columns after the labels.
+            "imu_columns": bool(with_imu),
             "started_at": self.recording.started_at,
             "firmware": {
                 "sensor_reset_cause": sensor_status.get("reset_cause_name"),
