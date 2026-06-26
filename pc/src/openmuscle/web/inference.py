@@ -55,10 +55,33 @@ class InferenceEngine:
         # Best-effort label count
         self.n_labels: int = self.metadata.get("metrics", {}).get("n_labels", 4)
 
+        # Feature names the model was fitted with (sklearn sets this when fit on
+        # a DataFrame). When present we feed predict() a names-matched DataFrame
+        # so it doesn't warn "X does not have valid feature names" every frame
+        # and so columns align by NAME, not just position. None for models fit
+        # on bare arrays (then a plain list is correct + warning-free).
+        self.feature_names = getattr(self.model, "feature_names_in_", None)
+        self._pd = None   # lazily-cached pandas module (only if names present)
+
         # Counters for status reporting
         self.predict_count = 0
         self.last_error: Optional[str] = None
         self.last_prediction: Optional[list] = None
+
+    def _model_input(self, flat):
+        """Shape the flat feature row for sklearn's predict().
+
+        If the model was fit with named columns (a DataFrame), return a
+        names-matched 1-row DataFrame -- this silences the per-frame
+        "X does not have valid feature names" warning and makes sklearn align
+        columns by name. Otherwise a bare [list] is correct and warning-free.
+        """
+        if self.feature_names is None:
+            return [flat]
+        if self._pd is None:
+            import pandas as pd
+            self._pd = pd
+        return self._pd.DataFrame([flat], columns=self.feature_names)
 
     @property
     def name(self) -> str:
@@ -92,11 +115,7 @@ class InferenceEngine:
             return None
 
         try:
-            # sklearn models want shape (1, n_features). Avoid importing
-            # numpy here -- a list-of-lists works for predict() and we
-            # don't want to pay numpy import cost on workers that don't
-            # need it.
-            raw_pred = self.model.predict([flat])
+            raw_pred = self.model.predict(self._model_input(flat))
         except Exception as e:
             self.last_error = "predict() raised: {}".format(e)
             return None
