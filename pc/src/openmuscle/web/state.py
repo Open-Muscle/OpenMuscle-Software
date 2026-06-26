@@ -214,6 +214,14 @@ class ActiveCapture:
     # stays rectangular and consistent with the schema. None until locked.
     locked_label_count: Optional[int] = None
     label_width_mismatch_count: int = 0
+    # Bilateral two-hand capture: each band is matched to the labeler of ITS OWN
+    # side, so the left band's rows carry the left-hand label and the right
+    # band's rows carry the right-hand label (each tagged with its role). Empty
+    # for single-labeler captures, which keep using `matcher`/`label_device_id`.
+    # side_matchers: {"left": TemporalMatcher, "right": TemporalMatcher}.
+    # label_id_side: {labeler_device_id: "left"/"right"} for routing label frames.
+    side_matchers: dict = field(default_factory=dict)
+    label_id_side: dict = field(default_factory=dict)
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -481,6 +489,23 @@ class AppState:
         if rec is None:
             return
 
+        # --- Bilateral label stream: route to the matcher of its OWN side, so
+        # the left-hand labeler feeds the left band and the right-hand labeler
+        # feeds the right band (two-hand capture). ---
+        if rec.label_id_side and pkt.device_id in rec.label_id_side:
+            rec.side_matchers[rec.label_id_side[pkt.device_id]].add_label(pkt)
+            rec.label_packets_seen += 1
+            self._write_jsonl(rec.label_jsonl, pkt)
+            if rec.labels_schema_path is not None and not rec.labels_schema_written:
+                self._write_labels_schema(rec, pkt)
+            if (rec.label_packets_seen % self.JSONL_FLUSH_EVERY == 0
+                    and rec.label_jsonl is not None):
+                try:
+                    rec.label_jsonl.flush()
+                except Exception:
+                    pass
+            return
+
         # --- Label stream: append to matcher and JSONL sidecar ---
         if rec.label_device_id is not None and pkt.device_id == rec.label_device_id:
             rec.matcher.add_label(pkt)
@@ -522,7 +547,21 @@ class AppState:
 
         # Try to pair this sensor frame with the closest label in window
         label_imu = None
-        if rec.label_device_id is None:
+        if rec.side_matchers:
+            # Bilateral: match this band against the labeler of its OWN side, so
+            # the left band gets the left hand and the right band the right hand.
+            matcher = rec.side_matchers.get(rec.sensors.get(pkt.device_id))
+            if matcher is None:
+                label_values = []      # band with no same-side labeler: sensor-only
+            else:
+                matched = matcher.match(pkt)
+                if matched is None:
+                    rec.unpaired_sensor_count += 1
+                    return
+                rec.matched_count += 1
+                label_values = list(matched.data.get("values", []))
+                label_imu = matched.data.get("imu")
+        elif rec.label_device_id is None:
             # Sensor-only mode (no label device): just write sensor + empty labels.
             label_values = []
         else:
@@ -925,8 +964,15 @@ class AppState:
                         label_count: int = 4,
                         role: str = "left",
                         extra_sensors: Optional[list] = None,
-                        with_imu: bool = True) -> ActiveCapture:
+                        with_imu: bool = True,
+                        side_labelers: Optional[dict] = None) -> ActiveCapture:
         """Start a paired recording.
+
+        side_labelers (two-hand capture): {"left": device_id, "right": device_id}
+        maps each side to its own labeler so the left band is matched to the
+        left-hand labeler and the right band to the right-hand labeler. When set,
+        the single label_device_id matcher is bypassed for per-side matchers and
+        the bands (sensor_device_id + extra_sensors) must be tagged left/right.
 
         Args:
             sensor_device_id: device producing the FlexGrid matrix. If None,
@@ -963,8 +1009,21 @@ class AppState:
             if sensor_device_id is None:
                 raise RuntimeError("No flexgrid device seen yet; can't auto-pick sensor source")
 
+        # Bilateral two-hand capture: validate the per-side labelers and use the
+        # left labeler as the primary for width/window/sidecar scaffolding. The
+        # actual matching is per-side (built below); the single matcher is unused.
+        if side_labelers:
+            side_labelers = {s: did for s, did in side_labelers.items()
+                             if s in ("left", "right") and did}
+            if set(side_labelers) != {"left", "right"}:
+                raise RuntimeError(
+                    "side_labelers needs both 'left' and 'right' device ids")
+            for s, did in side_labelers.items():
+                if did not in self.devices:
+                    raise RuntimeError(f"{s} labeler '{did}' not seen yet")
+            label_device_id = side_labelers["left"]   # primary, for scaffolding
         # Distinguish "explicit empty -> sensor-only" from "auto-pick"
-        if label_device_id is None:
+        elif label_device_id is None:
             label_device_id = self._auto_pick_label()
             # if still None, sensor-only mode (label_count gets zeroed below)
         elif label_device_id == "":
@@ -1067,6 +1126,14 @@ class AppState:
 
         matcher = TemporalMatcher(window_s=window_ms / 1000.0)
 
+        # Bilateral: one matcher per side + a labeler-id -> side map for routing.
+        side_matchers = {}
+        label_id_side = {}
+        if side_labelers:
+            for s, did in side_labelers.items():
+                side_matchers[s] = TemporalMatcher(window_s=window_ms / 1000.0)
+                label_id_side[did] = s
+
         self.recording = ActiveCapture(
             writer=writer,
             path=csv_path,
@@ -1082,6 +1149,8 @@ class AppState:
             sensor_jsonl=sensor_stream,
             label_jsonl=label_stream,
             labels_schema_path=labels_schema_sidecar,
+            side_matchers=side_matchers,
+            label_id_side=label_id_side,
         )
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(

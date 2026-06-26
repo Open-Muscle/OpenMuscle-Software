@@ -281,6 +281,65 @@ class TestRecordingDefaults:
             assert X.shape[1] == 120
             assert X.shape[0] >= 1
 
+    def test_bilateral_per_side_labeling(self):
+        # Two hands: the LEFT band is matched to the left-hand labeler and the
+        # RIGHT band to the right-hand labeler (side-aware), so each band's rows
+        # carry its OWN hand's label. Markers: left-hand joints pos=2.0,
+        # right-hand pos=100.0, so the recorded label sets are distinguishable.
+        def _hand(handedness, device_id, marker):
+            joints = [{"name": f"j{i}", "pos": [marker, marker, marker],
+                       "rot": [0, 0, 0, 1]} for i in range(25)]
+            return {"device_id": device_id, "handedness": handedness,
+                    "ts": 0, "joints": joints}
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            s = _make_state(tmp)
+            s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+            s._handle_packet(_flexgrid_packet(device_id="fg-right"))
+            s.ingest_quest_packet(_hand("left", "quest-left", 2.0))
+            s.ingest_quest_packet(_hand("right", "quest-right", 100.0))
+            rec = s.start_recording(
+                filename="bi.csv", sensor_device_id="fg-left", role="left",
+                extra_sensors=[{"device_id": "fg-right", "role": "right"}],
+                side_labelers={"left": "quest-left", "right": "quest-right"})
+            assert set(rec.side_matchers) == {"left", "right"}
+            assert rec.label_id_side == {"quest-left": "left", "quest-right": "right"}
+
+            for _ in range(3):
+                t = time.time()
+                s.ingest_quest_packet(_hand("left", "quest-left", 2.0))
+                s.ingest_quest_packet(_hand("right", "quest-right", 100.0))
+                s._handle_packet(_flexgrid_packet(device_id="fg-left", recv_time=t + 0.001))
+                s._handle_packet(_flexgrid_packet(device_id="fg-right", recv_time=t + 0.001))
+                time.sleep(0.005)
+            s.stop_recording()
+
+            rows = list(csv.reader(open(tmp / "bi.csv")))
+            header, data = rows[0], rows[1:]
+            role_i = header.index("role")
+            lbl_i = [i for i, c in enumerate(header) if c.startswith("label_")]
+            left_rows = [r for r in data if r[role_i] == "left"]
+            right_rows = [r for r in data if r[role_i] == "right"]
+            assert left_rows and right_rows
+            for r in left_rows:        # left band paired to left hand (2.0)
+                vals = {r[i] for i in lbl_i}
+                assert "2.0" in vals and "100.0" not in vals
+            for r in right_rows:       # right band paired to right hand (100.0)
+                vals = {r[i] for i in lbl_i}
+                assert "100.0" in vals and "2.0" not in vals
+
+    def test_bilateral_requires_both_sides(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+            s.ingest_quest_packet({"device_id": "quest-left", "handedness": "left",
+                                   "joints": [{"name": "w", "pos": [1, 1, 1],
+                                               "rot": [0, 0, 0, 1]}]})
+            with __import__("pytest").raises(RuntimeError):
+                s.start_recording(sensor_device_id="fg-left",
+                                  side_labelers={"left": "quest-left"})  # no right
+
     def test_start_multiband_from_role_tags(self):
         # The record FLOW: tag bands + labeler in discovery (Sources-panel
         # role-UX), then start_multiband_recording gathers them automatically.
