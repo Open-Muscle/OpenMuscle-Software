@@ -29,6 +29,15 @@ settings.json
 venv/
 env/
 
-# Local TLS certs for the VR /vr page (mkcert-generated, per-machine,
-# not secret in the cryptographic sense but no reason to ship them)
+# Local TLS material for the VR /vr page (mkcert-generated, per-machine).
+# vr-key.pem is a PRIVATE KEY and the mkcert rootCA-key is the CA private key --
+# NEVER commit these. Broad cert/key globs so nothing slips in regardless of
+# name or format. Per-machine certs are also kept in ~/.openmuscle/ (outside the
+# repo); openmuscle web auto-loads from there.
 *.pem
+*.key
+*.crt
+*.pfx
+*.p12
+*.cer
+rootCA*.pem
