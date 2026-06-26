@@ -832,6 +832,11 @@ class AppState:
             rec = {
                 "filename": r.path.name,
                 "schema_version": "v2",
+                # Hub epoch-ms when the capture started == the clock the CSV's
+                # ts_hub_ms is in. The VR sync slate shows this so a screen-
+                # recorded video frame pairs to the exact CSV row (correct clock,
+                # unlike the headset's local Date.now()).
+                "started_at_ms": int(r.started_at * 1000),
                 "role": r.role,
                 "sensors": dict(r.sensors),   # {device_id: role} for every band
                 "sensor_device_id": r.sensor_device_id,

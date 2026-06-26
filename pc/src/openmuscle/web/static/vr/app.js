@@ -1760,6 +1760,15 @@ function updateFromSnapshot(snap, timestampMs) {
         if (!warmingUp) txt += ` · ${pct}%`;
         if (dropping) txt += ' · JOINTS DROPPING';
         drawHeader(txt, true, qColor);
+        if (!uiState.recording) {
+            // Rising edge: recording just started -- from the in-VR REC button
+            // OR the PC (single / multiband / two-hand, where no VR button is
+            // pressed). Fire the sync slate here so the headset's screen
+            // recording always gets a frame-accurate pairing point. The
+            // timestamp is the hub start (started_at_ms), the same clock as the
+            // CSV's ts_hub_ms, so the paired frame maps to an exact row.
+            showSyncSlate(rec.filename, rec.started_at_ms || Date.now());
+        }
         uiState.recording = true;
     } else {
         const fgHz = fg ? `${fg.hz?.toFixed?.(0) || '0'} Hz` : 'no FlexGrid';
@@ -1806,11 +1815,9 @@ async function toggleRecording() {
             if (r.ok) {
                 const data = await r.json();
                 setStatus(`recording: ${data.filename} (window ${data.window_ms}ms)`);
-                // Fire the sync slate so the headset's screen recording
-                // captures a clean frame-accurate pairing point. The Unix-
-                // ms timestamp embedded in the slate lets you locate the
-                // exact CSV row when scrubbing the video later.
-                showSyncSlate(data.filename, Date.now());
+                // The sync slate fires on the recording-start edge in
+                // updateFromSnapshot (covers PC-started captures too), so it is
+                // not triggered here -- that would double-fire it.
             } else {
                 const err = await r.text();
                 setStatus(`start failed: ${err.slice(0, 60)}`);

@@ -474,6 +474,19 @@ class TestRecordingDefaults:
             assert "imu_gx" not in header
             assert s.read_capture_meta("noimu.csv")["auto"]["imu_columns"] is False
 
+    def test_snapshot_recording_has_started_at_ms(self):
+        # The VR sync slate reads recording.started_at_ms (hub epoch == the CSV's
+        # ts_hub_ms clock) to pair a screen-recorded video frame to a CSV row.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_flexgrid_packet())
+            s._handle_packet(_lask5_packet())
+            s.start_recording(filename="sa.csv")
+            rec = s._snapshot()["recording"]
+            assert isinstance(rec["started_at_ms"], int)
+            assert abs(rec["started_at_ms"] - int(time.time() * 1000)) < 5000
+            s.stop_recording()
+
     def test_flexgrid_data_imu_in_snapshot(self):
         # Fast IMU path: data.imu={gyro,accel} on a flexgrid frame surfaces as
         # device.imu in the WS snapshot (drives the gyro/orientation widgets).
