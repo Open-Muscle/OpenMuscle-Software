@@ -25,6 +25,7 @@ from om_commands import CommandServer, build_standard_handlers
 import om_provisioning
 from sensor_pistons import SensorPistons
 from display_lask5 import draw_taskbar, play_splash
+from om_imu import IMU as _IMU
 
 
 class LASK5(BaseDevice):
@@ -134,6 +135,25 @@ class LASK5(BaseDevice):
         self._streaming = True
         self._reboot_requested = False
 
+        # IMU on the OLED I2C bus (SCL=9/SDA=8). The driver auto-detects
+        # BMI160 / InvenSense ICM-42688-P / TOKMAS variants and returns
+        # gracefully if none is wired. SAFETY: both construction and init
+        # are wrapped here because lask5-01 is the only live LASK5 unit
+        # and an unhandled I2C exception at boot must not boot-loop the
+        # device (see brownout-recovery commit 3d02ee6 + overseer #0218).
+        self.imu = None
+        try:
+            imu = _IMU(
+                scl_pin=self.settings.get("scl_pin", 9),
+                sda_pin=self.settings.get("sda_pin", 8),
+            )
+            imu.init()
+            self.imu = imu
+        except Exception as e:
+            log.warn("IMU construction failed (continuing without IMU): {} ({})".format(
+                type(e).__name__, e))
+            self.imu = None
+
     # ----- DeviceState interface for om_commands.build_standard_handlers -----
     # The standard handler factory needs: subscribers, device_id, device_type,
     # fw_version, caps, extra_info, start_stream(), stop_stream(), request_reboot()
@@ -148,11 +168,19 @@ class LASK5(BaseDevice):
 
     @property
     def caps(self):
-        return ["label", "status", "cmd"]
+        base = ["label", "status", "cmd"]
+        if self.imu and self.imu.present:
+            base.append("imu")
+        return base
 
     @property
     def extra_info(self):
-        return {"pistons": 4, "joystick": True, "espnow_paired": True}
+        info = {"pistons": 4, "joystick": True, "espnow_paired": True}
+        if self.imu and self.imu.present:
+            scale = self.imu.scale_dict()
+            if scale:
+                info["imu"] = scale
+        return info
 
     def start_stream(self):
         self._streaming = True
@@ -277,6 +305,15 @@ class LASK5(BaseDevice):
         # ESP-NOW path to OpenHand is untouched. The cmd server binds before
         # we spawn any other task so hubs hitting the device immediately
         # after boot can connect.
+        # Announce extras include imu chip + per-LSB scale when an IMU is
+        # detected, so the hub can normalize data.imu raw counts to a common
+        # unit without having to read get_info first (overseer #0217).
+        announce_extras = {"pistons": 4, "joystick": True}
+        if self.imu and self.imu.present:
+            scale = self.imu.scale_dict()
+            if scale:
+                announce_extras["imu"] = scale
+
         self._discovery = Discovery(
             self.settings, self.subscribers, self.network.sta,
             device_type=self.DEVICE_TYPE,
@@ -285,7 +322,7 @@ class LASK5(BaseDevice):
                 "cmd":   self.settings.get("cmd_port", 8002),
             },
             caps=self.caps,
-            extra_fields={"pistons": 4, "joystick": True},
+            extra_fields=announce_extras,
             beacon_port=self.settings.get("udp_announce_port", 3140),
             announce_interval_s=self.settings.get("announce_interval_s", 1),
             fw_version=self.fw_version,
@@ -393,6 +430,22 @@ class LASK5(BaseDevice):
                         "x": self.joystick_x.read(),
                         "y": self.joystick_y.read(),
                     }
+                    # data.imu Option B (overseer #0168): ride IMU samples on
+                    # the label channel at the label rate. Raw counts so the
+                    # hub normalizes with the chip's scale (advertised in
+                    # announce.imu / get_info.imu). Inner try keeps a bad
+                    # IMU read from killing the whole frame.
+                    if self.imu and self.imu.present:
+                        try:
+                            s = self.imu.read()
+                            if s is not None:
+                                data["imu"] = {
+                                    "gyro":  [s["gx"], s["gy"], s["gz"]],
+                                    "accel": [s["ax"], s["ay"], s["az"]],
+                                }
+                        except Exception as e:
+                            log.warn("send_loop imu read failed: {} ({})".format(
+                                type(e).__name__, e))
                     packet = self.make_packet(data)
                     # send_udp_to_subscribers no-ops when the list is empty, so
                     # the work above is wasted when idle; we still do it so the
