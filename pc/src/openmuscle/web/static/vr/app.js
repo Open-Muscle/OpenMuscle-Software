@@ -163,6 +163,14 @@ async function preflightChecks() {
     } catch (e) {
         setCheck('check-server', 'bad', `server unreachable (${e.message})`);
     }
+    // Highlight the quick-launch preset matching the current mode + arm so the
+    // operator can see what they're about to enter.
+    const curArm = BOTH_HANDS ? 'both' : ARM;
+    document.querySelectorAll('.ql-btn').forEach((b) => {
+        b.classList.toggle('active',
+            b.dataset.mode === MODE && b.dataset.arm === curArm);
+    });
+
     document.getElementById('arm-select').value = BOTH_HANDS ? 'both' : ARM;
     document.getElementById('arm-select').addEventListener('change', (e) => {
         // Re-load with the new arm in the URL so the choice survives session start.

@@ -27,6 +27,18 @@
             <li><span class="ok" id="check-xr">WebXR + hand-tracking available</span></li>
             <li><span class="ok" id="check-server">Server reachable (/api/devices)</span></li>
         </ul>
+        <div class="quicklaunch">
+            <span class="ql-head">Quick launch</span>
+            <span class="hint">Tap a setup (no URL typing), then tap Enter / Start below. VR = black background; AR = passthrough. "Two-hand" streams both hands (quest-left / quest-right) and you record from the PC.</span>
+            <div class="ql-grid">
+                <a class="ql-btn" data-mode="vr" data-arm="right" href="?mode=vr&amp;arm=right"><b>VR</b><span>Right hand</span></a>
+                <a class="ql-btn" data-mode="vr" data-arm="left"  href="?mode=vr&amp;arm=left"><b>VR</b><span>Left hand</span></a>
+                <a class="ql-btn" data-mode="vr" data-arm="both"  href="?mode=vr&amp;arm=both"><b>VR</b><span>Two-hand</span></a>
+                <a class="ql-btn" data-mode="ar" data-arm="right" href="?mode=ar&amp;arm=right"><b>AR</b><span>Right hand</span></a>
+                <a class="ql-btn" data-mode="ar" data-arm="left"  href="?mode=ar&amp;arm=left"><b>AR</b><span>Left hand</span></a>
+                <a class="ql-btn" data-mode="ar" data-arm="both"  href="?mode=ar&amp;arm=both"><b>AR</b><span>Two-hand</span></a>
+            </div>
+        </div>
         <div class="row">
             <label>Capture arm:
                 <select id="arm-select">
@@ -35,7 +47,7 @@
                     <option value="both">both (two-hand)</option>
                 </select>
             </label>
-            <span class="hint">Pick the side whose Quest hand we record (the other hand stays free for the record button). Choose "both" for a two-hand capture with two bracelets: both hands stream as quest-left / quest-right and you start recording from the PC.</span>
+            <span class="hint">Fine-tune just the arm in the current mode (the quick-launch buttons above set mode + arm together).</span>
         </div>
     </section>
     <div id="enter-vr-mount"><!-- VRButton inserts itself here --></div>
@@ -46,6 +58,6 @@
 <!-- The ?v=N querystring is a cache-buster for Quest Browser, which can be
      aggressive about caching ES modules even with no-cache response headers.
      Bump N each time app.js changes. -->
-<script type="module" src="/static/vr/app.js?v=25"></script>
+<script type="module" src="/static/vr/app.js?v=26"></script>
 </body>
 </html>

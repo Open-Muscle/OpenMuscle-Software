@@ -100,6 +100,52 @@ header h1 {
     color: #8b96a8;
 }
 
+/* Quick-launch preset buttons: big tap targets so the operator doesn't have to
+   type ?mode=&arm= URLs in the headset. Each sets mode + arm then reloads; the
+   matching VRButton/ARButton appears for the chosen mode. */
+.quicklaunch {
+    border-top: 1px solid #23262d;
+    padding-top: 14px;
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ql-head {
+    font-size: 14px;
+    font-weight: 600;
+    color: #d8dde6;
+}
+.ql-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 4px;
+}
+.ql-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 64px;
+    padding: 12px 8px;
+    background: #1f2228;
+    border: 1px solid #2d313a;
+    border-radius: 10px;
+    color: #d8dde6;
+    text-decoration: none;
+    text-align: center;
+}
+.ql-btn b { font-size: 16px; letter-spacing: 0.04em; }
+.ql-btn span { font-size: 12px; color: #8b96a8; }
+.ql-btn:hover { border-color: #1f6feb; }
+.ql-btn.active {
+    border-color: #3fb950;
+    background: #17251a;
+}
+.ql-btn.active span { color: #3fb950; }
+
 #enter-vr-mount {
     display: flex;
     justify-content: center;
