@@ -338,6 +338,28 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "shape": [rec.rows, rec.cols],
         }
 
+    @app.post("/api/recording/bilateral")
+    async def start_bilateral(body: MultibandBody):
+        """Start a two-hand capture: the left band is matched to the left-hand
+        Quest stream and the right band to the right-hand stream. Bands come from
+        the Sources-panel left/right role tags; labelers are quest-left /
+        quest-right (the VR client opened with ?arm=both)."""
+        try:
+            rec = state.start_bilateral_recording(
+                filename=body.filename, window_ms=body.window_ms)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OSError as e:
+            raise HTTPException(status_code=500,
+                                detail=f"Failed to create capture file: {e}")
+        return {
+            "filename": rec.path.name,
+            "sensors": dict(rec.sensors),
+            "side_labelers": dict(rec.label_id_side),
+            "window_ms": int(rec.window_s * 1000),
+            "shape": [rec.rows, rec.cols],
+        }
+
     @app.delete("/api/recording")
     async def stop_recording():
         result = state.stop_recording()

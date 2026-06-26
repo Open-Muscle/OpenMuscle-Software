@@ -8,6 +8,7 @@ const ctx         = canvas.getContext('2d');
 const heatmapMeta = document.getElementById('heatmap-meta');
 const recordBtn   = document.getElementById('record-btn');
 const recordMultibandBtn = document.getElementById('record-multiband-btn');
+const recordBilateralBtn = document.getElementById('record-bilateral-btn');
 const recordStatus= document.getElementById('record-status');
 const captureName = document.getElementById('capture-name');
 const capturesBody= document.getElementById('captures-body');
@@ -1093,6 +1094,27 @@ if (recordMultibandBtn) {
         try {
             const body = { filename: captureName.value.trim() || null };
             const r = await fetch('/api/recording/multiband', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!r.ok) throw new Error(await readError(r));
+            captureName.value = '';
+        } catch (e) {
+            alert(`Error: ${e.message}`);
+        }
+    };
+}
+
+// Two-hand (bilateral): record both bands (tagged left/right) matched to the two
+// Quest hand streams (quest-left/quest-right from the VR app's ?arm=both). Each
+// band's rows carry its OWN hand's label. Start-only; use Stop to end.
+if (recordBilateralBtn) {
+    recordBilateralBtn.onclick = async () => {
+        if (recordingState) return;
+        try {
+            const body = { filename: captureName.value.trim() || null };
+            const r = await fetch('/api/recording/bilateral', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),

@@ -32,9 +32,10 @@
                 <select id="arm-select">
                     <option value="right">right</option>
                     <option value="left">left</option>
+                    <option value="both">both (two-hand)</option>
                 </select>
             </label>
-            <span class="hint">The Quest hand on this side is the one whose joints we record. The other hand stays free for the record button.</span>
+            <span class="hint">Pick the side whose Quest hand we record (the other hand stays free for the record button). Choose "both" for a two-hand capture with two bracelets: both hands stream as quest-left / quest-right and you start recording from the PC.</span>
         </div>
     </section>
     <div id="enter-vr-mount"><!-- VRButton inserts itself here --></div>
@@ -45,6 +46,6 @@
 <!-- The ?v=N querystring is a cache-buster for Quest Browser, which can be
      aggressive about caching ES modules even with no-cache response headers.
      Bump N each time app.js changes. -->
-<script type="module" src="/static/vr/app.js?v=23"></script>
+<script type="module" src="/static/vr/app.js?v=24"></script>
 </body>
 </html>

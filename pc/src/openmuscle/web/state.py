@@ -1261,6 +1261,41 @@ class AppState:
             label_device_id=labeler,   # None -> start_recording auto-picks
             filename=filename, window_ms=window_ms)
 
+    def start_bilateral_recording(self, filename: Optional[str] = None,
+                                  window_ms: Optional[int] = None) -> ActiveCapture:
+        """Two-hand capture: the left band is matched to the left-hand VR stream
+        and the right band to the right-hand stream.
+
+        Bands come from the Sources-panel role tags (one flexgrid tagged left, one
+        tagged right). The labelers are the two Quest hand streams the VR client
+        sends when opened with ?arm=both: device_ids quest-left / quest-right.
+        """
+        if not self.discovery:
+            raise RuntimeError("discovery is disabled; can't gather role tags")
+        snap = self.discovery.snapshot()
+        by_side = {d.get("role"): d["device_id"] for d in snap
+                   if d.get("device_type") == "flexgrid"
+                   and d.get("role") in ("left", "right")}
+        if set(by_side) != {"left", "right"}:
+            raise RuntimeError(
+                "two-hand capture needs one flexgrid tagged 'left' AND one tagged "
+                "'right' in the Sources panel")
+        side_labelers = {}
+        for side in ("left", "right"):
+            did = f"quest-{side}"
+            dev = self.devices.get(did)
+            if dev is not None and dev.device_type == "quest_hand":
+                side_labelers[side] = did
+        if set(side_labelers) != {"left", "right"}:
+            raise RuntimeError(
+                "two-hand capture needs both quest-left and quest-right streaming; "
+                "open the VR app with ?arm=both")
+        return self.start_recording(
+            filename=filename, window_ms=window_ms,
+            sensor_device_id=by_side["left"], role="left",
+            extra_sensors=[{"device_id": by_side["right"], "role": "right"}],
+            side_labelers=side_labelers)
+
     def stop_recording(self) -> Optional[dict]:
         if self.recording is None:
             return None

@@ -340,6 +340,46 @@ class TestRecordingDefaults:
                 s.start_recording(sensor_device_id="fg-left",
                                   side_labelers={"left": "quest-left"})  # no right
 
+    def _bilateral_setup(self, s, d):
+        s.discovery.auto_subscribe = False
+        s.discovery.cache_path = str(Path(d) / "disc.json")
+        s._handle_packet(_flexgrid_packet(device_id="fg-left"))
+        s._handle_packet(_flexgrid_packet(device_id="fg-right"))
+        for did in ("fg-left", "fg-right"):
+            s.discovery.on_announce(
+                {"v": "1.0", "type": "announce", "id": did, "role": "source",
+                 "dev": "flexgrid", "caps": [], "matrix": [15, 4],
+                 "services": {"cmd": 8001}}, "127.0.0.1")
+        s.discovery.set_role("fg-left", "left")
+        s.discovery.set_role("fg-right", "right")
+
+    def test_start_bilateral_from_role_tags(self):
+        # The two-hand FLOW: tag bands left/right, both Quest hands stream as
+        # quest-left/quest-right (?arm=both), start_bilateral wires per-side.
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            self._bilateral_setup(s, d)
+            s.ingest_quest_packet({"device_id": "quest-left", "handedness": "left",
+                                   "joints": [{"name": "w", "pos": [1, 1, 1],
+                                               "rot": [0, 0, 0, 1]}]})
+            s.ingest_quest_packet({"device_id": "quest-right", "handedness": "right",
+                                   "joints": [{"name": "w", "pos": [2, 2, 2],
+                                               "rot": [0, 0, 0, 1]}]})
+            rec = s.start_bilateral_recording(filename="bi2.csv")
+            assert rec.sensors == {"fg-left": "left", "fg-right": "right"}
+            assert rec.label_id_side == {"quest-left": "left", "quest-right": "right"}
+            s.stop_recording()
+
+    def test_start_bilateral_requires_both_quest_streams(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            self._bilateral_setup(s, d)
+            s.ingest_quest_packet({"device_id": "quest-left", "handedness": "left",
+                                   "joints": [{"name": "w", "pos": [1, 1, 1],
+                                               "rot": [0, 0, 0, 1]}]})
+            with __import__("pytest").raises(RuntimeError):   # quest-right missing
+                s.start_bilateral_recording(filename="bad.csv")
+
     def test_start_multiband_from_role_tags(self):
         # The record FLOW: tag bands + labeler in discovery (Sources-panel
         # role-UX), then start_multiband_recording gathers them automatically.

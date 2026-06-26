@@ -40,6 +40,10 @@ const JOINT_NAMES = [
 
 const params = new URLSearchParams(location.search);
 const ARM = params.get('arm') === 'left' ? 'left' : 'right';   // FlexGrid-arm side
+// Two-hand capture: ?arm=both streams BOTH hands (quest-left + quest-right) so
+// the PC can record two bands at once, each matched to its own hand. Recording is
+// started from the PC (no free off-hand for the in-VR menu during a two-hand run).
+const BOTH_HANDS = params.get('arm') === 'both';
 // MODE: 'vr' (fully immersive black background, the v1.x default, used for
 // deliberate gesture training in a controlled space) vs 'ar' (passthrough
 // background, real world visible behind our panels, used for field-capture
@@ -159,7 +163,7 @@ async function preflightChecks() {
     } catch (e) {
         setCheck('check-server', 'bad', `server unreachable (${e.message})`);
     }
-    document.getElementById('arm-select').value = ARM;
+    document.getElementById('arm-select').value = BOTH_HANDS ? 'both' : ARM;
     document.getElementById('arm-select').addEventListener('change', (e) => {
         // Re-load with the new arm in the URL so the choice survives session start.
         const u = new URL(location.href);
@@ -1405,11 +1409,17 @@ function jointPose(frame, refSpace, hand, name) {
     return frame.getJointPose(j, refSpace);
 }
 
-function captureAndSend(frame, refSpace, hand, timestampMs) {
-    if (!questWs || questWs.readyState !== WebSocket.OPEN) return;
-    if (timestampMs - lastReportAt < 1000 / REPORT_HZ) return;
+function shouldReport(timestampMs) {
+    // Throttle /ws/quest sends to REPORT_HZ and require an open socket. Called
+    // once per frame so that, in two-hand mode, both hands share the same tick
+    // (rather than the second hand being throttled out by the first).
+    if (!questWs || questWs.readyState !== WebSocket.OPEN) return false;
+    if (timestampMs - lastReportAt < 1000 / REPORT_HZ) return false;
     lastReportAt = timestampMs;
+    return true;
+}
 
+function sendHand(frame, refSpace, hand, handedness, timestampMs) {
     // Emit ALL joints in canonical JOINT_NAMES order, every frame, even when
     // a joint's pose is momentarily unavailable. This keeps the flattened
     // `values` array a FIXED length with STABLE slot meaning -- critical
@@ -1422,6 +1432,9 @@ function captureAndSend(frame, refSpace, hand, timestampMs) {
     // filter it (the validity is preserved in the JSONL sidecar; the CSV
     // itself carries the zeros). Only when NO joint is available do we drop
     // the whole frame -- there's nothing to pair.
+    //
+    // device_id = quest-<handedness> so the PC recorder can route each hand to
+    // its own side (two-hand bilateral capture: left band <- quest-left, etc.).
     const joints = [];
     let validCount = 0;
     for (const name of JOINT_NAMES) {
@@ -1448,9 +1461,9 @@ function captureAndSend(frame, refSpace, hand, timestampMs) {
     }
     if (validCount === 0) return;  // hand fully untracked this frame; drop it
     questWs.send(JSON.stringify({
-        device_id: `quest-${ARM}`,
+        device_id: `quest-${handedness}`,
         ts: Math.floor(timestampMs),
-        handedness: ARM,
+        handedness,
         joints,
     }));
 }
@@ -1935,24 +1948,47 @@ function onXRFrameImpl(timestamp, frame) {
 
     if (!placed) placeAnchors(frame, refSpace);
 
-    let capturedHand = null, offHand = null;
+    // Collect both hands by their actual handedness.
+    let leftHand = null, rightHand = null;
     for (const input of session.inputSources) {
         if (!input.hand) continue;
-        if (input.handedness === ARM)            capturedHand = input.hand;
-        else if (input.handedness && !offHand)   offHand = input.hand;
+        if (input.handedness === 'left')       leftHand = input.hand;
+        else if (input.handedness === 'right') rightHand = input.hand;
     }
-    if (capturedHand) {
-        captureAndSend(frame, refSpace, capturedHand, timestamp);
-        updateHandVisualizer(frame, refSpace, capturedHand, armJointMeshes);
-        detectPinchAndToggle(frame, refSpace, capturedHand, timestamp);
-    } else {
-        hideHandVisualizer(armJointMeshes);
+
+    // capturedHand/offHand drive the single-hand UI (compare, ghost, menu) later
+    // this frame; they stay null in two-hand mode so that logic skips cleanly and
+    // the rest of the frame (heatmap, render) still runs.
+    let capturedHand = null, offHand = null;
+    if (BOTH_HANDS) {
+        // Two-hand capture: stream BOTH hands as quest-left / quest-right (one
+        // throttle tick shared) so the PC recorder matches each band to its own
+        // hand. Visualize both; the in-VR menu/pinch is unused (record from PC).
+        if (shouldReport(timestamp)) {
+            if (leftHand)  sendHand(frame, refSpace, leftHand,  'left',  timestamp);
+            if (rightHand) sendHand(frame, refSpace, rightHand, 'right', timestamp);
+        }
+        if (leftHand) updateHandVisualizer(frame, refSpace, leftHand, armJointMeshes);
+        else hideHandVisualizer(armJointMeshes);
+        if (rightHand) updateHandVisualizer(frame, refSpace, rightHand, offHandJointMeshes);
+        else hideHandVisualizer(offHandJointMeshes);
         pinchIndicator.visible = false;
-    }
-    if (offHand) {
-        updateHandVisualizer(frame, refSpace, offHand, offHandJointMeshes);
     } else {
-        hideHandVisualizer(offHandJointMeshes);
+        capturedHand = (ARM === 'left') ? leftHand : rightHand;
+        offHand      = (ARM === 'left') ? rightHand : leftHand;
+        if (capturedHand) {
+            if (shouldReport(timestamp)) sendHand(frame, refSpace, capturedHand, ARM, timestamp);
+            updateHandVisualizer(frame, refSpace, capturedHand, armJointMeshes);
+            detectPinchAndToggle(frame, refSpace, capturedHand, timestamp);
+        } else {
+            hideHandVisualizer(armJointMeshes);
+            pinchIndicator.visible = false;
+        }
+        if (offHand) {
+            updateHandVisualizer(frame, refSpace, offHand, offHandJointMeshes);
+        } else {
+            hideHandVisualizer(offHandJointMeshes);
+        }
     }
 
     // REAL vs PRED comparison + ghost hand: visible only when we have
