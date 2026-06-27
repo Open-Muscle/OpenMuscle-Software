@@ -803,6 +803,11 @@ class AppState:
 
     def _snapshot(self) -> dict:
         """Snapshot of all devices + recording status for clients."""
+        # Join discovery (role / subscribe health) onto each device so clients
+        # (esp. the VR two-hand view) get the band's left/right role + subscribe
+        # state without merging two arrays. Built once per snapshot.
+        disc_by_id = {e["device_id"]: e
+                      for e in (self.discovery.snapshot() if self.discovery else [])}
         devices_out = []
         for d in self.devices.values():
             status_age = (round(time.time() - d.status_updated_at, 2)
@@ -825,6 +830,11 @@ class AppState:
                 "last_reboot_age": (round(time.time() - d.last_reboot_at, 1)
                                     if d.last_reboot_at else None),
                 "last_reset_cause": d.last_reset_cause,
+                # Joined from discovery (band L/R role + subscribe health) so the
+                # client needs no device<->discovery merge.
+                "role": (disc_by_id.get(d.device_id) or {}).get("role", ""),
+                "subscribed": (disc_by_id.get(d.device_id) or {}).get("subscribed"),
+                "sub_error": (disc_by_id.get(d.device_id) or {}).get("sub_error"),
             })
         rec = None
         if self.recording:
