@@ -177,6 +177,23 @@ async function preflightChecks() {
             b.dataset.mode === MODE && b.dataset.arm === curArm);
     });
 
+    // Debug checkbox: append/strip &debug=1 on the quick-launch links so the
+    // chosen preset enters with the debug overlay on (no URL typing).
+    const dbg = document.getElementById('ql-debug');
+    if (dbg) {
+        dbg.checked = DEBUG_PARAM;
+        const applyDebug = () => {
+            document.querySelectorAll('.ql-btn').forEach((b) => {
+                const u = new URL(b.href);
+                if (dbg.checked) u.searchParams.set('debug', '1');
+                else u.searchParams.delete('debug');
+                b.setAttribute('href', '?' + u.searchParams.toString());
+            });
+        };
+        dbg.addEventListener('change', applyDebug);
+        applyDebug();
+    }
+
     document.getElementById('arm-select').value = BOTH_HANDS ? 'both' : ARM;
     document.getElementById('arm-select').addEventListener('change', (e) => {
         // Re-load with the new arm in the URL so the choice survives session start.

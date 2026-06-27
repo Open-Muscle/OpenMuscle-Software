@@ -145,6 +145,11 @@ header h1 {
     background: #17251a;
 }
 .ql-btn.active span { color: #3fb950; }
+.ql-debug {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+    font-size: 13px; color: #8b96a8; cursor: pointer;
+}
+.ql-debug input { width: 18px; height: 18px; }
 
 #enter-vr-mount {
     display: flex;

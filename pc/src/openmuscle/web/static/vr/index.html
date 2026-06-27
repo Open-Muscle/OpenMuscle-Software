@@ -38,6 +38,7 @@
                 <a class="ql-btn" data-mode="ar" data-arm="left"  href="?mode=ar&amp;arm=left"><b>AR</b><span>Left hand</span></a>
                 <a class="ql-btn" data-mode="ar" data-arm="both"  href="?mode=ar&amp;arm=both"><b>AR</b><span>Two-hand</span></a>
             </div>
+            <label class="ql-debug"><input type="checkbox" id="ql-debug"> Debug overlay (shows both hands tracked, per-band Hz/battery, recording match)</label>
         </div>
         <div class="row">
             <label>Capture arm:
@@ -58,6 +59,6 @@
 <!-- The ?v=N querystring is a cache-buster for Quest Browser, which can be
      aggressive about caching ES modules even with no-cache response headers.
      Bump N each time app.js changes. -->
-<script type="module" src="/static/vr/app.js?v=28"></script>
+<script type="module" src="/static/vr/app.js?v=29"></script>
 </body>
 </html>
