@@ -185,10 +185,17 @@ async function preflightChecks() {
 // ---------------------------------------------------------------------------
 
 let scene, camera, renderer;
-let heatmapMesh, heatmapCanvas, heatmapCtx, heatmapTex;
-// IMU band-orientation widget: a small 3D band below the heatmap that tilts with
-// the FlexGrid's live data.imu (accel-tilt, matching the desktop imu-viewer).
-let imuBandMesh;
+// Per-band heatmap registry: one compact heatmap (+ IMU tilt widget) PER FlexGrid
+// band, so two-hand mode shows BOTH bracelets side by side. Keyed by device_id.
+// The panels are intentionally small -- they are "this band is alive + responding"
+// feedback, not a panel to read closely. bandRow is their container (child of
+// infoGroup) at the old single-heatmap origin.
+let bandRow;
+const bands = new Map();   // device_id -> {group, mesh, canvas, ctx, tex, imuMesh, vmax, lastSig}
+const BAND_W = 0.17, BAND_H = 0.05;       // compact panel (~ FlexGrid 15:4 aspect)
+const BAND_GAP = 0.03;
+const BAND_ROLE_ORDER = { left: 0, right: 1, labeler: 2 };
+// Reused temps for the per-band IMU accel-tilt (called sequentially each frame).
 const _imuUp = new THREE.Vector3();
 const _imuNormal = new THREE.Vector3(0, 1, 0);
 const _imuTargetQuat = new THREE.Quaternion();
@@ -336,35 +343,14 @@ function initScene() {
     infoGroup = new THREE.Group();
     scene.add(infoGroup);
 
-    // Heatmap panel (PlaneGeometry + CanvasTexture, painted from /ws/live)
-    heatmapCanvas = document.createElement('canvas');
-    heatmapCanvas.width = 600; heatmapCanvas.height = 180;
-    heatmapCtx = heatmapCanvas.getContext('2d');
-    drawHeatmapPlaceholder();
-    heatmapTex = new THREE.CanvasTexture(heatmapCanvas);
-    heatmapTex.colorSpace = THREE.SRGBColorSpace;
-    const heatMat = new THREE.MeshBasicMaterial({ map: heatmapTex,
-                                                   side: THREE.DoubleSide });
-    heatmapMesh = new THREE.Mesh(new THREE.PlaneGeometry(HEATMAP_W, HEATMAP_H),
-                                  heatMat);
-    infoGroup.add(heatmapMesh);
-
-    // IMU band-orientation widget: a small 3D band anchored below the heatmap,
-    // tilting with the FlexGrid's live data.imu (accel-tilt). Child of infoGroup
-    // so it moves with the panel. (Placement/scale may want on-headset tuning.)
-    imuBandMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12, 0.005, 0.032),
-        new THREE.MeshBasicMaterial({ color: 0x3b82f6 }));
-    imuBandMesh.add(new THREE.LineSegments(
-        new THREE.EdgesGeometry(imuBandMesh.geometry),
-        new THREE.LineBasicMaterial({ color: 0x93c5fd })));
-    const imuEdge = new THREE.Mesh(
-        new THREE.BoxGeometry(0.007, 0.008, 0.036),
-        new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));   // +X end marker
-    imuEdge.position.set(0.06, 0, 0);
-    imuBandMesh.add(imuEdge);
-    imuBandMesh.position.set(0, -(HEATMAP_H * 0.5 + 0.07), 0.02);
-    infoGroup.add(imuBandMesh);
+    // Band row: per-FlexGrid heatmaps (+ IMU tilt) are created lazily into this
+    // container as bands appear (reconcileBands), centered at the old single-
+    // heatmap origin. Two-hand mode fills it with LEFT + RIGHT side by side.
+    bandRow = new THREE.Group();
+    infoGroup.add(bandRow);
+    // Namespaced debug handle (cf. desktop window.OMImuViewer): lets tooling drive
+    // the band visuals without an XR session + inspect band state.
+    window.OMVR = { bands, getBands, reconcileBands };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -1605,14 +1591,74 @@ function updateButtonVisual() {
 // Heatmap rendering: paint /ws/live's flexgrid matrix onto our canvas
 // ---------------------------------------------------------------------------
 
-function drawHeatmapPlaceholder() {
-    heatmapCtx.fillStyle = '#0d1117';
-    heatmapCtx.fillRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
-    heatmapCtx.fillStyle = '#586069';
-    heatmapCtx.font = '20px system-ui';
-    heatmapCtx.textAlign = 'center';
-    heatmapCtx.fillText('waiting for FlexGrid…',
-                         heatmapCanvas.width / 2, heatmapCanvas.height / 2 + 7);
+// A small IMU tilt-band widget (accel-tilt orientation feedback). One per
+// FlexGrid band, parented under the band's group below its heatmap.
+function makeImuBand() {
+    const band = new THREE.Mesh(
+        new THREE.BoxGeometry(0.10, 0.004, 0.026),
+        new THREE.MeshBasicMaterial({ color: 0x3b82f6 }));
+    band.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(band.geometry),
+        new THREE.LineBasicMaterial({ color: 0x93c5fd })));
+    const edge = new THREE.Mesh(
+        new THREE.BoxGeometry(0.006, 0.007, 0.03),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));   // +X end marker
+    edge.position.set(0.05, 0, 0);
+    band.add(edge);
+    return band;
+}
+
+// Lazily create the per-band group (heatmap mesh + canvas + IMU widget) for a
+// device_id, added to bandRow. Reused on subsequent frames.
+function ensureBand(deviceId) {
+    let rec = bands.get(deviceId);
+    if (rec) return rec;
+    const group = new THREE.Group();
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 96;
+    const ctx = canvas.getContext('2d');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BAND_W, BAND_H),
+        new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+    group.add(mesh);
+    const imuMesh = makeImuBand();
+    imuMesh.position.set(0, -(BAND_H * 0.5 + 0.03), 0.01);
+    group.add(imuMesh);
+    bandRow.add(group);
+    rec = { group, mesh, canvas, ctx, tex, imuMesh, vmax: 100, lastSig: '' };
+    bands.set(deviceId, rec);
+    return rec;
+}
+
+// Ordered FlexGrid bands from the snapshot (left, right, labeler, then by id).
+// role/subscribed are joined onto each device server-side (state.py _snapshot).
+function getBands(snap) {
+    const fgs = (snap.devices || []).filter(
+        (d) => d.device_type === 'flexgrid' && d.matrix && d.matrix.length);
+    fgs.sort((a, b) =>
+        ((BAND_ROLE_ORDER[a.role] ?? 9) - (BAND_ROLE_ORDER[b.role] ?? 9))
+        || (a.device_id < b.device_id ? -1 : 1));
+    return fgs;
+}
+
+// Draw each band's heatmap + IMU, lay them out side by side, and hide groups
+// whose device vanished from the snapshot (device-lifecycle cleanup).
+function reconcileBands(list) {
+    const n = list.length;
+    const seen = new Set();
+    list.forEach((d, i) => {
+        seen.add(d.device_id);
+        const rec = ensureBand(d.device_id);
+        rec.group.position.x = (i - (n - 1) / 2) * (BAND_W + BAND_GAP);
+        rec.group.visible = true;
+        const role = (d.role || '').toUpperCase() || '?';
+        drawBandHeatmap(rec, d.matrix, role + '  ' + Math.round(d.hz || 0) + 'Hz');
+        if (d.imu) updateBandImu(rec, d.imu);
+    });
+    for (const [id, rec] of bands) {
+        if (!seen.has(id)) rec.group.visible = false;
+    }
 }
 
 function colorRamp(t) {
@@ -1637,39 +1683,45 @@ function colorRamp(t) {
     return [252, 232, 132];
 }
 
-let vmaxObserved = 100;
-let lastDrawnMatrixSig = '';
-
-function drawHeatmap(matrix) {
+// Paint one band's matrix onto its own canvas, with a per-band auto-scaling vmax
+// (a quiet band doesn't get dimmed by a loud one) + a top label strip showing the
+// band's side + live Hz, so "which arm + is it responding" reads off the panel.
+function drawBandHeatmap(rec, matrix, label) {
     if (!matrix || matrix.length === 0) return;
     const cols = matrix.length;
     const rows = matrix[0].length;
-    // Compute vmax (auto-scale upward only, so quick gestures don't dim the panel)
     let m = 1;
     for (let c = 0; c < cols; c++)
         for (let r = 0; r < rows; r++)
             if (matrix[c][r] > m) m = matrix[c][r];
-    if (m > vmaxObserved) vmaxObserved = m;
-    const vmax = vmaxObserved;
+    if (m > rec.vmax) rec.vmax = m;        // auto-scale upward, per band
+    const vmax = rec.vmax;
 
-    // Skip re-paint if matrix is unchanged (cheap signature check)
-    const sig = matrix[0][0] + ':' + matrix[cols - 1][rows - 1] + ':' + vmax;
-    if (sig === lastDrawnMatrixSig) return;
-    lastDrawnMatrixSig = sig;
+    const sig = matrix[0][0] + ':' + matrix[cols - 1][rows - 1] + ':' + vmax + ':' + label;
+    if (sig === rec.lastSig) return;        // cheap redraw skip
+    rec.lastSig = sig;
 
-    const W = heatmapCanvas.width, H = heatmapCanvas.height;
-    heatmapCtx.fillStyle = '#0d1117';
-    heatmapCtx.fillRect(0, 0, W, H);
-    const cw = W / cols, ch = H / rows;
+    const ctx = rec.ctx, W = rec.canvas.width, H = rec.canvas.height;
+    const LABEL_H = 24;
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, W, H);
+    const gridH = H - LABEL_H;
+    const cw = W / cols, ch = gridH / rows;
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < rows; r++) {
-            const v = matrix[c][r] / vmax;
-            const [R, G, B] = colorRamp(v);
-            heatmapCtx.fillStyle = `rgb(${R | 0}, ${G | 0}, ${B | 0})`;
-            heatmapCtx.fillRect(c * cw, r * ch, Math.ceil(cw), Math.ceil(ch));
+            const [R, G, B] = colorRamp(matrix[c][r] / vmax);
+            ctx.fillStyle = 'rgb(' + (R | 0) + ',' + (G | 0) + ',' + (B | 0) + ')';
+            ctx.fillRect(c * cw, LABEL_H + r * ch, Math.ceil(cw), Math.ceil(ch));
         }
     }
-    heatmapTex.needsUpdate = true;
+    ctx.fillStyle = '#161b22';
+    ctx.fillRect(0, 0, W, LABEL_H);
+    ctx.fillStyle = '#e6e9ef';
+    ctx.font = 'bold 16px system-ui';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 6, LABEL_H / 2 + 1);
+    rec.tex.needsUpdate = true;
 }
 
 // Guard against redundant header re-uploads. While recording the text
@@ -1722,22 +1774,22 @@ function drawHeader(text, isRecording, qualityColor) {
 // it (correct pitch/roll, no gyro-scale dependency; yaw stable). Same axis
 // mapping as the desktop imu-viewer for cross-hub consistency (the mapping is the
 // one tunable to align with phone, board #0197).
-function updateImuBand(imu) {
-    if (!imuBandMesh || !imu) return;
+function updateBandImu(rec, imu) {
+    if (!rec.imuMesh || !imu) return;
     const a = imu.accel;
     if (!Array.isArray(a) || a.length < 3) return;
     if (Math.hypot(a[0], a[1], a[2]) < 1e-3) return;   // freefall / bad read
     _imuUp.set(a[0], a[2], -a[1]).normalize();          // sensor -> model axes
     _imuTargetQuat.setFromUnitVectors(_imuNormal, _imuUp);
-    imuBandMesh.quaternion.slerp(_imuTargetQuat, 0.3);  // smooth the jitter
+    rec.imuMesh.quaternion.slerp(_imuTargetQuat, 0.3);  // smooth the jitter
 }
 
 function updateFromSnapshot(snap, timestampMs) {
     if (!snap) return;
-    // Pick the first flexgrid device's matrix to paint
-    const fg = (snap.devices || []).find(d => d.device_type === 'flexgrid' && d.matrix?.length);
-    if (fg) drawHeatmap(fg.matrix);
-    if (fg && fg.imu) updateImuBand(fg.imu);
+    // Paint EVERY FlexGrid band (two-hand mode -> LEFT + RIGHT side by side).
+    const bandList = getBands(snap);
+    reconcileBands(bandList);
+    const fg = bandList[0] || null;   // primary band for the header Hz line below
     // Header text: while recording, include filename + ms clock so the
     // headset's screen recording captures sync info every frame the user
     // happens to look at the heatmap. Without it, the operator would have
