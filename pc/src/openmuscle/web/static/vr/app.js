@@ -259,8 +259,9 @@ let armGroup;                                  // captured-hand joint spheres (b
 let armJointMeshes = new Map();                // joint-name -> sphere mesh
 let offHandGroup;                              // off-hand joint spheres (green)
 let offHandJointMeshes = new Map();            // joint-name -> sphere mesh
-let ghostGroup;                                // model-predicted hand (amber, translucent)
-let ghostJointMeshes = new Map();              // joint-name -> sphere mesh
+// Predicted-hand ghosts (amber spheres). One set PER SIDE so two-hand mode shows
+// a ghost next to EACH real hand (driven by that hand's band prediction).
+const ghosts = {};                             // side -> {group, meshes:Map<name,mesh>}
 let placed = false;                            // anchors set on first XRFrame
 
 // XR visibility state. Quest pauses the WebXR session whenever the user
@@ -385,7 +386,7 @@ function initScene() {
     // Namespaced debug handle (cf. desktop window.OMImuViewer): lets tooling drive
     // the band visuals without an XR session + inspect band state.
     window.OMVR = { bands, getBands, reconcileBands, getStatusDevices, drawBandStatus,
-                    drawDebug, debugState, uiState,
+                    drawDebug, debugState, uiState, predForSide, ghosts,
                     bandStatusCtx: () => bandStatusCtx, debugCtx: () => debugCtx };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
@@ -617,14 +618,20 @@ function initScene() {
     const ghostJointMat = new THREE.MeshBasicMaterial({
         color: 0xfbbf24, transparent: true, opacity: 0.7, depthWrite: false,
     });
-    ghostGroup = new THREE.Group();
-    scene.add(ghostGroup);
-    for (const name of JOINT_NAMES) {
-        const m = new THREE.Mesh(ghostJointGeo, ghostJointMat);
-        m.visible = false;
-        ghostGroup.add(m);
-        ghostJointMeshes.set(name, m);
-    }
+    const makeGhost = () => {
+        const group = new THREE.Group();
+        scene.add(group);
+        const meshes = new Map();
+        for (const name of JOINT_NAMES) {
+            const m = new THREE.Mesh(ghostJointGeo, ghostJointMat);
+            m.visible = false;
+            group.add(m);
+            meshes.set(name, m);
+        }
+        return { group, meshes };
+    };
+    ghosts.left = makeGhost();
+    ghosts.right = makeGhost();
 
     window.addEventListener('resize', () => {
         if (renderer.xr.isPresenting) return;  // XR owns the projection then
@@ -1550,7 +1557,17 @@ const _ghostPredQuatInv = new THREE.Quaternion();
 const _ghostRealQuat = new THREE.Quaternion();
 const _ghostDeltaQuat = new THREE.Quaternion();
 
-function updateGhostHand(predValues, realWristPos, realWristQuat) {
+// The predicted joint vector for the band tagged with `side` (left/right): that
+// band's device_id -> snap.inference.by_device. Null if the band isn't tagged,
+// isn't predicting, or its prediction is stale.
+function predForSide(snap, side) {
+    const band = (snap && snap.devices || []).find(
+        (d) => d.device_type === 'flexgrid' && d.role === side);
+    const byDev = snap && snap.inference && snap.inference.by_device;
+    return (band && byDev && byDev[band.device_id]) || null;
+}
+
+function updateGhostHand(meshes, predValues, realWristPos, realWristQuat) {
     // Render the model's predicted joint positions as a ghost hand pinned
     // to the user's actual wrist + orientation. The model was trained on
     // absolute world poses from wherever the recordings happened to be, so
@@ -1563,7 +1580,7 @@ function updateGhostHand(predValues, realWristPos, realWristQuat) {
     // Position-only alignment was the v1.7 default; v1.8 adds the rotation
     // so the ghost hand actually faces the same way as your real hand.
     if (!predValues || predValues.length < 25 * 7 || !realWristPos) {
-        for (const m of ghostJointMeshes.values()) m.visible = false;
+        for (const m of meshes.values()) m.visible = false;
         return;
     }
     _ghostPredWristPos.set(predValues[0], predValues[1], predValues[2]);
@@ -1590,7 +1607,7 @@ function updateGhostHand(predValues, realWristPos, realWristQuat) {
     }
 
     let i = 0;
-    for (const [, mesh] of ghostJointMeshes) {
+    for (const [, mesh] of meshes) {
         const base = i * 7;
         _ghostTmpVec.set(predValues[base], predValues[base + 1], predValues[base + 2])
                     .sub(_ghostPredWristPos);
@@ -2271,26 +2288,43 @@ function onXRFrameImpl(timestamp, frame) {
         }
     }
 
-    // REAL vs PRED comparison + ghost hand: visible only when we have
-    // something to compare (model loaded AND running AND captured hand
-    // tracked). The user explicitly wants to see model error after
-    // training, so both pop in the moment PREDICT turns on.
-    const predValues = latestSnapshot?.inference?.piston_values || null;
-    const showCompare = capturedHand && uiState.inferenceEnabled && predValues;
-    compareMesh.visible = !!showCompare;
-    if (showCompare) {
-        const real = realCurls(frame, refSpace, capturedHand);
-        const pred = predictedCurls(predValues);
-        drawCompare(real, pred);
-        // Ghost hand pinned to the real wrist (position AND orientation as
-        // of v1.8) so the user sees the model's shape prediction in the
-        // same frame as their actual hand.
-        const wp = jointPose(frame, refSpace, capturedHand, 'wrist');
-        updateGhostHand(predValues,
+    // Predicted ghost hand(s). Two-hand mode draws a ghost next to EACH real
+    // hand from that hand's band prediction (snap.inference.by_device keyed by
+    // role); single-hand draws one for the captured arm + the REAL-vs-PRED bars.
+    const drawGhost = (side, hand) => {
+        const pv = uiState.inferenceEnabled ? predForSide(latestSnapshot, side) : null;
+        const wp = (hand && pv) ? jointPose(frame, refSpace, hand, 'wrist') : null;
+        updateGhostHand(ghosts[side].meshes, pv,
                         wp ? wp.transform.position : null,
                         wp ? wp.transform.orientation : null);
+    };
+    if (BOTH_HANDS) {
+        compareMesh.visible = false;
+        drawGhost('left', leftHand);
+        drawGhost('right', rightHand);
     } else {
-        for (const m of ghostJointMeshes.values()) m.visible = false;
+        const side = (ARM === 'left') ? 'left' : 'right';
+        const other = side === 'left' ? 'right' : 'left';
+        for (const m of ghosts[other].meshes.values()) m.visible = false;
+        // Per-band prediction for the captured arm, falling back to the single
+        // last prediction when the band isn't role-tagged.
+        const predValues = (uiState.inferenceEnabled
+            ? (predForSide(latestSnapshot, side)
+               || (latestSnapshot && latestSnapshot.inference
+                   && latestSnapshot.inference.piston_values))
+            : null) || null;
+        const showCompare = capturedHand && predValues;
+        compareMesh.visible = !!showCompare;
+        if (showCompare) {
+            const real = realCurls(frame, refSpace, capturedHand);
+            drawCompare(real, predictedCurls(predValues));
+            const wp = jointPose(frame, refSpace, capturedHand, 'wrist');
+            updateGhostHand(ghosts[side].meshes, predValues,
+                            wp ? wp.transform.position : null,
+                            wp ? wp.transform.orientation : null);
+        } else {
+            for (const m of ghosts[side].meshes.values()) m.visible = false;
+        }
     }
 
     updateDrag();            // keep any actively-dragged group glued to the controller

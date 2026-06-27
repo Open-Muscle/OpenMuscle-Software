@@ -78,3 +78,29 @@ def test_shape_mismatch_returns_none(tmp_path):
     # 3 cols x 2 rows = 6 features, but the model expects 4.
     assert eng.predict([[1, 2], [3, 4], [5, 6]]) is None
     assert "expects 4" in (eng.last_error or "")
+
+
+def test_per_band_inference_in_snapshot(tmp_path):
+    # Two-hand: each FlexGrid band is run through the model independently and
+    # its prediction is exposed under inference.by_device[device_id] so the VR
+    # client can draw a ghost hand per real hand.
+    import time as _t
+    from openmuscle.web.state import AppState
+    from openmuscle.protocol.schema import OpenMusclePacket, CURRENT_VERSION
+
+    path, _ = _make_model(tmp_path, named=True)
+    s = AppState(udp_port=53888, captures_dir=str(tmp_path),
+                 model_path=path, enable_discovery=False)
+    assert s.engine is not None and s.inference_enabled
+
+    def fg(did):
+        return OpenMusclePacket(
+            version=CURRENT_VERSION, device_type="flexgrid", device_id=did,
+            timestamp_ms=0, data={"matrix": [[0.1, 0.3], [0.2, 0.4]]},
+            receive_time=_t.time())
+
+    s._handle_packet(fg("fg-left"))
+    s._handle_packet(fg("fg-right"))
+    inf = s._snapshot()["inference"]
+    assert set(inf["by_device"]) == {"fg-left", "fg-right"}
+    assert len(inf["by_device"]["fg-left"]) == 3      # model has 3 outputs

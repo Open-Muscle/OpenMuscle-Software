@@ -327,6 +327,10 @@ class AppState:
         # Most recent prediction surfaced in the WS snapshot
         self._last_inference_values: Optional[list] = None
         self._last_inference_ts: float = 0.0
+        # Per-band predictions for two-hand mode: device_id -> {"values","ts"}.
+        # Each FlexGrid band is run through the model independently so the VR
+        # client can draw a predicted ghost hand next to EACH real hand.
+        self._inference_by_device: dict = {}
 
     # ----- lifecycle -----
 
@@ -402,8 +406,13 @@ class AppState:
             if mat:
                 pred = self.engine.predict(mat)
                 if pred is not None:
+                    now = time.time()
                     self._last_inference_values = pred
-                    self._last_inference_ts = time.time()
+                    self._last_inference_ts = now
+                    # Keep a per-band copy so two-hand mode can map each band's
+                    # prediction to its own real hand via the band's role.
+                    self._inference_by_device[pkt.device_id] = {
+                        "values": pred, "ts": now}
                     if self.hand_target:
                         self._forward_to_hand(pred)
 
@@ -930,11 +939,18 @@ class AppState:
         else:
             status = "waiting for flexgrid"
 
+        # Fresh per-band predictions (two-hand ghost hands). Keyed by device_id;
+        # the client maps device_id -> role -> real hand via the snapshot.
+        now = time.time()
+        by_device = {did: d["values"]
+                     for did, d in self._inference_by_device.items()
+                     if (now - d["ts"]) < 2.0}
         return {
             "available": fresh,
             "enabled": True,
             "model": self.engine.name,
             "piston_values": self._last_inference_values,
+            "by_device": by_device,
             "status": status,
             "hand_target": hand_str,
         }
