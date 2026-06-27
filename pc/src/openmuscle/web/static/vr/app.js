@@ -44,6 +44,10 @@ const ARM = params.get('arm') === 'left' ? 'left' : 'right';   // FlexGrid-arm s
 // the PC can record two bands at once, each matched to its own hand. Recording is
 // started from the PC (no free off-hand for the in-VR menu during a two-hand run).
 const BOTH_HANDS = params.get('arm') === 'both';
+// Debug mode: a panel that surfaces "is everything working" for a two-hand AR
+// capture (both hands tracked, per-band Hz/battery, recording match, sockets).
+// Toggled by ?debug=1 or the DEBUG menu button.
+const DEBUG_PARAM = params.get('debug') === '1';
 // MODE: 'vr' (fully immersive black background, the v1.x default, used for
 // deliberate gesture training in a controlled space) vs 'ar' (passthrough
 // background, real world visible behind our panels, used for field-capture
@@ -94,6 +98,8 @@ const COMPARE_OFFSET_DOWN  = 0.14;
 const STATUS_ROW_DOWN    = 0.41;    // status strip sits below the menu
 const STATUS_W           = HEATMAP_W;
 const STATUS_H           = 0.045;
+const BANDSTATUS_W       = HEATMAP_W;   // per-band battery/signal rows under status
+const BANDSTATUS_H       = 0.075;
 const STATUS_FADE_MS     = 6000;    // status text fully fades after 6s of no update
 
 const REPORT_HZ          = 30;      // throttle /ws/quest sends (~30Hz is plenty)
@@ -201,6 +207,16 @@ const _imuNormal = new THREE.Vector3(0, 1, 0);
 const _imuTargetQuat = new THREE.Quaternion();
 let headerCanvas, headerTex, headerMesh;
 let statusMesh, statusCanvas, statusTex;
+// Per-band battery + signal panel (one row per FlexGrid band + the labeler), so
+// the operator sees both bracelets are alive + streaming at a glance.
+let bandStatusMesh, bandStatusCanvas, bandStatusCtx, bandStatusTex;
+let _bandStatusKey = '';
+// Debug overlay: a larger panel surfacing the "is everything working" signals.
+let debugMesh, debugCanvas, debugCtx, debugTex;
+let _debugLastDraw = 0;
+// Mutated in place each frame (no per-frame allocations on the hot path).
+const debugState = { leftHand: false, rightHand: false, liveWs: false,
+                     questWs: false, vis: '', snapAgeMs: 0 };
 // Sync slate: big high-contrast splash that appears for SYNC_SLATE_MS ms
 // at REC press. Visible in the headset's screen recording so the operator
 // can frame-accurately pair the video to a CSV row when scrubbing later.
@@ -291,6 +307,7 @@ let hoveredHandle = null;        // drag-handle entry the off-hand ray is over (
 // Server-derived state (mirrored into button visuals each frame from /ws/live)
 const uiState = {
     recording: false,
+    debugOn: DEBUG_PARAM,          // debug overlay visible (?debug=1 or DEBUG button)
     sessionActive: false,
     sessionId: null,
     training: false,
@@ -350,7 +367,9 @@ function initScene() {
     infoGroup.add(bandRow);
     // Namespaced debug handle (cf. desktop window.OMImuViewer): lets tooling drive
     // the band visuals without an XR session + inspect band state.
-    window.OMVR = { bands, getBands, reconcileBands };
+    window.OMVR = { bands, getBands, reconcileBands, getStatusDevices, drawBandStatus,
+                    drawDebug, debugState, uiState,
+                    bandStatusCtx: () => bandStatusCtx, debugCtx: () => debugCtx };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -454,6 +473,34 @@ function initScene() {
     statusMesh.position.y = -(STATUS_ROW_DOWN - MENU_OFFSET_DOWN);  // gap menu->status
     menuRoot.add(statusMesh);
     drawStatus('');
+
+    // Per-band battery + signal panel, just below the status strip. Child of
+    // menuRoot so it inherits the drag/tilt/AR-scale of the menu cluster.
+    bandStatusCanvas = document.createElement('canvas');
+    bandStatusCanvas.width = 800; bandStatusCanvas.height = 200;
+    bandStatusCtx = bandStatusCanvas.getContext('2d');
+    bandStatusTex = new THREE.CanvasTexture(bandStatusCanvas);
+    bandStatusTex.colorSpace = THREE.SRGBColorSpace;
+    bandStatusMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(BANDSTATUS_W, BANDSTATUS_H),
+        new THREE.MeshBasicMaterial({ map: bandStatusTex, transparent: true }));
+    bandStatusMesh.position.y = statusMesh.position.y
+        - STATUS_H / 2 - BANDSTATUS_H / 2 - 0.008;
+    menuRoot.add(bandStatusMesh);
+
+    // Debug overlay panel below the band-status rows, shown only in debug mode.
+    debugCanvas = document.createElement('canvas');
+    debugCanvas.width = 720; debugCanvas.height = 600;
+    debugCtx = debugCanvas.getContext('2d');
+    debugTex = new THREE.CanvasTexture(debugCanvas);
+    debugTex.colorSpace = THREE.SRGBColorSpace;
+    debugMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.34, 0.283),
+        new THREE.MeshBasicMaterial({ map: debugTex, transparent: true }));
+    debugMesh.position.set(0,
+        bandStatusMesh.position.y - BANDSTATUS_H / 2 - 0.152, 0.001);
+    debugMesh.visible = uiState.debugOn;
+    menuRoot.add(debugMesh);
 
     // Collapsed STOP button: shown in place of the full menu while
     // recording. Anchored to menuRoot too so it lives at the same world
@@ -1341,6 +1388,7 @@ function placeAnchors(frame, refSpace) {
 let questWs = null;
 let liveWs = null;
 let latestSnapshot = null;
+let latestSnapshotAt = 0;       // performance.now() of the last /ws/live message
 // "Want open" flags. The auto-reconnect on a socket's `close` event must NOT
 // fire when WE deliberately closed it (on sessionend). Without these flags,
 // closing the sockets at sessionend triggers their close handlers, which
@@ -1371,7 +1419,7 @@ function connectLiveWS() {
     _liveWsWantOpen = true;
     liveWs = new WebSocket(wsURL('/ws/live'));
     liveWs.addEventListener('message', (ev) => {
-        try { latestSnapshot = JSON.parse(ev.data); } catch (e) {}
+        try { latestSnapshot = JSON.parse(ev.data); latestSnapshotAt = performance.now(); } catch (e) {}
     });
     liveWs.addEventListener('close', () => {
         if (_liveWsWantOpen) setTimeout(connectLiveWS, 1500);
@@ -1661,6 +1709,151 @@ function reconcileBands(list) {
     }
 }
 
+// Physical sources that have a battery + signal: the FlexGrid bands + the LASK5
+// labeler. (The Quest hand is the headset; its health shows in debug mode.)
+function getStatusDevices(snap) {
+    return (snap.devices || []).filter(
+        (d) => d.device_type === 'flexgrid' || d.device_type === 'lask5');
+}
+
+function _batteryColor(pct, stale) {
+    if (stale || pct == null) return '#6b7280';   // gray: unknown / stale telemetry
+    if (pct >= 70) return '#22c55e';
+    if (pct >= 30) return '#f59e0b';
+    return '#ef4444';
+}
+
+// One row per source: freshness dot + side + battery (V/%) + Hz + subscribe state,
+// so "are both bracelets alive and streaming" reads at a glance. Re-uploads the
+// texture only when something changes.
+function drawBandStatus(devices) {
+    const key = devices.map((d) => {
+        const s = d.status || {};
+        const f = d.last_seen_age == null ? 'o'
+            : d.last_seen_age < 2 ? 'f' : d.last_seen_age < 5 ? 's' : 'o';
+        return [d.device_id, d.role, Math.round(d.hz || 0), s.pct,
+                Math.round((s.vbat || 0) * 100), f, d.subscribed ? 1 : 0].join(',');
+    }).join('|');
+    if (key === _bandStatusKey) return;
+    _bandStatusKey = key;
+
+    const ctx = bandStatusCtx, W = bandStatusCanvas.width, H = bandStatusCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(13,17,23,0.82)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = 'middle';
+    if (!devices.length) {
+        ctx.fillStyle = '#8b96a8'; ctx.font = '26px system-ui'; ctx.textAlign = 'left';
+        ctx.fillText('no bands streaming', 16, H / 2);
+        bandStatusTex.needsUpdate = true;
+        return;
+    }
+    const rowH = Math.min(64, H / devices.length);
+    devices.forEach((d, i) => {
+        const y = i * rowH + rowH / 2;
+        const s = d.status || {};
+        const role = (d.role || d.device_type || '?').toString().toUpperCase().slice(0, 5);
+        const telemetryStale = d.status_age == null || d.status_age > 10;
+        const fresh = d.last_seen_age != null && d.last_seen_age < 2;
+        const recent = d.last_seen_age != null && d.last_seen_age < 5;
+        ctx.beginPath();
+        ctx.arc(24, y, 9, 0, Math.PI * 2);
+        ctx.fillStyle = fresh ? '#22c55e' : recent ? '#f59e0b' : '#ef4444';
+        ctx.fill();
+        ctx.fillStyle = '#e6e9ef';
+        ctx.font = 'bold 28px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText(role, 44, y);
+        ctx.fillStyle = _batteryColor(s.pct, telemetryStale);
+        ctx.font = '26px ui-monospace, monospace';
+        const batt = (s.vbat != null ? s.vbat.toFixed(2) + 'V ' : '')
+            + (s.pct != null ? s.pct + '%' : '--');
+        ctx.fillText(batt, 200, y);
+        ctx.fillStyle = (d.hz || 0) > 1 ? '#e6e9ef' : '#ef4444';
+        ctx.fillText(Math.round(d.hz || 0) + 'Hz', 470, y);
+        if (d.subscribed === false || d.sub_error) {
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 22px system-ui';
+            ctx.fillText('NO SUB', 610, y);
+        }
+    });
+    bandStatusTex.needsUpdate = true;
+}
+
+// The debug overlay: one health line per signal (green dot = good, amber = warming
+// / partial, red = bad). Sections are labeled so XR-hand tracking is never
+// confused with server-side recording. Pulls live data from the latest snapshot
+// + the frame-loop debugState.
+function drawDebug(snap) {
+    const ctx = debugCtx, W = debugCanvas.width, H = debugCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(13,17,23,0.92)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = 'middle';
+    let y = 22;
+    const line = (label, ok, val) => {
+        ctx.beginPath();
+        ctx.arc(20, y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = ok === true ? '#22c55e' : ok === false ? '#ef4444' : '#f59e0b';
+        ctx.fill();
+        ctx.fillStyle = '#e6e9ef';
+        ctx.font = '22px ui-monospace, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(label, 40, y);
+        if (val != null) {
+            ctx.fillStyle = '#9ca3af';
+            ctx.textAlign = 'right';
+            ctx.fillText(String(val), W - 14, y);
+        }
+        y += 34;
+    };
+    const head = (t) => {
+        ctx.fillStyle = '#7d8694';
+        ctx.font = 'bold 18px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText(t, 14, y);
+        y += 26;
+    };
+
+    head('XR HAND TRACKING');
+    if (BOTH_HANDS) {
+        line('left hand', debugState.leftHand, debugState.leftHand ? 'tracked' : 'NOT seen');
+        line('right hand', debugState.rightHand, debugState.rightHand ? 'tracked' : 'NOT seen');
+    } else {
+        const h = debugState.leftHand || debugState.rightHand;
+        line('captured hand', h, h ? 'tracked' : 'NOT seen');
+    }
+
+    head('BANDS (server)');
+    const devs = getStatusDevices(snap || {});
+    if (!devs.length) line('no bands streaming', false, '');
+    devs.forEach((d) => {
+        const fresh = d.last_seen_age != null && d.last_seen_age < 2;
+        const role = (d.role || d.device_type || '?').toString().toUpperCase();
+        const batt = d.status && d.status.pct != null ? ' ' + d.status.pct + '%' : '';
+        line(role + ' ' + Math.round(d.hz || 0) + 'Hz' + batt,
+             fresh && (d.hz || 0) > 1,
+             d.subscribed === false ? 'NO SUB' : fresh ? 'live' : 'stale');
+    });
+
+    head('CAPTURE (server)');
+    const rec = snap && snap.recording;
+    line('recording', !!rec, rec ? Math.round((rec.match_rate || 0) * 100) + '% match' : 'idle');
+    if (rec && rec.label_width_mismatch)
+        line('joints dropping', false, rec.label_width_mismatch);
+    const inf = snap && snap.inference;
+    line('inference', inf && inf.enabled ? inf.status === 'live' : null,
+         inf ? inf.status || (inf.enabled ? 'on' : 'off') : 'no model');
+
+    head('LINKS');
+    line('live socket', debugState.liveWs, debugState.liveWs ? 'open' : 'closed');
+    line('quest socket', debugState.questWs, debugState.questWs ? 'open' : 'closed');
+    line('snapshot age', debugState.snapAgeMs < 2000, Math.round(debugState.snapAgeMs) + 'ms');
+    if (debugState.vis) line('xr visibility', debugState.vis === 'visible', debugState.vis);
+
+    debugTex.needsUpdate = true;
+}
+
 function colorRamp(t) {
     // black -> purple -> pink -> orange -> yellow (same family the desktop
     // web UI uses, but recomputed here so we don't depend on its CSS)
@@ -1789,6 +1982,7 @@ function updateFromSnapshot(snap, timestampMs) {
     // Paint EVERY FlexGrid band (two-hand mode -> LEFT + RIGHT side by side).
     const bandList = getBands(snap);
     reconcileBands(bandList);
+    drawBandStatus(getStatusDevices(snap));   // per-band battery + signal panel
     const fg = bandList[0] || null;   // primary band for the header Hz line below
     // Header text: while recording, include filename + ms clock so the
     // headset's screen recording captures sync info every frame the user
@@ -2022,6 +2216,8 @@ function onXRFrameImpl(timestamp, frame) {
         if (input.handedness === 'left')       leftHand = input.hand;
         else if (input.handedness === 'right') rightHand = input.hand;
     }
+    debugState.leftHand = !!leftHand;
+    debugState.rightHand = !!rightHand;
 
     // capturedHand/offHand drive the single-hand UI (compare, ghost, menu) later
     // this frame; they stay null in two-hand mode so that logic skips cleanly and
@@ -2086,6 +2282,19 @@ function onXRFrameImpl(timestamp, frame) {
     updateFromSnapshot(latestSnapshot, timestamp);
     updateSlateVisibility();
     setRecordingCollapsedUI(uiState.recording);   // swap menu <-> STOP every frame
+
+    // Debug overlay: refresh the link/visibility signals + redraw at ~4 Hz.
+    debugMesh.visible = uiState.debugOn;
+    if (uiState.debugOn) {
+        debugState.liveWs = !!liveWs && liveWs.readyState === WebSocket.OPEN;
+        debugState.questWs = !!questWs && questWs.readyState === WebSocket.OPEN;
+        debugState.vis = session.visibilityState || '';
+        debugState.snapAgeMs = latestSnapshotAt ? performance.now() - latestSnapshotAt : 99999;
+        if (timestamp - _debugLastDraw > 250) {
+            _debugLastDraw = timestamp;
+            drawDebug(latestSnapshot);
+        }
+    }
 
     renderer.render(scene, camera);
 }
