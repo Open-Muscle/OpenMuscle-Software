@@ -167,12 +167,32 @@ const CONFIG_BAND_BTN_GAP = 0.006;  // gap between the three sub-buttons
 const CONFIG_BAND_INFO_W  = CONFIG_ROW_W
     - 3 * CONFIG_BAND_BTN_W - 3 * CONFIG_BAND_BTN_GAP;
 
+// TRAIN + MODELS section (per-hand training + model loading from the headset).
+// Sits BELOW the REPLAY section: a small section header strip, then a row of
+// three TRAIN buttons (TRAIN BOTH wide-ish, TRAIN L, TRAIN R), then two
+// model-cycle rows (MODEL L / MODEL R). Each model row is a wide info label
+// (current model name for that side, its own canvas) plus a single PICK
+// sub-button on the right that cycles to + loads the next trained model. Cycle
+// affordance instead of a scroll list -- a full list would blow the panel
+// height + need scroll machinery the rest of the panel doesn't have.
+const CONFIG_TRAIN_BTN_GAP = CONFIG_BAND_BTN_GAP;   // gap between TRAIN buttons
+// TRAIN BOTH takes ~half the row, TRAIN L / TRAIN R split the rest.
+const CONFIG_TRAIN_BOTH_W  = CONFIG_ROW_W * 0.48;
+const CONFIG_TRAIN_ONE_W   = (CONFIG_ROW_W - CONFIG_TRAIN_BOTH_W
+    - 2 * CONFIG_TRAIN_BTN_GAP) / 2;
+// Model rows: a PICK sub-button on the right (cycles the model) + a wide info
+// label filling the rest of the row, same split style as the band rows.
+const CONFIG_MODEL_BTN_W   = 0.075;   // PICK sub-button width
+const CONFIG_MODEL_INFO_W  = CONFIG_ROW_W - CONFIG_MODEL_BTN_W - CONFIG_BAND_BTN_GAP;
+
 // Panel height = title + BANDS header + N band rows + N capture list rows
-// + action row + speed row, plus gaps/pad. The BANDS header reuses CONFIG_ROW_H.
+// + action row + speed row + TRAIN header + TRAIN button row + 2 model rows,
+// plus gaps/pad. The section headers reuse CONFIG_ROW_H.
 const CONFIG_H            = CONFIG_TITLE_H
     + (CONFIG_BAND_ROWS + 1) * CONFIG_ROW_H            // band rows + section header
     + (CONFIG_LIST_ROWS + 2) * CONFIG_ROW_H            // capture rows + action + speed
-    + (CONFIG_BAND_ROWS + 1 + CONFIG_LIST_ROWS + 2) * CONFIG_ROW_GAP
+    + (1 + 1 + 2) * CONFIG_ROW_H                       // TRAIN header + button row + 2 model rows
+    + (CONFIG_BAND_ROWS + 1 + CONFIG_LIST_ROWS + 2 + 1 + 1 + 2) * CONFIG_ROW_GAP
     + 2 * CONFIG_PAD;
 
 // ---------------------------------------------------------------------------
@@ -348,6 +368,13 @@ const bandActivity = new Map();   // device_id -> { baseline, last, until }
 let bandIdentifyId = null;        // device_id flagged by the squeeze detector
 const BAND_IDENTIFY_MS = 700;     // how long a squeeze keeps a row highlighted
 
+// TRAIN + MODELS section state. configModelRows[i] = { role, info:{mesh,canvas,
+// ctx,tex}, pick, _lastInfoKey }. Built in createConfigPanel below the REPLAY
+// section: a row per side (left, right) with a model-name info label + a PICK
+// sub-button that cycles the registry. The three TRAIN buttons live in buttons[]
+// directly (TRAIN_BOTH / TRAIN_L / TRAIN_R).
+const configModelRows = [];
+
 // Collapsed STOP button shown in place of menuRoot while recording. Anchored
 // to the same world position as menuRoot, but only one of the two is visible
 // at any time (toggled by uiState.recording in updateFromSnapshot).
@@ -418,6 +445,13 @@ const configState = {
     selected: null,        // chosen capture name (string) or null
     speed: 1.0,            // replay speed sent to POST /api/simulate/replay
     loading: false,        // a GET /api/captures fetch is in flight
+    // TRAIN + MODELS section state.
+    models: [],            // [{name, path, created, metrics, active}] from GET /api/models
+    modelLeft: null,       // currently-loaded model name for the left slot (or null)
+    modelRight: null,      // currently-loaded model name for the right slot (or null)
+    modelIdx: { left: -1, right: -1 },   // cycle cursor into models[] per side
+    trainBusy: false,      // a TRAIN POST sequence is in flight (drives the spinner)
+    trainResult: '',       // last train summary line ("L R²=0.91 / R R²=0.88")
 };
 
 function initScene() {
@@ -483,7 +517,15 @@ function initScene() {
                     setDevices, drawBandsSection, setBandRole,
                     bandActivityScalar, updateBandIdentify,
                     get configBandRows() { return configBandRows; },
-                    get bandIdentifyId() { return bandIdentifyId; } };
+                    get bandIdentifyId() { return bandIdentifyId; },
+                    // TRAIN + MODELS section handles: train both hands (or one
+                    // via trainBoth('left'|'right')), inject a fake model list +
+                    // render the rows headless (setModels), load a model into a
+                    // per-hand slot, and paint the section from a fake snapshot.
+                    trainBoth, trainOneRole, pickTrainCaptures,
+                    setModels, fetchModels, loadModelForRole, onModelPick,
+                    drawTrainSection, modelNameFromPath,
+                    get configModelRows() { return configModelRows; } };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -1013,7 +1055,7 @@ function drawConfigTitle() {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#f0f4f8';
     ctx.font = 'bold 34px system-ui';
-    ctx.fillText('SETUP · BANDS · REPLAY', 20, H * 0.3);
+    ctx.fillText('SETUP · BANDS · REPLAY · TRAIN', 20, H * 0.3);
     // Progress / hint line.
     ctx.font = '28px system-ui';
     if (rp.active) {
@@ -1388,6 +1430,82 @@ function createConfigPanel() {
     createConfigButton('REPLAY_SPEED', CONFIG_ROW_W, CONFIG_ROW_H,
                        new THREE.Vector3(0, spdY, 0.001),
                        onSpeedToggle, drawSpeedToggle);
+    y -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+
+    // --- TRAIN + MODELS section (below REPLAY) ------------------------------
+
+    // Static "TRAIN -- per-hand models" section header (plain canvas label).
+    const trainHdrCanvas = document.createElement('canvas');
+    trainHdrCanvas.width = 512; trainHdrCanvas.height = 80;
+    const thc = trainHdrCanvas.getContext('2d');
+    thc.fillStyle = '#9fb3c8';
+    thc.font = 'bold 30px system-ui';
+    thc.textBaseline = 'middle';
+    thc.textAlign = 'left';
+    thc.fillText('TRAIN · per-hand models', 8, trainHdrCanvas.height / 2);
+    const trainHdrTex = new THREE.CanvasTexture(trainHdrCanvas);
+    trainHdrTex.colorSpace = THREE.SRGBColorSpace;
+    const trainHdrMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(CONFIG_ROW_W, CONFIG_ROW_H),
+        new THREE.MeshBasicMaterial({ map: trainHdrTex, transparent: true,
+                                       depthWrite: false }));
+    trainHdrMesh.position.set(0, y - CONFIG_ROW_H / 2, 0.001);
+    configPanel.add(trainHdrMesh);
+    y -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+
+    // TRAIN button row: TRAIN BOTH (wide) + TRAIN L + TRAIN R, left-to-right.
+    // All three share one row's vertical center. x=0 is the row center.
+    const trainRowCY = y - CONFIG_ROW_H / 2;
+    const trLeft = -CONFIG_ROW_W / 2;
+    const bothCX = trLeft + CONFIG_TRAIN_BOTH_W / 2;
+    const lCX = trLeft + CONFIG_TRAIN_BOTH_W + CONFIG_TRAIN_BTN_GAP
+        + CONFIG_TRAIN_ONE_W / 2;
+    const rCX = lCX + CONFIG_TRAIN_ONE_W + CONFIG_TRAIN_BTN_GAP;
+    const both = createConfigButton('TRAIN_BOTH', CONFIG_TRAIN_BOTH_W, CONFIG_ROW_H,
+                       new THREE.Vector3(bothCX, trainRowCY, 0.001),
+                       () => trainBoth(), drawTrainButton);
+    both.userData_trainLabel = 'TRAIN BOTH';
+    const trL = createConfigButton('TRAIN_L', CONFIG_TRAIN_ONE_W, CONFIG_ROW_H,
+                       new THREE.Vector3(lCX, trainRowCY, 0.001),
+                       () => trainBoth('left'), drawTrainButton);
+    trL.userData_trainLabel = 'TR L';
+    const trR = createConfigButton('TRAIN_R', CONFIG_TRAIN_ONE_W, CONFIG_ROW_H,
+                       new THREE.Vector3(rCX, trainRowCY, 0.001),
+                       () => trainBoth('right'), drawTrainButton);
+    trR.userData_trainLabel = 'TR R';
+    y -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+
+    // MODEL L / MODEL R rows: a wide info label (current model name) + a PICK
+    // sub-button that cycles the registry + loads it for that side.
+    for (const role of ['left', 'right']) {
+        const rowCY = y - CONFIG_ROW_H / 2;
+        const infoCanvas = document.createElement('canvas');
+        infoCanvas.width = 512; infoCanvas.height = 80;
+        const infoCtx = infoCanvas.getContext('2d');
+        const infoTex = new THREE.CanvasTexture(infoCanvas);
+        infoTex.colorSpace = THREE.SRGBColorSpace;
+        const infoMesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(CONFIG_MODEL_INFO_W, CONFIG_ROW_H),
+            new THREE.MeshBasicMaterial({ map: infoTex, transparent: true,
+                                           depthWrite: false }));
+        infoMesh.position.set(trLeft + CONFIG_MODEL_INFO_W / 2, rowCY, 0.001);
+        configPanel.add(infoMesh);
+        const row = {
+            role,
+            info: { mesh: infoMesh, canvas: infoCanvas, ctx: infoCtx, tex: infoTex },
+            _lastInfoKey: null,
+        };
+        const pickCX = trLeft + CONFIG_MODEL_INFO_W + CONFIG_BAND_BTN_GAP
+            + CONFIG_MODEL_BTN_W / 2;
+        row.pick = createConfigButton(
+            `MODEL_${role === 'left' ? 'L' : 'R'}_PICK`,
+            CONFIG_MODEL_BTN_W, CONFIG_ROW_H,
+            new THREE.Vector3(pickCX, rowCY, 0.001),
+            () => onModelPick(role), drawModelPickButton);
+        row.pick.userData_modelRole = role;
+        configModelRows.push(row);
+        y -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+    }
 
     // Drag handle in the top-left corner, like the other panels.
     createDragHandle(configPanel,
@@ -1402,6 +1520,7 @@ function createConfigPanel() {
     // First paint so it looks right the instant it's shown.
     setCaptures(configState.captures);
     drawBandsSection(latestSnapshot);   // hides all band slots until devices appear
+    setModels(configState.models);      // TRAIN buttons + model rows (empty until fetch)
     drawConfigTitle();
 }
 
@@ -1553,6 +1672,347 @@ function drawReplaySection(snap) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// TRAIN + MODELS section (per-hand training + per-hand model loading)
+//
+// The final headset-only controls: train model_left + model_right from the SAME
+// capture(s) and activate either side, all without taking the headset off. Three
+// TRAIN buttons (TRAIN BOTH / TRAIN L / TRAIN R) plus two MODEL rows (MODEL L /
+// MODEL R) that cycle through the registry (GET /api/models) and load the chosen
+// model into the per-hand slot (POST /api/inference/model/{role}).
+//
+// TRAIN BOTH reuses pickTrainCaptures() (active session, else most recent) and
+// POSTs /api/train TWICE -- role:"left" then role:"right" -- on the SAME
+// captures, so the two single-arm models come from one recording. On success it
+// flips inference on (POST /api/inference/enabled) like the menu TRAIN button.
+// All buttons live in buttons[] with a customDraw hook so the existing
+// raycast/pinch/cooldown path drives them; no new input system.
+// ---------------------------------------------------------------------------
+
+// TRAIN button paint (TRAIN BOTH / TRAIN L / TRAIN R). Shows a spinner while a
+// train sequence is in flight; muted while busy so a second tap reads as inert.
+function drawTrainButton(btn, hovered) {
+    const flashing = (btn.flashUntil || 0) > performance.now();
+    const busy = configState.trainBusy;
+    // Animated spinner glyph cycles while busy (time-derived, so the redraw-skip
+    // key changes each tick and the spinner actually turns).
+    const spin = busy
+        ? ['|', '/', '-', '\\'][Math.floor(performance.now() / 120) % 4]
+        : '';
+    const label = busy ? `${btn.userData_trainLabel} ${spin}` : btn.userData_trainLabel;
+    const drawKey = `${hovered}|${flashing}|${busy}|${label}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    let bg;
+    if (flashing)     bg = '#ffffff';
+    else if (busy)    bg = '#374151';   // muted while a train is running
+    else if (hovered) bg = '#1f6feb';
+    else              bg = '#15803d';   // emerald: train is a "go" action
+    ctx.fillStyle = bg;
+    _roundRectPath(ctx, W, H, 14);
+    ctx.fill();
+    ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';
+    ctx.font = 'bold 30px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, W / 2, H / 2);
+    btn.tex.needsUpdate = true;
+}
+
+// Model-row info label paint: which model is loaded for this side. Pulls the
+// per-side name from configState (set by the train/load responses) and falls
+// back to the combined snapshot inference.model string so a model loaded from
+// the PC still shows. Not a button -- raycast never targets it.
+function drawModelInfoLabel(row) {
+    const side = row.role;                                  // 'left' | 'right'
+    const loaded = side === 'left' ? configState.modelLeft : configState.modelRight;
+    // Combined fallback: snapshot inference.model is a single string covering
+    // whatever the engine has loaded (may be pooled). Shown dimmer as a hint.
+    const snapModel = (latestSnapshot && latestSnapshot.inference
+        && latestSnapshot.inference.model) || '';
+    const name = loaded || '';
+    const drawKey = `${side}|${name}|${snapModel}`;
+    if (row._lastInfoKey === drawKey) return;
+    row._lastInfoKey = drawKey;
+    const ctx = row.info.ctx;
+    const W = row.info.canvas.width, H = row.info.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#2a3142';
+    _roundRectPath(ctx, W, H, 16);
+    ctx.fill();
+    // Side badge (L red / R blue), then the loaded model name (or a hint).
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 30px system-ui';
+    ctx.fillStyle = side === 'left' ? '#ef4444' : '#1f6feb';
+    const badge = side === 'left' ? 'L' : 'R';
+    ctx.fillText(badge, 16, H / 2);
+    ctx.fillStyle = '#f0f4f8';
+    ctx.font = '28px system-ui';
+    let txt;
+    if (name) {
+        txt = name.length > 26 ? name.slice(0, 25) + '…' : name;
+    } else if (snapModel) {
+        txt = `(engine: ${snapModel.length > 18 ? snapModel.slice(0, 17) + '…' : snapModel})`;
+    } else {
+        txt = 'no model -- PICK to load';
+    }
+    ctx.fillText(txt, 54, H / 2);
+    row.info.tex.needsUpdate = true;
+}
+
+// PICK sub-button paint (one per model row): cycles to + loads the next model.
+function drawModelPickButton(btn, hovered) {
+    const flashing = (btn.flashUntil || 0) > performance.now();
+    const enabled = (configState.models || []).length > 0;
+    const drawKey = `${hovered}|${flashing}|${enabled}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    let bg;
+    if (flashing)      bg = '#ffffff';
+    else if (!enabled) bg = '#374151';   // muted: no models trained yet
+    else if (hovered)  bg = '#1f6feb';
+    else               bg = '#2563eb';
+    ctx.fillStyle = bg;
+    _roundRectPath(ctx, W, H, 12);
+    ctx.fill();
+    ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';
+    ctx.font = 'bold 26px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('PICK', W / 2, H / 2);
+    btn.tex.needsUpdate = true;
+}
+
+// Train one role: POST /api/train {captures, activate:true, role}. Returns the
+// parsed result on success, or throws with the server's detail so the caller
+// can surface it. role in {'left','right'}.
+async function trainOneRole(captures, role) {
+    const r = await fetch('/api/train', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ captures, activate: true, role }),
+    });
+    if (!r.ok) {
+        let detail = `HTTP ${r.status}`;
+        try { const err = await r.json(); if (err && err.detail) detail = err.detail; }
+        catch (e) { /* non-JSON error body */ }
+        throw new Error(detail);
+    }
+    return r.json();
+}
+
+// TRAIN BOTH: train model_left + model_right on the SAME capture(s) in sequence.
+// Reuses pickTrainCaptures() so the picks match the menu TRAIN button. Shows a
+// spinner (configState.trainBusy drives drawTrainButton), then a per-side R²
+// summary in the row + status strip. On a successful pair it flips inference on
+// so predictions start (matching the menu TRAIN button's auto-enable). Surfaces
+// the server's detail on error. roleOverride trains a SINGLE side (TRAIN L /
+// TRAIN R reuse this path with one role).
+async function trainBoth(roleOverride) {
+    if (configState.trainBusy || uiState.training) {
+        setStatus('training already in flight -- wait for it to finish');
+        return;
+    }
+    if (uiState.recording) {
+        setStatus('stop recording before training');
+        return;
+    }
+    const roles = roleOverride ? [roleOverride] : ['left', 'right'];
+    configState.trainBusy = true;
+    uiState.training = true;     // also gates the menu TRAIN button + PREDICT precheck
+    configState.trainResult = '';
+    try {
+        const captures = await pickTrainCaptures();
+        if (captures.length === 0) {
+            setStatus('no captures to train on -- record something first');
+            return;
+        }
+        setStatus(`training ${roles.join(' + ')} on ${captures.length} capture(s)…`);
+        const parts = [];
+        let anyActive = false;
+        for (const role of roles) {
+            const result = await trainOneRole(captures, role);
+            const r2 = result.metrics?.r2;
+            const r2str = (typeof r2 === 'number') ? r2.toFixed(2) : '?';
+            const tag = role === 'left' ? 'L' : 'R';
+            parts.push(`${tag} R²=${r2str}`);
+            if (result.active) {
+                anyActive = true;
+                // The single-arm model is now loaded into this role's slot;
+                // mirror its name into the per-side display.
+                const nm = modelNameFromPath(result.model_path) || `${role} model`;
+                if (role === 'left')  configState.modelLeft = nm;
+                else                  configState.modelRight = nm;
+            }
+        }
+        configState.trainResult = parts.join(' / ');
+        // Auto-enable prediction after a successful train, like the menu TRAIN
+        // button (in VR there's no obvious second click to start inference).
+        let predictTail = '';
+        if (anyActive) {
+            try {
+                const er = await fetch('/api/inference/enabled', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: true }),
+                });
+                if (er.ok) predictTail = ' · predict ON';
+            } catch (e) { /* non-fatal */ }
+        }
+        setStatus(`trained ${configState.trainResult}` +
+                  (anyActive ? ' · loaded ✓' : ' (saved only)') + predictTail);
+        // Refresh the model registry so the new models show in the MODEL rows.
+        fetchModels();
+    } catch (e) {
+        configState.trainResult = `train failed: ${e.message}`.slice(0, 60);
+        setStatus(`train failed: ${e.message}`.slice(0, 80));
+    } finally {
+        configState.trainBusy = false;
+        uiState.training = false;
+    }
+}
+
+// Derive a short model display name from a model.pkl path. The registry stores
+// each model under data/models/<name>_<timestamp>/model.pkl, so the parent dir
+// name is the most informative label. Robust to forward/back slashes.
+function modelNameFromPath(path) {
+    if (!path || typeof path !== 'string') return '';
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    // parts: [..., '<name>_<ts>', 'model.pkl'] -- the dir is the second-to-last.
+    if (parts.length >= 2) return parts[parts.length - 2];
+    return parts[parts.length - 1] || '';
+}
+
+// Cache the model registry list + repaint the MODEL rows. Exposed on window.OMVR
+// for headless driving (inject a fake list without a /api/models round-trip).
+function setModels(list) {
+    configState.models = Array.isArray(list) ? list : [];
+    // Keep each side's cycle cursor pointed at its currently-loaded model (by
+    // name) so the NEXT PICK advances from there rather than restarting at 0.
+    // A PC-loaded model we can't attribute to a side is left to the snapshot
+    // fallback in drawModelInfoLabel.
+    for (const role of ['left', 'right']) {
+        const cur = role === 'left' ? configState.modelLeft : configState.modelRight;
+        if (cur) {
+            const idx = configState.models.findIndex(
+                (m) => m && modelNameFromPath(m.path) === cur);
+            if (idx >= 0) configState.modelIdx[role] = idx;
+        }
+    }
+    drawTrainSection();
+    return configState.models;
+}
+
+// Fetch the model registry (GET /api/models) and cache it. Called when the
+// SETUP panel opens + after a successful train. Each item from list_models has
+// {name, path, created, metrics, active}.
+async function fetchModels() {
+    try {
+        const r = await fetch('/api/models');
+        if (!r.ok) {
+            setStatus(`models load failed: HTTP ${r.status}`);
+            setModels([]);
+            return;
+        }
+        const list = await r.json();
+        setModels(Array.isArray(list) ? list : []);
+    } catch (e) {
+        setStatus(`models load error: ${e.message}`);
+        setModels([]);
+    }
+}
+
+// Load a specific model into a per-hand slot: POST /api/inference/model/{role}
+// {path}. Mirrors the returned model name into the per-side display + flips
+// inference on so predictions start. Surfaces the server's detail on error.
+// Exposed on window.OMVR for headless driving.
+async function loadModelForRole(role, path) {
+    if (role !== 'left' && role !== 'right') {
+        setStatus(`bad role: ${role}`);
+        return;
+    }
+    try {
+        const r = await fetch(`/api/inference/model/${role}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path }),
+        });
+        if (!r.ok) {
+            let detail = `HTTP ${r.status}`;
+            try { const err = await r.json(); if (err && err.detail) detail = err.detail; }
+            catch (e) { /* non-JSON error body */ }
+            setStatus(`load ${role} failed: ${detail}`.slice(0, 80));
+            return;
+        }
+        const data = await r.json();
+        const nm = data.model || modelNameFromPath(path) || `${role} model`;
+        if (role === 'left')  configState.modelLeft = nm;
+        else                  configState.modelRight = nm;
+        // Auto-enable prediction after a load, like TRAIN -- there's no obvious
+        // second click in VR to start inference.
+        let predictTail = '';
+        try {
+            const er = await fetch('/api/inference/enabled', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: true }),
+            });
+            if (er.ok) predictTail = ' · predict ON';
+        } catch (e) { /* non-fatal */ }
+        setStatus(`${role} model: ${nm}${predictTail}`);
+        drawTrainSection();
+    } catch (e) {
+        setStatus(`load ${role} error: ${e.message}`);
+    }
+}
+
+// PICK handler: advance this side's cursor to the next model in the registry
+// and load it. With no models trained yet it's a no-op (the button is muted).
+function onModelPick(role) {
+    const models = configState.models || [];
+    if (models.length === 0) {
+        setStatus('no models yet -- TRAIN one first');
+        return;
+    }
+    const next = (configState.modelIdx[role] + 1) % models.length;
+    configState.modelIdx[role] = next;
+    const m = models[next];
+    if (!m || !m.path) {
+        setStatus('model has no path');
+        return;
+    }
+    loadModelForRole(role, m.path);
+}
+
+// Render the whole TRAIN + MODELS section. Repaints the three TRAIN buttons,
+// the two model-row info labels, and the PICK sub-buttons. Used live each frame
+// (while the panel is open) and headless via window.OMVR.drawTrainSection(snap).
+// Like drawReplaySection, a supplied snap is temporarily pointed at by
+// latestSnapshot so the info-label fallback reads it.
+function drawTrainSection(snap) {
+    const prev = latestSnapshot;
+    if (snap !== undefined) latestSnapshot = snap;
+    try {
+        for (const name of ['TRAIN_BOTH', 'TRAIN_L', 'TRAIN_R']) {
+            const btn = buttons[name];
+            if (btn) drawTrainButton(btn, btn === hoveredButton);
+        }
+        for (const row of configModelRows) {
+            drawModelInfoLabel(row);
+            drawModelPickButton(row.pick, row.pick === hoveredButton);
+        }
+    } finally {
+        if (snap !== undefined) latestSnapshot = prev;
+    }
+}
+
 // SETUP button handler: toggle the config panel. Opening re-fetches the
 // capture list so it's current.
 function toggleSetup() {
@@ -1563,7 +2023,8 @@ function toggleSetup() {
 function openSetup() {
     configState.open = true;
     if (configPanel) configPanel.visible = true;
-    fetchCaptures();          // re-fetch on every open
+    fetchCaptures();          // re-fetch the capture list on every open
+    fetchModels();            // re-fetch the model registry on every open
 }
 
 function closeSetup() {
@@ -3001,6 +3462,12 @@ function updateFromSnapshot(snap, timestampMs) {
         // the latest snapshot) and paints the non-button info labels here.
         updateBandIdentify(snap);
         drawBandsSection(snap);
+        // TRAIN + MODELS section: the TRAIN buttons + PICK sub-buttons repaint
+        // through updateButtonVisual -> customDraw (the TRAIN spinner key is
+        // time-derived so it animates); the model-row info labels are non-buttons,
+        // so repaint them here. drawTrainSection covers both cheaply (redraw-skip
+        // guards inside each paint fn keep it from re-uploading unchanged textures).
+        drawTrainSection(snap);
     } else if (bandIdentifyId) {
         bandIdentifyId = null;   // clear stale highlight when the panel closes
     }
@@ -3093,6 +3560,30 @@ async function toggleSession() {
     }
 }
 
+// Pick the capture(s) to train on: the active session's captures if a session
+// is running, else the most recent capture only. The fallback keeps the "tap
+// TRAIN right after a recording" flow alive even without sessions. Returns a
+// (possibly empty) array of capture filenames. Shared by runTrain (pooled) and
+// the TRAIN BOTH path so both train on the SAME capture(s).
+async function pickTrainCaptures() {
+    let captureNames = [];
+    if (uiState.sessionActive) {
+        const r = await fetch(`/api/sessions/${uiState.sessionId}`);
+        if (r.ok) {
+            const s = await r.json();
+            captureNames = s.captures || [];
+        }
+    }
+    if (captureNames.length === 0) {
+        const r = await fetch('/api/captures');
+        if (r.ok) {
+            const caps = await r.json();
+            if (caps.length > 0) captureNames = [caps[0].name];
+        }
+    }
+    return captureNames;
+}
+
 async function runTrain() {
     if (uiState.training) {
         setStatus('training already in flight -- wait for it to finish');
@@ -3102,25 +3593,9 @@ async function runTrain() {
         setStatus('stop recording before training');
         return;
     }
-    // Pick captures to train on: active session's captures if any, else
-    // fall back to the most recent capture only. The fallback keeps the
-    // "tap TRAIN right after a recording" flow alive even without sessions.
     let captureNames = [];
     try {
-        if (uiState.sessionActive) {
-            const r = await fetch(`/api/sessions/${uiState.sessionId}`);
-            if (r.ok) {
-                const s = await r.json();
-                captureNames = s.captures || [];
-            }
-        }
-        if (captureNames.length === 0) {
-            const r = await fetch('/api/captures');
-            if (r.ok) {
-                const caps = await r.json();
-                if (caps.length > 0) captureNames = [caps[0].name];
-            }
-        }
+        captureNames = await pickTrainCaptures();
         if (captureNames.length === 0) {
             setStatus('no captures to train on -- record something first');
             return;
