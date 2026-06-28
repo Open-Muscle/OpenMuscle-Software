@@ -391,6 +391,22 @@ const dragHandles = [];
 // grabOffset captures the (target - controller) position at grab time so
 // the panel feels like it's being held at the exact point you pinched it,
 // not snapping to the controller's center.
+// UI canvas textures: NO mipmaps. Menu/panel text is drawn to a canvas and
+// mapped onto flat quads; with mipmaps the GPU swaps mip levels as the head
+// moves, which made the button TEXT shimmer dull-grey <-> white (several at
+// once) when looking around. LinearFilter keeps every panel crisp + stable;
+// anisotropy is a bonus at grazing angles. Used for ALL canvas-backed textures
+// (menu + config buttons, heatmaps, status/debug panels, gizmo, slate).
+function makeUITexture(canvas) {
+    const t = new THREE.CanvasTexture(canvas);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = false;
+    try { t.anisotropy = renderer.capabilities.getMaxAnisotropy(); } catch (e) {}
+    return t;
+}
+
 const dragState = {
     target: null,
     controller: null,
@@ -572,7 +588,7 @@ function initScene() {
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
     headerCanvas.width = 600; headerCanvas.height = 90;
-    headerTex = new THREE.CanvasTexture(headerCanvas);
+    headerTex = makeUITexture(headerCanvas);
     headerTex.colorSpace = THREE.SRGBColorSpace;
     headerMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(HEATMAP_W, HEATMAP_H * 0.5),
@@ -647,7 +663,7 @@ function initScene() {
     compareCanvas = document.createElement('canvas');
     compareCanvas.width = 800; compareCanvas.height = 100;
     compareCtx = compareCanvas.getContext('2d');
-    compareTex = new THREE.CanvasTexture(compareCanvas);
+    compareTex = makeUITexture(compareCanvas);
     compareTex.colorSpace = THREE.SRGBColorSpace;
     compareMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(COMPARE_W, COMPARE_H),
@@ -670,7 +686,7 @@ function initScene() {
     // along when the menu is dragged.
     statusCanvas = document.createElement('canvas');
     statusCanvas.width = 800; statusCanvas.height = 90;
-    statusTex = new THREE.CanvasTexture(statusCanvas);
+    statusTex = makeUITexture(statusCanvas);
     statusTex.colorSpace = THREE.SRGBColorSpace;
     statusMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(STATUS_W, STATUS_H),
@@ -684,7 +700,7 @@ function initScene() {
     bandStatusCanvas = document.createElement('canvas');
     bandStatusCanvas.width = 800; bandStatusCanvas.height = 200;
     bandStatusCtx = bandStatusCanvas.getContext('2d');
-    bandStatusTex = new THREE.CanvasTexture(bandStatusCanvas);
+    bandStatusTex = makeUITexture(bandStatusCanvas);
     bandStatusTex.colorSpace = THREE.SRGBColorSpace;
     bandStatusMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(BANDSTATUS_W, BANDSTATUS_H),
@@ -697,7 +713,7 @@ function initScene() {
     debugCanvas = document.createElement('canvas');
     debugCanvas.width = 720; debugCanvas.height = 600;
     debugCtx = debugCanvas.getContext('2d');
-    debugTex = new THREE.CanvasTexture(debugCanvas);
+    debugTex = makeUITexture(debugCanvas);
     debugTex.colorSpace = THREE.SRGBColorSpace;
     debugMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(0.34, 0.283),
@@ -714,7 +730,7 @@ function initScene() {
     stopButtonCanvas = document.createElement('canvas');
     stopButtonCanvas.width = 512; stopButtonCanvas.height = 280;
     stopButtonCtx = stopButtonCanvas.getContext('2d');
-    stopButtonTex = new THREE.CanvasTexture(stopButtonCanvas);
+    stopButtonTex = makeUITexture(stopButtonCanvas);
     stopButtonTex.colorSpace = THREE.SRGBColorSpace;
     stopButtonMat = new THREE.MeshBasicMaterial({
         map: stopButtonTex, transparent: true,
@@ -748,7 +764,7 @@ function initScene() {
     slateCanvas = document.createElement('canvas');
     slateCanvas.width = 1600; slateCanvas.height = 540;
     slateCtx = slateCanvas.getContext('2d');
-    slateTex = new THREE.CanvasTexture(slateCanvas);
+    slateTex = makeUITexture(slateCanvas);
     slateTex.colorSpace = THREE.SRGBColorSpace;
     slateMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(SLATE_W, SLATE_H),
@@ -853,7 +869,7 @@ function createMenuButton(name, label, isActive, onActivate, row, col) {
     const canvas = document.createElement('canvas');
     canvas.width = 384; canvas.height = 144;
     const ctx = canvas.getContext('2d');
-    const tex = new THREE.CanvasTexture(canvas);
+    const tex = makeUITexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({
         map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false,
@@ -971,7 +987,7 @@ function createConfigButton(name, w, h, localPos, onActivate, customDraw) {
     const canvas = document.createElement('canvas');
     canvas.width = 512; canvas.height = 80;
     const ctx = canvas.getContext('2d');
-    const tex = new THREE.CanvasTexture(canvas);
+    const tex = makeUITexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({
         map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false,
@@ -1373,7 +1389,7 @@ function createConfigPanel() {
     configTitleCanvas = document.createElement('canvas');
     configTitleCanvas.width = 640; configTitleCanvas.height = 120;
     configTitleCtx = configTitleCanvas.getContext('2d');
-    configTitleTex = new THREE.CanvasTexture(configTitleCanvas);
+    configTitleTex = makeUITexture(configTitleCanvas);
     configTitleTex.colorSpace = THREE.SRGBColorSpace;
     configTitleMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(CONFIG_ROW_W, CONFIG_TITLE_H),
@@ -1395,7 +1411,7 @@ function createConfigPanel() {
     bhc.textBaseline = 'middle';
     bhc.textAlign = 'left';
     bhc.fillText('BANDS · tag L / R / clear', 8, bandsHdrCanvas.height / 2);
-    const bandsHdrTex = new THREE.CanvasTexture(bandsHdrCanvas);
+    const bandsHdrTex = makeUITexture(bandsHdrCanvas);
     bandsHdrTex.colorSpace = THREE.SRGBColorSpace;
     const bandsHdrMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(CONFIG_ROW_W, CONFIG_ROW_H),
@@ -1417,7 +1433,7 @@ function createConfigPanel() {
         const infoCanvas = document.createElement('canvas');
         infoCanvas.width = 512; infoCanvas.height = 80;
         const infoCtx = infoCanvas.getContext('2d');
-        const infoTex = new THREE.CanvasTexture(infoCanvas);
+        const infoTex = makeUITexture(infoCanvas);
         infoTex.colorSpace = THREE.SRGBColorSpace;
         const infoMesh = new THREE.Mesh(
             new THREE.PlaneGeometry(CONFIG_BAND_INFO_W, CONFIG_ROW_H),
@@ -1490,7 +1506,7 @@ function createConfigPanel() {
     thc.textBaseline = 'middle';
     thc.textAlign = 'left';
     thc.fillText('TRAIN · per-hand models', 8, trainHdrCanvas.height / 2);
-    const trainHdrTex = new THREE.CanvasTexture(trainHdrCanvas);
+    const trainHdrTex = makeUITexture(trainHdrCanvas);
     trainHdrTex.colorSpace = THREE.SRGBColorSpace;
     const trainHdrMesh = new THREE.Mesh(
         new THREE.PlaneGeometry(CONFIG_ROW_W, CONFIG_ROW_H),
@@ -1529,7 +1545,7 @@ function createConfigPanel() {
         const infoCanvas = document.createElement('canvas');
         infoCanvas.width = 512; infoCanvas.height = 80;
         const infoCtx = infoCanvas.getContext('2d');
-        const infoTex = new THREE.CanvasTexture(infoCanvas);
+        const infoTex = makeUITexture(infoCanvas);
         infoTex.colorSpace = THREE.SRGBColorSpace;
         const infoMesh = new THREE.Mesh(
             new THREE.PlaneGeometry(CONFIG_MODEL_INFO_W, CONFIG_ROW_H),
@@ -3111,7 +3127,7 @@ function makeGizmoPanel() {
     const canvas = document.createElement('canvas');
     canvas.width = 96; canvas.height = 96;
     const ctx = canvas.getContext('2d');
-    const tex = new THREE.CanvasTexture(canvas);
+    const tex = makeUITexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mesh = new THREE.Mesh(
         new THREE.PlaneGeometry(BAND_H, BAND_H),     // small square panel
@@ -3131,7 +3147,7 @@ function ensureBand(deviceId) {
     const canvas = document.createElement('canvas');
     canvas.width = 256; canvas.height = 96;
     const ctx = canvas.getContext('2d');
-    const tex = new THREE.CanvasTexture(canvas);
+    const tex = makeUITexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BAND_W, BAND_H),
         new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
