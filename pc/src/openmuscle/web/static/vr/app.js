@@ -2363,13 +2363,14 @@ function recenterUI() {
     setStatus('UI re-centered (defaults restored, saved layout cleared)');
 }
 
-// Pinch on a controller -> activate whichever button the ray is currently over,
-// IF that controller is the off-hand. The captured-arm pinch is handled by
-// detectPinchAndToggle (1-second hold required for record toggle) so we
-// don't double-fire here.
+// Pinch on a controller -> activate whichever button the ray is currently over.
+// Single-hand mode: only the OFF hand clicks, because the captured arm's pinch
+// is the 1-second hold-to-record gesture (detectPinchAndToggle) and we don't
+// want to double-fire. Two-hand mode (?arm=both): BOTH hands are recorded and
+// neither does hold-to-record, so BOTH can point + click + drag the menu.
 function onControllerSelect(ctrl) {
     const handedness = ctrl.userData?.handedness;
-    if (handedness === ARM) return;       // captured arm: handled elsewhere
+    if (!BOTH_HANDS && handedness === ARM) return;   // captured arm: record-hold only
 
     // Mid-drag re-pinch: a brief pinch dropout queued a drag-end (endAt). The
     // pinch came back within the grace window, so cancel the end + keep moving
@@ -2450,10 +2451,10 @@ function updateRaycast() {
         const line = controllerRays[i];
         const handedness = ctrl.userData?.handedness;
 
-        // Hide the captured-arm's ray + skip its raycast. Also: while THIS
-        // controller is dragging, keep its ray visible + amber so the user
-        // sees they're holding something.
-        if (!handedness || handedness === ARM) {
+        // Always skip untracked hands. Skip the captured arm's ray ONLY in
+        // single-hand mode (its pinch is the record-hold). In two-hand mode both
+        // hands are recorded + both point/click/drag, so neither is skipped.
+        if (!handedness || (!BOTH_HANDS && handedness === ARM)) {
             line.visible = false;
             continue;
         }
@@ -3768,7 +3769,8 @@ function onXRFrameImpl(timestamp, frame) {
     if (BOTH_HANDS) {
         // Two-hand capture: stream BOTH hands as quest-left / quest-right (one
         // throttle tick shared) so the PC recorder matches each band to its own
-        // hand. Visualize both; the in-VR menu/pinch is unused (record from PC).
+        // hand. Visualize both; EITHER hand can point/click/drag the menu (both
+        // are recorded anyway, and neither runs the hold-to-record gesture).
         if (shouldReport(timestamp)) {
             if (leftHand)  sendHand(frame, refSpace, leftHand,  'left',  timestamp);
             if (rightHand) sendHand(frame, refSpace, rightHand, 'right', timestamp);
