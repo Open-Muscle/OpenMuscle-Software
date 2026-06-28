@@ -1943,9 +1943,16 @@ class AppState:
                             model_type: str = "random_forest",
                             n_estimators: int = 100,
                             test_split: float = 0.2,
-                            activate: bool = True) -> dict:
+                            activate: bool = True,
+                            role: str = None) -> dict:
         """Combine N captures from captures_dir, train a model, optionally
         hot-swap it into the inference engine.
+
+        `role` (left/right) trains a SINGLE-ARM model per hand (separate-model-
+        per-hand): only that role's rows from a two-hand capture are used, and on
+        activate the model loads into self.engines[role] (not the shared engine).
+        Call twice (left, right) to produce model_left + model_right. None = the
+        legacy single/pooled model into self.engine.
 
         Args:
             capture_names: list of CSV filenames (NOT full paths) inside
@@ -1972,9 +1979,13 @@ class AppState:
 
         if not capture_names:
             raise RuntimeError("No captures selected")
+        role = (role or "").strip().lower() or None
+        if role is not None and role not in ("left", "right"):
+            raise RuntimeError("role must be 'left', 'right', or omitted")
         self.log_buffer.info("training",
-            "started: {} captures, model={}, trees={}, test_split={}".format(
-                len(capture_names), model_type, n_estimators, test_split))
+            "started: {} captures, model={}, trees={}, test_split={}{}".format(
+                len(capture_names), model_type, n_estimators, test_split,
+                ", role={}".format(role) if role else ""))
 
         paths = []
         for name in capture_names:
@@ -1999,6 +2010,7 @@ class AppState:
                 model_type=model_type,
                 n_estimators=n_estimators,
                 test_split=test_split,
+                role=role,
             )
         finally:
             if cleanup:
@@ -2014,7 +2026,10 @@ class AppState:
         activated = False
         if activate and model_path:
             try:
-                self.set_model(model_path)
+                if role in ("left", "right"):
+                    self.set_model_role(role, model_path)   # per-hand slot
+                else:
+                    self.set_model(model_path)
                 activated = True
             except Exception as e:
                 # Don't fail the whole training response if hot-swap fails;
@@ -2036,6 +2051,7 @@ class AppState:
             "model_path": model_path,
             "metrics": metrics,
             "active": activated,
+            "role": role,
             "captures": list(capture_names),
         }
 
@@ -2083,6 +2099,27 @@ class AppState:
         # had. If you want it running, click ▶.
         self.log_buffer.info("inference", "model loaded: {} (inference still {})".format(
             new_engine.name,
+            "running" if self.inference_enabled else "PAUSED -- click ▶ to start"))
+
+    def set_model_role(self, role: str, model_path: str) -> None:
+        """Hot-swap the per-hand inference engine for `role` (left/right) -- the
+        separate-model-per-hand slot the router reads in _engine_for_role. Lets a
+        headset-only operator train + load model_left/model_right without the CLI
+        --model-left/--model-right flags or a server restart. Like set_model, it
+        does NOT change the running/paused state (click the toggle to run)."""
+        role = (role or "").strip().lower()
+        if role not in ("left", "right"):
+            raise ValueError("role must be 'left' or 'right'")
+        from openmuscle.web.inference import InferenceEngine
+        existing = self.engines.get(role)
+        if existing is not None and str(existing.model_path) == str(model_path):
+            return  # already loaded for this side
+        self.engines[role] = InferenceEngine(model_path)
+        self.engine_status = "loaded"
+        self._last_inference_values = None
+        self._last_inference_ts = 0.0
+        self.log_buffer.info("inference", "{}-hand model loaded: {} (inference {})".format(
+            role, self.engines[role].name,
             "running" if self.inference_enabled else "PAUSED -- click ▶ to start"))
 
     def set_inference_enabled(self, enabled: bool) -> None:

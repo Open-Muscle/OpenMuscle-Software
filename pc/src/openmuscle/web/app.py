@@ -500,6 +500,10 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         n_estimators: int = 100
         test_split: float = 0.2
         activate: bool = True              # hot-swap the trained model into engine
+        # SEPARATE-MODEL-PER-HAND: left/right trains a single-arm model from that
+        # role's rows and (on activate) loads it into the per-hand engine slot.
+        # Call twice (left, right) for model_left + model_right. None = pooled.
+        role: Optional[str] = None
 
     @app.post("/api/train")
     async def train_endpoint(body: TrainBody):
@@ -516,6 +520,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 body.n_estimators,
                 body.test_split,
                 body.activate,
+                body.role,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -542,6 +547,27 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "active": state.engine is not None,
             "enabled": state.inference_enabled,
             "model": state.engine.name if state.engine else None,
+        }
+
+    @app.post("/api/inference/model/{role}")
+    async def set_model_role(role: str, body: SetModelBody):
+        """Load a model into the per-hand slot (separate-model-per-hand) so a
+        headset operator can activate model_left / model_right without a restart.
+        role is left|right; the band tagged that role routes through it."""
+        try:
+            state.set_model_role(role, body.path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Model file not found")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not load model: {e}")
+        eng = state.engines.get(role)
+        return {
+            "role": role,
+            "active": eng is not None,
+            "enabled": state.inference_enabled,
+            "model": eng.name if eng else None,
         }
 
     class SetEnabledBody(BaseModel):

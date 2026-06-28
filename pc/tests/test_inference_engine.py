@@ -140,6 +140,31 @@ def test_per_role_engines_route_each_band_to_its_own_model(tmp_path):
     assert "left=" in inf["model"] and "right=" in inf["model"]
 
 
+def test_set_model_role_loads_per_hand_slot(tmp_path):
+    # G4: a headset operator can load model_left / model_right at runtime (no CLI
+    # --model-left/--model-right, no restart). set_model_role fills the per-hand
+    # engine slot the router reads.
+    import pytest
+    from openmuscle.web.state import AppState
+
+    left_path, _ = _make_model(tmp_path, n_labels=3, subdir="L")
+    right_path, _ = _make_model(tmp_path, n_labels=2, subdir="R")
+    s = AppState(udp_port=53891, captures_dir=str(tmp_path), enable_discovery=False)
+    assert s.engine is None and not s._has_any_engine()
+
+    s.set_model_role("left", left_path)
+    s.set_model_role("right", right_path)
+    assert s.engines["left"] is not None and s.engines["right"] is not None
+    assert s._has_any_engine()
+    # Each role routes to its OWN engine.
+    assert s._engine_for_role("left") is s.engines["left"]
+    assert s._engine_for_role("right") is s.engines["right"]
+    assert s.engines["left"].name != s.engines["right"].name
+
+    with pytest.raises(ValueError):
+        s.set_model_role("middle", left_path)
+
+
 def test_untagged_band_falls_back_to_shared_model(tmp_path):
     # A band with no left/right tag uses --model (the shared engine) so single-
     # model mode and mixed setups still predict.
