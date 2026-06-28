@@ -95,11 +95,11 @@ class DiscoveredDevice:
 
     __slots__ = ("device_id", "device_type", "ip", "cmd_port", "sensor_port",
                  "fw", "caps", "matrix", "source", "last_seen",
-                 "subscribed", "sub_error", "role")
+                 "subscribed", "sub_error", "role", "imu")
 
     def __init__(self, device_id, device_type, ip, cmd_port,
                  sensor_port=DEFAULT_UDP_PORT, fw="", caps=None, matrix=None,
-                 source="beacon", last_seen=0.0, role=""):
+                 source="beacon", last_seen=0.0, role="", imu=None):
         self.device_id = device_id
         self.device_type = device_type
         self.ip = ip
@@ -115,6 +115,11 @@ class DiscoveredDevice:
         # Hub-assigned role for capture (left / right / labeler), or "" if
         # untagged. Persisted per device_id so it survives restarts + churn.
         self.role = role
+        # Per-chip IMU scale the firmware advertises on announce/get_info
+        # (#0217/#0219): {chip, gyro_dps_per_lsb, accel_g_per_lsb}. Captured into
+        # the recording meta so the trainer can normalize the RAW counts the CSV
+        # stores (Option A, board #0220/#0245). {} until the device advertises it.
+        self.imu = dict(imu or {})
 
     def to_cache(self):
         """Persisted form. PROTOCOL.md v1.0 S5.3 requires the cache hold at
@@ -145,6 +150,7 @@ class DiscoveredDevice:
             "subscribed": self.subscribed,
             "sub_error": self.sub_error,
             "role": self.role,
+            "imu": dict(self.imu),
         }
 
 
@@ -317,6 +323,7 @@ class DiscoveryManager:
             matrix=obj.get("matrix"),
             source="beacon",
             last_seen=time.time(),
+            imu=obj.get("imu"),
         )
         return self._upsert(dev)
 
@@ -350,6 +357,7 @@ class DiscoveryManager:
                 matrix=data.get("matrix"),
                 source="probe",
                 last_seen=time.time(),
+                imu=data.get("imu"),
             )
             return self._upsert(dev)
         return None
@@ -557,6 +565,7 @@ class DiscoveryManager:
                 existing.fw = dev.fw or existing.fw
                 existing.caps = dev.caps or existing.caps
                 existing.matrix = dev.matrix or existing.matrix
+                existing.imu = dev.imu or existing.imu
                 existing.source = dev.source
                 existing.last_seen = dev.last_seen
                 target = existing

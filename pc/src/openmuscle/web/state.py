@@ -884,6 +884,9 @@ class AppState:
                 "role": (disc_by_id.get(d.device_id) or {}).get("role", ""),
                 "subscribed": (disc_by_id.get(d.device_id) or {}).get("subscribed"),
                 "sub_error": (disc_by_id.get(d.device_id) or {}).get("sub_error"),
+                # Firmware per-chip IMU scale (scale_dict); lets the debug overlay
+                # confirm the hub knows the scale before a capture (#0220/#0245).
+                "imu_scale": (disc_by_id.get(d.device_id) or {}).get("imu"),
             })
         rec = None
         if self.recording:
@@ -1273,6 +1276,21 @@ class AppState:
         label_dev_obj = self.devices.get(label_device_id) if label_device_id else None
         label_status = (label_dev_obj.status if (label_dev_obj and label_dev_obj.status) else {})
 
+        # Per-device IMU scale (firmware scale_dict, #0217/#0219) so the trainer
+        # can normalize the RAW imu counts the CSV stores -- Option A, the
+        # store-raw + scale-in-meta decision (#0220, overseer #0245). Pulled from
+        # discovery's announce/get_info imu field for every band + the labeler.
+        imu_scale = {}
+        if self.discovery:
+            disc_imu = {e["device_id"]: e.get("imu")
+                        for e in self.discovery.snapshot()}
+            scale_ids = list(sensors_map) + (
+                [label_device_id] if label_device_id else [])
+            for did in scale_ids:
+                sc = disc_imu.get(did)
+                if sc:
+                    imu_scale[did] = sc
+
         auto = {
             "sensor_device_id": sensor_device_id,
             "label_device_id": label_device_id,
@@ -1282,6 +1300,9 @@ class AppState:
             # When set, the CSV carries imu_* (sensor band) + lbl_imu_* (matched
             # labeler, e.g. LASK5 gyro for supination) columns after the labels.
             "imu_columns": bool(with_imu),
+            # {device_id: {chip, gyro_dps_per_lsb, accel_g_per_lsb}} for bands +
+            # labeler that advertised it; the trainer multiplies raw*scale.
+            "imu_scale": imu_scale,
             "started_at": self.recording.started_at,
             "firmware": {
                 "sensor_reset_cause": sensor_status.get("reset_cause_name"),

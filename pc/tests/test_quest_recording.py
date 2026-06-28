@@ -508,3 +508,28 @@ class TestRecordingDefaults:
             dev = next(x for x in s._snapshot()["devices"]
                        if x["device_id"] == "fg-imu")
             assert dev["imu"]["accel"] == [-440, 0, 2150]
+
+    def test_imu_scale_captured_into_meta(self):
+        # Option A (#0220/#0245): the per-device firmware scale_dict advertised
+        # on discovery (announce/get_info) is recorded into meta.auto.imu_scale
+        # so the trainer can normalize the RAW imu counts the CSV stores.
+        scale = {"chip": "icm42688", "gyro_dps_per_lsb": 0.0305,
+                 "accel_g_per_lsb": 0.000061}
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.discovery.auto_subscribe = False
+            s.discovery.cache_path = str(Path(d) / "disc.json")
+            s._handle_packet(_flexgrid_packet(device_id="fg-imu"))
+            s._handle_packet(_lask5_packet(device_id="lask5-test"))
+            # Band advertises its scale_dict; the labeler advertises none.
+            s.discovery.on_announce(
+                {"v": "1.0", "type": "announce", "id": "fg-imu",
+                 "role": "source", "dev": "flexgrid", "caps": [],
+                 "matrix": [15, 4], "services": {"cmd": 8001},
+                 "imu": scale}, "127.0.0.1")
+            s.discovery.set_role("fg-imu", "left")
+            s.start_recording(sensor_device_id="fg-imu", role="left",
+                              filename="imuscale.csv")
+            s.stop_recording()
+            meta = s.read_capture_meta("imuscale.csv")
+            assert meta["auto"]["imu_scale"] == {"fg-imu": scale}

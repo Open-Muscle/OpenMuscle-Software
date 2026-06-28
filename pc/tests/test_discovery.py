@@ -28,12 +28,13 @@ class FakeV4CmdServer:
     """
 
     def __init__(self, device_id="flexgrid-test01", device_type="flexgrid",
-                 matrix=(15, 4), max_subscribers=4, accept=True):
+                 matrix=(15, 4), max_subscribers=4, accept=True, imu=None):
         self.device_id = device_id
         self.device_type = device_type
         self.matrix = list(matrix)
         self.max_subscribers = max_subscribers
         self.accept = accept
+        self.imu = imu          # per-chip scale_dict advertised on get_info
         self.subscribers = []          # list of (host, port)
         self.received = []             # every (verb, data) we got, for asserts
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -103,10 +104,13 @@ class FakeV4CmdServer:
                 self.subscribers.remove((host, port))
             return self._ack(msg_id, "ok", {"verb": verb, "removed": True})
         if verb == "get_info":
-            return self._ack(msg_id, "ok", {
+            info = {
                 "verb": verb, "id": self.device_id, "dev": self.device_type,
                 "fw": "v4.0.0", "matrix": self.matrix, "caps": ["sensor"],
-                "subscribers": []})
+                "subscribers": []}
+            if self.imu is not None:
+                info["imu"] = self.imu
+            return self._ack(msg_id, "ok", info)
         return self._ack(msg_id, "error", {"message": "unknown_verb"})
 
     @staticmethod
@@ -360,6 +364,47 @@ def test_role_persists_in_cache(tmp_path):
     entry = next(e for e in cached if e["device_id"] == "flexgrid-p")
     assert entry["role"] == "right"
     m2.stop()
+
+
+# ---- per-chip IMU scale capture (Option A: store raw + scale-in-meta) ------
+
+_SCALE = {"chip": "icm42688", "gyro_dps_per_lsb": 0.0305,
+          "accel_g_per_lsb": 0.000061}
+
+
+def test_announce_captures_imu_scale(mgr):
+    ann = _announce(device_id="flexgrid-imu")
+    ann["imu"] = _SCALE
+    dev = mgr.on_announce(ann, "10.0.0.30")
+    assert dev.imu == _SCALE
+    assert mgr.snapshot()[0]["imu"] == _SCALE
+
+
+def test_announce_without_imu_is_empty(mgr):
+    dev = mgr.on_announce(_announce(device_id="flexgrid-noimu"), "10.0.0.31")
+    assert dev.imu == {}
+    assert mgr.snapshot()[0]["imu"] == {}
+
+
+def test_imu_scale_carried_forward_when_beacon_omits_it(mgr):
+    ann = _announce(device_id="flexgrid-cf")
+    ann["imu"] = _SCALE
+    mgr.on_announce(ann, "10.0.0.32")
+    # A later beacon that omits imu must NOT wipe the known scale.
+    mgr.on_announce(_announce(device_id="flexgrid-cf"), "10.0.0.32")
+    assert mgr.snapshot()[0]["imu"] == _SCALE
+
+
+def test_probe_captures_imu_scale(tmp_path):
+    server = FakeV4CmdServer(imu=_SCALE)
+    m = DiscoveryManager(pc_host="127.0.0.1", udp_port=3141,
+                         cache_path=str(tmp_path / "c.json"), auto_subscribe=False)
+    try:
+        dev = m.probe("127.0.0.1", server.port)
+        assert dev is not None and dev.imu == _SCALE
+    finally:
+        m.stop()
+        server.stop()
 
 
 # ---- subnet scan (cold-cache discovery: P3 late-joiner path) ---------------
