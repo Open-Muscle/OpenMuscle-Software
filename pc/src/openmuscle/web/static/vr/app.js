@@ -152,10 +152,27 @@ const CONFIG_ROW_H        = 0.045;  // one capture row / action button height
 const CONFIG_ROW_GAP      = 0.008;
 const CONFIG_LIST_ROWS    = 4;      // visible capture rows (no scroll yet; top N)
 const CONFIG_PAD          = 0.018;
-// Panel height = title + N list rows + action row + speed row, plus gaps/pad.
+
+// BANDS section (in-VR band L/R tagging). Sits ABOVE the REPLAY section: a
+// small section header strip + N band rows. Each band row is a wide info label
+// (short device_id + role badge + batt/Hz tag, drawn on its own canvas) plus
+// three small ray+pinch targets on the right: L | R | clear. Pinch posts to
+// /api/discovery/role; the next snapshot's device.role confirms the tag. The
+// row count is fixed up front (like the capture rows); drawBandsSection() binds
+// each slot to a discovered FlexGrid band or hides it.
+const CONFIG_BAND_ROWS    = 3;      // visible band slots (top N flexgrids)
+const CONFIG_BAND_BTN_W   = 0.045;  // L / R / clear sub-button width
+const CONFIG_BAND_BTN_GAP = 0.006;  // gap between the three sub-buttons
+// Info label takes the remaining row width to the left of the 3 sub-buttons.
+const CONFIG_BAND_INFO_W  = CONFIG_ROW_W
+    - 3 * CONFIG_BAND_BTN_W - 3 * CONFIG_BAND_BTN_GAP;
+
+// Panel height = title + BANDS header + N band rows + N capture list rows
+// + action row + speed row, plus gaps/pad. The BANDS header reuses CONFIG_ROW_H.
 const CONFIG_H            = CONFIG_TITLE_H
-    + (CONFIG_LIST_ROWS + 2) * CONFIG_ROW_H
-    + (CONFIG_LIST_ROWS + 2) * CONFIG_ROW_GAP
+    + (CONFIG_BAND_ROWS + 1) * CONFIG_ROW_H            // band rows + section header
+    + (CONFIG_LIST_ROWS + 2) * CONFIG_ROW_H            // capture rows + action + speed
+    + (CONFIG_BAND_ROWS + 1 + CONFIG_LIST_ROWS + 2) * CONFIG_ROW_GAP
     + 2 * CONFIG_PAD;
 
 // ---------------------------------------------------------------------------
@@ -319,6 +336,18 @@ let configPanel;
 let configTitleMesh, configTitleCanvas, configTitleCtx, configTitleTex;
 const configRowButtons = [];   // capture-row button entries (in `buttons[]` too)
 
+// BANDS section state. Each band slot is a wide info label (its own canvas
+// mesh, NOT a button) plus three sub-button entries (L / R / clear, in
+// buttons[]). configBandRows[i] = { info: {mesh,canvas,ctx,tex}, L, R, clear,
+// device_id }. drawBandsSection() binds each slot to a discovered FlexGrid
+// (or hides it) and paints. bandActivity tracks a per-device rolling baseline
+// + recent activity so a physical squeeze briefly highlights the matching row
+// (squeeze-to-identify). bandIdentify is the device_id currently lit (or null).
+const configBandRows = [];
+const bandActivity = new Map();   // device_id -> { baseline, last, until }
+let bandIdentifyId = null;        // device_id flagged by the squeeze detector
+const BAND_IDENTIFY_MS = 700;     // how long a squeeze keeps a row highlighted
+
 // Collapsed STOP button shown in place of menuRoot while recording. Anchored
 // to the same world position as menuRoot, but only one of the two is visible
 // at any time (toggled by uiState.recording in updateFromSnapshot).
@@ -446,7 +475,15 @@ function initScene() {
                     configState,
                     get configPanel() { return configPanel; },
                     openSetup, closeSetup, toggleSetup,
-                    setCaptures, selectCapture, fetchCaptures, drawReplaySection };
+                    setCaptures, selectCapture, fetchCaptures, drawReplaySection,
+                    // BANDS section handles: inject a fake devices array + render
+                    // the band rows headless (setDevices), or paint from an
+                    // explicit snapshot (drawBandsSection). setBandRole posts a
+                    // tag; updateBandIdentify drives the squeeze-to-identify pass.
+                    setDevices, drawBandsSection, setBandRole,
+                    bandActivityScalar, updateBandIdentify,
+                    get configBandRows() { return configBandRows; },
+                    get bandIdentifyId() { return bandIdentifyId; } };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -976,7 +1013,7 @@ function drawConfigTitle() {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#f0f4f8';
     ctx.font = 'bold 34px system-ui';
-    ctx.fillText('SETUP · REPLAY', 20, H * 0.3);
+    ctx.fillText('SETUP · BANDS · REPLAY', 20, H * 0.3);
     // Progress / hint line.
     ctx.font = '28px system-ui';
     if (rp.active) {
@@ -994,6 +1031,235 @@ function drawConfigTitle() {
         ctx.fillText(sel, 20, H * 0.72);
     }
     configTitleTex.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------------
+// BANDS section (in-VR band L/R tagging)
+//
+// One row per discovered FlexGrid band. The wide info label shows the short
+// device_id (last 6 chars), the current role badge (LEFT / RIGHT / --), and a
+// battery%/Hz tag if present. Three sub-buttons (L | R | clear) post to
+// /api/discovery/role; the NEXT snapshot's device.role confirms the tag and is
+// reflected in the badge + the active-button highlight. A squeeze-to-identify
+// detector watches each band's matrix activity and briefly lights the row whose
+// physical band the user squeezes, so they tag the right one. All interaction
+// reuses createConfigButton + the buttons[] raycast/pinch path.
+// ---------------------------------------------------------------------------
+
+// Per-flexgrid activity scalar from its matrix (max cell). Robust to a missing
+// or empty matrix (returns 0). matrix is [cols][rows] of numbers.
+function bandActivityScalar(dev) {
+    const m = dev && dev.matrix;
+    if (!Array.isArray(m) || m.length === 0) return 0;
+    let max = 0;
+    for (const col of m) {
+        if (!Array.isArray(col)) continue;
+        for (const v of col) {
+            const n = typeof v === 'number' ? v : 0;
+            if (n > max) max = n;
+        }
+    }
+    return max;
+}
+
+// Squeeze-to-identify: track a slow rolling baseline per device_id and flag the
+// ONE band whose activity jumps well above its own baseline AND above the other
+// bands' current activity. The flagged id stays lit for BAND_IDENTIFY_MS so a
+// brief squeeze produces a visible, stable highlight. Called each frame with
+// the live snapshot. Keeps state in bandActivity; sets bandIdentifyId.
+function updateBandIdentify(snap) {
+    const now = performance.now();
+    const fgs = (snap && Array.isArray(snap.devices) ? snap.devices : [])
+        .filter((d) => d && d.device_type === 'flexgrid');
+    let best = null, bestExcess = 0;
+    for (const d of fgs) {
+        const act = bandActivityScalar(d);
+        let rec = bandActivity.get(d.device_id);
+        if (!rec) { rec = { baseline: act, last: act, until: 0 }; bandActivity.set(d.device_id, rec); }
+        // Slow EMA baseline so a sustained squeeze still reads as "above" it;
+        // a quick (0.08) follow on the last value powers the spike compare.
+        rec.baseline = rec.baseline * 0.97 + act * 0.03;
+        rec.last = act;
+        // Excess of this band over its own baseline. Require a real jump
+        // (15% over baseline + a small absolute floor) so idle noise doesn't fire.
+        const excess = act - rec.baseline * 1.15;
+        if (excess > 8 && excess > bestExcess) { bestExcess = excess; best = d; }
+    }
+    if (best) {
+        // Confirm it also leads the other bands' current activity (so squeezing
+        // one band doesn't light another that happens to be drifting up).
+        const bestAct = bandActivityScalar(best);
+        let leads = true;
+        for (const d of fgs) {
+            if (d.device_id === best.device_id) continue;
+            if (bandActivityScalar(d) >= bestAct) { leads = false; break; }
+        }
+        if (leads) {
+            const rec = bandActivity.get(best.device_id);
+            rec.until = now + BAND_IDENTIFY_MS;
+            bandIdentifyId = best.device_id;
+        }
+    }
+    // Expire the highlight once its window passes.
+    if (bandIdentifyId) {
+        const rec = bandActivity.get(bandIdentifyId);
+        if (!rec || rec.until < now) bandIdentifyId = null;
+    }
+}
+
+// POST a role tag for a band. role in {'left','right','labeler',''}. The next
+// snapshot's device.role confirms it (we don't optimistically mutate state);
+// surface success / the server's detail in the status strip. 400 on unknown
+// device or invalid role.
+async function setBandRole(deviceId, role) {
+    try {
+        const r = await fetch('/api/discovery/role', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_id: deviceId, role }),
+        });
+        if (r.ok) {
+            const short = (deviceId || '').slice(-6);
+            setStatus(role ? `tagged ${short} = ${role}` : `cleared ${short}`);
+        } else {
+            let detail = `HTTP ${r.status}`;
+            try { const err = await r.json(); if (err && err.detail) detail = err.detail; }
+            catch (e) { /* non-JSON error body */ }
+            setStatus(`role failed: ${detail}`.slice(0, 80));
+        }
+    } catch (e) {
+        setStatus(`role error: ${e.message}`);
+    }
+}
+
+// Band info-label paint: short device_id + role badge + batt%/Hz tag. Lights up
+// (amber outline) while the squeeze detector has this band flagged so the user
+// can see which physical band they're squeezing maps to which row.
+function drawBandInfoLabel(row, dev) {
+    const ctx = row.info.ctx;
+    const W = row.info.canvas.width, H = row.info.canvas.height;
+    const role = (dev && dev.role) || '';
+    const short = dev ? (dev.device_id || '').slice(-6) : '';
+    const s = (dev && dev.status) || {};
+    const pct = (s.pct != null) ? `${s.pct}%` : '';
+    const hz = (dev && dev.hz) ? `${Math.round(dev.hz)}Hz` : '';
+    const tag = [pct, hz].filter(Boolean).join(' ');
+    const identify = dev && bandIdentifyId === dev.device_id;
+    const drawKey = `${short}|${role}|${tag}|${identify}`;
+    if (row._lastInfoKey === drawKey) return;
+    row._lastInfoKey = drawKey;
+    ctx.clearRect(0, 0, W, H);
+    // Background; amber-flooded while squeeze-identified.
+    ctx.fillStyle = identify ? '#7c5e12' : '#2a3142';
+    _roundRectPath(ctx, W, H, 16);
+    ctx.fill();
+    if (!dev) { row.info.tex.needsUpdate = true; return; }
+    // device_id (last 6) left-aligned.
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f0f4f8';
+    ctx.font = 'bold 30px system-ui';
+    ctx.fillText(short, 16, H * 0.34);
+    // Role badge under the id: LEFT (red) / RIGHT (blue) / -- (gray).
+    let badge = '--', badgeColor = '#9fb3c8';
+    if (role === 'left')  { badge = 'LEFT';  badgeColor = '#ef4444'; }
+    else if (role === 'right') { badge = 'RIGHT'; badgeColor = '#1f6feb'; }
+    else if (role) { badge = role.toUpperCase(); badgeColor = '#9fb3c8'; }
+    ctx.font = 'bold 26px system-ui';
+    ctx.fillStyle = badgeColor;
+    ctx.fillText(badge, 16, H * 0.74);
+    // Battery%/Hz tag right-aligned.
+    if (tag) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#9fb3c8';
+        ctx.font = '24px system-ui';
+        ctx.fillText(tag, W - 16, H * 0.74);
+    }
+    row.info.tex.needsUpdate = true;
+}
+
+// Role sub-button (L / R / clear) paint. customDraw hook. Highlights when its
+// role is the band's ACTIVE role (red for L, blue for R, gray-bright for clear),
+// or blue while hovered, else muted. Reads the bound row's current device role.
+function drawBandRoleButton(btn, hovered) {
+    const row = btn.userData_bandRow;
+    const dev = row && row.device;
+    const role = btn.userData_role;            // 'left' | 'right' | ''
+    const active = !!dev && ((dev.role || '') === role);
+    const flashing = (btn.flashUntil || 0) > performance.now();
+    const enabled = !!dev;                     // no bound band -> muted, inert
+    const label = role === 'left' ? 'L' : role === 'right' ? 'R' : 'x';
+    const drawKey = `${hovered}|${active}|${flashing}|${enabled}|${label}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    let bg;
+    if (flashing)            bg = '#ffffff';
+    else if (!enabled)       bg = '#374151';   // muted: no band bound
+    else if (active && role === 'left')  bg = '#ef4444';   // red = LEFT active
+    else if (active && role === 'right') bg = '#1f6feb';   // blue = RIGHT active
+    else if (active)         bg = '#6b7280';   // gray = clear/other active
+    else if (hovered)        bg = '#1f6feb';
+    else                     bg = '#2a3142';
+    ctx.fillStyle = bg;
+    _roundRectPath(ctx, W, H, 12);
+    ctx.fill();
+    ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';
+    ctx.font = 'bold 34px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, W / 2, H / 2);
+    btn.tex.needsUpdate = true;
+}
+
+// L / R / clear sub-button activation: tag the bound band's role. No-op if the
+// slot has no band bound (hidden rows are non-hoverable anyway).
+function onBandRoleSelect(rowIndex, role) {
+    const row = configBandRows[rowIndex];
+    const dev = row && row.device;
+    if (!dev || !dev.device_id) return;
+    setBandRole(dev.device_id, role);
+}
+
+// Bind discovered FlexGrid bands onto the fixed band slots and paint them.
+// Filters snap.devices to flexgrids (NOT just streaming ones -- a band with no
+// matrix yet can still be tagged). Extra slots (beyond the band count) are
+// hidden. Used live each frame and headless via window.OMVR.drawBandsSection.
+function drawBandsSection(snap) {
+    const fgs = (snap && Array.isArray(snap.devices) ? snap.devices : [])
+        .filter((d) => d && d.device_type === 'flexgrid')
+        .sort((a, b) =>
+            ((BAND_ROLE_ORDER[a.role] ?? 9) - (BAND_ROLE_ORDER[b.role] ?? 9))
+            || (a.device_id < b.device_id ? -1 : 1));
+    for (let i = 0; i < configBandRows.length; i++) {
+        const row = configBandRows[i];
+        const dev = i < fgs.length ? fgs[i] : null;
+        row.device = dev;
+        const vis = !!dev;
+        row.info.mesh.visible = vis;
+        row.L.mesh.visible = vis;
+        row.R.mesh.visible = vis;
+        row.clear.mesh.visible = vis;
+        if (vis) {
+            drawBandInfoLabel(row, dev);
+            drawBandRoleButton(row.L, row.L === hoveredButton);
+            drawBandRoleButton(row.R, row.R === hoveredButton);
+            drawBandRoleButton(row.clear, row.clear === hoveredButton);
+        }
+    }
+}
+
+// Headless driver: inject a fake devices array, run the squeeze detector, and
+// render the BANDS rows -- no XR session or /ws/live needed (for preview
+// verification). Wraps the list in a minimal snapshot so the same code path
+// runs as live. Returns the bound rows for inspection.
+function setDevices(list) {
+    const snap = { devices: Array.isArray(list) ? list : [] };
+    updateBandIdentify(snap);
+    drawBandsSection(snap);
+    return configBandRows;
 }
 
 // Build the config panel group, its title strip, the (rebuildable) capture-row
@@ -1027,9 +1293,77 @@ function createConfigPanel() {
     configTitleMesh.position.set(0, topY - CONFIG_TITLE_H / 2, 0.001);
     configPanel.add(configTitleMesh);
 
+    // --- BANDS section (above REPLAY) ---------------------------------------
+    let by = topY - CONFIG_TITLE_H - CONFIG_ROW_GAP;
+
+    // Static "BANDS -- tag L / R" section header (a plain canvas label, not a
+    // button). Drawn once here; it never changes.
+    const bandsHdrCanvas = document.createElement('canvas');
+    bandsHdrCanvas.width = 512; bandsHdrCanvas.height = 80;
+    const bhc = bandsHdrCanvas.getContext('2d');
+    bhc.fillStyle = '#9fb3c8';
+    bhc.font = 'bold 30px system-ui';
+    bhc.textBaseline = 'middle';
+    bhc.textAlign = 'left';
+    bhc.fillText('BANDS · tag L / R / clear', 8, bandsHdrCanvas.height / 2);
+    const bandsHdrTex = new THREE.CanvasTexture(bandsHdrCanvas);
+    bandsHdrTex.colorSpace = THREE.SRGBColorSpace;
+    const bandsHdrMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(CONFIG_ROW_W, CONFIG_ROW_H),
+        new THREE.MeshBasicMaterial({ map: bandsHdrTex, transparent: true,
+                                       depthWrite: false }));
+    bandsHdrMesh.position.set(0, by - CONFIG_ROW_H / 2, 0.001);
+    configPanel.add(bandsHdrMesh);
+    by -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+
+    // Band slots. Each row = a wide info label (canvas mesh) on the left + three
+    // sub-buttons (L | R | clear) on the right. The three sub-buttons share the
+    // row's vertical center; the info label fills the remaining width. x=0 is the
+    // row center (CONFIG_ROW_W wide), so the left edge is -CONFIG_ROW_W/2.
+    const rowLeft = -CONFIG_ROW_W / 2;
+    for (let i = 0; i < CONFIG_BAND_ROWS; i++) {
+        const rowCY = by - CONFIG_ROW_H / 2;
+
+        // Wide info label (NOT a button -- raycast never targets it).
+        const infoCanvas = document.createElement('canvas');
+        infoCanvas.width = 512; infoCanvas.height = 80;
+        const infoCtx = infoCanvas.getContext('2d');
+        const infoTex = new THREE.CanvasTexture(infoCanvas);
+        infoTex.colorSpace = THREE.SRGBColorSpace;
+        const infoMesh = new THREE.Mesh(
+            new THREE.PlaneGeometry(CONFIG_BAND_INFO_W, CONFIG_ROW_H),
+            new THREE.MeshBasicMaterial({ map: infoTex, transparent: true,
+                                           depthWrite: false }));
+        infoMesh.position.set(rowLeft + CONFIG_BAND_INFO_W / 2, rowCY, 0.001);
+        configPanel.add(infoMesh);
+
+        // Three sub-buttons to the right of the info label.
+        const btnStartX = rowLeft + CONFIG_BAND_INFO_W + CONFIG_BAND_BTN_GAP
+            + CONFIG_BAND_BTN_W / 2;
+        const step = CONFIG_BAND_BTN_W + CONFIG_BAND_BTN_GAP;
+        const row = {
+            info: { mesh: infoMesh, canvas: infoCanvas, ctx: infoCtx, tex: infoTex },
+            device: null, _lastInfoKey: null,
+        };
+        const mkBtn = (suffix, role, slot) => {
+            const b = createConfigButton(
+                `BANDROW_${i}_${suffix}`, CONFIG_BAND_BTN_W, CONFIG_ROW_H,
+                new THREE.Vector3(btnStartX + slot * step, rowCY, 0.001),
+                () => onBandRoleSelect(i, role), drawBandRoleButton);
+            b.userData_bandRow = row;
+            b.userData_role = role;
+            return b;
+        };
+        row.L     = mkBtn('L',     'left',  0);
+        row.R     = mkBtn('R',     'right', 1);
+        row.clear = mkBtn('CLEAR', '',      2);
+        configBandRows.push(row);
+        by -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+    }
+
     // Capture-row slots. We create CONFIG_LIST_ROWS fixed-position row buttons
     // up front; setCaptures() binds each to a capture (or hides extras).
-    let y = topY - CONFIG_TITLE_H - CONFIG_ROW_GAP;
+    let y = by;
     for (let i = 0; i < CONFIG_LIST_ROWS; i++) {
         const rowY = y - CONFIG_ROW_H / 2;
         const btn = createConfigButton(
@@ -1067,6 +1401,7 @@ function createConfigPanel() {
 
     // First paint so it looks right the instant it's shown.
     setCaptures(configState.captures);
+    drawBandsSection(latestSnapshot);   // hides all band slots until devices appear
     drawConfigTitle();
 }
 
@@ -2658,6 +2993,16 @@ function updateFromSnapshot(snap, timestampMs) {
     // so we only need to drive the non-button title here.
     if (configPanel && configPanel.visible) {
         drawConfigTitle();
+        // BANDS section: run the squeeze-to-identify detector, then bind the
+        // live FlexGrid list onto the band slots + repaint the info labels.
+        // The L/R/clear sub-buttons repaint through updateButtonVisual ->
+        // customDraw (they own their redraw-skip); drawBandsSection re-binds the
+        // device each slot points at (so role badges + active highlight track
+        // the latest snapshot) and paints the non-button info labels here.
+        updateBandIdentify(snap);
+        drawBandsSection(snap);
+    } else if (bandIdentifyId) {
+        bandIdentifyId = null;   // clear stale highlight when the panel closes
     }
 }
 
@@ -2675,6 +3020,27 @@ async function toggleRecording() {
                 setStatus(`saved: ${data.filename} (${data.rows} rows, match ${(data.match_rate * 100).toFixed(0)}%)`);
             } else {
                 setStatus(`stop failed: HTTP ${r.status}`);
+            }
+        } else if (BOTH_HANDS) {
+            // Two-hand mode: start a TRUE bilateral capture from the bands
+            // already tagged left/right (POST /api/recording/bilateral, empty
+            // body) instead of the single-band path. A 400 means the bands
+            // aren't tagged or a quest hand isn't streaming -- surface the
+            // server's detail so the user knows to open SETUP and tag L/R.
+            const r = await fetch('/api/recording/bilateral', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            if (r.ok) {
+                const data = await r.json();
+                setStatus(`recording (both): ${data.filename}`);
+                // Slate fires on the recording-start edge in updateFromSnapshot.
+            } else {
+                let detail = `HTTP ${r.status}`;
+                try { const err = await r.json(); if (err && err.detail) detail = err.detail; }
+                catch (e) { /* non-JSON error body */ }
+                setStatus(`bilateral failed: ${detail}`.slice(0, 80));
             }
         } else {
             const r = await fetch('/api/recording', {
