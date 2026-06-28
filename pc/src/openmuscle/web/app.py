@@ -392,6 +392,34 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "match_rate": round(r.match_rate, 3),
         }
 
+    # ----- REST: replay (test the pipeline on a past capture, no hardware) -----
+
+    class ReplayBody(BaseModel):
+        capture: str                 # capture filename inside captures_dir
+        speed: float = 1.0           # 1x real-time; 2x = twice as fast
+        loop: bool = False
+
+    @app.post("/api/simulate/replay")
+    async def start_replay(body: ReplayBody):
+        """Replay a past capture's frames into the LIVE pipeline (no hardware).
+        Reconstructs FlexGrid UDP + Quest frames so the recorder / matcher /
+        inference / VR run exactly as with live devices. Mutually exclusive with
+        an active recording or another replay (same ingest path would collide)."""
+        try:
+            info = state.start_replay(body.capture, speed=body.speed,
+                                      loop=body.loop)
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"status": "replaying", **info}
+
+    @app.delete("/api/simulate/replay")
+    async def stop_replay():
+        return state.stop_replay()
+
+    @app.get("/api/simulate/replay")
+    async def replay_status():
+        return dict(state._replay_status)
+
     # ----- REST: captures -----
 
     @app.get("/api/captures")

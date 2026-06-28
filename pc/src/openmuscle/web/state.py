@@ -362,6 +362,13 @@ class AppState:
         # client can draw a predicted ghost hand next to EACH real hand.
         self._inference_by_device: dict = {}
 
+        # ----- replay (test the pipeline on a past capture, no hardware) -----
+        # A background thread re-feeds a recorded capture's FlexGrid + Quest
+        # frames into the live ingest path; status rides the WS snapshot.
+        self._replay_thread = None
+        self._replay_stop = None
+        self._replay_status: dict = {"active": False}
+
     # ----- lifecycle -----
 
     def start(self):
@@ -952,6 +959,9 @@ class AppState:
             # streaming also appear in `devices` above (via their frames); this
             # adds the ones that are known-but-silent plus per-device sub status.
             "discovery": self.discovery.snapshot() if self.discovery else [],
+            # Replay-for-testing progress (a past capture re-fed into the live
+            # pipeline). {"active": False} when idle; the VR shows a progress line.
+            "replay": dict(self._replay_status),
         }
 
     def _has_any_engine(self) -> bool:
@@ -1764,6 +1774,78 @@ class AppState:
     # extras) so they match the phone meta.json shape byte-for-key (board #0097):
     # the trainer reads the same keys whether a session was captured on phone or PC.
     META_INTEROP_KEYS = ("schema", "mirror", "label_source", "roles", "created_ms")
+
+    # ----- replay (hardware-free pipeline testing) -----
+
+    def replay_active(self) -> bool:
+        return self._replay_thread is not None and self._replay_thread.is_alive()
+
+    def start_replay(self, capture_name: str, speed: float = 1.0,
+                     loop: bool = False) -> dict:
+        """Re-feed a past capture's frames into the live pipeline (no hardware).
+
+        Reconstructs FlexGrid UDP + Quest frames from the capture and replays
+        them timestamp-paced, so the recorder / matcher / inference / VR run
+        exactly as with live devices. Mutually exclusive with an active
+        recording or another replay (the same ingest path would collide).
+        """
+        import threading
+        from openmuscle.simulate.replay import replay_capture, parse_capture
+
+        if self.replay_active():
+            raise RuntimeError("a replay is already running; stop it first")
+        if self.recording is not None:
+            raise RuntimeError("stop the active recording before replaying")
+        path = self.capture_path(capture_name)
+        if path is None or not path.exists():
+            raise RuntimeError(f"capture not found: {capture_name}")
+
+        # Parse up front so the API can report size/roles and reject empties.
+        _, info = parse_capture(str(path))
+        if not info.get("rows"):
+            raise RuntimeError(f"capture has no replayable rows: {capture_name}")
+
+        stop = threading.Event()
+        self._replay_stop = stop
+        self._replay_status = {"active": True, "frame": 0, "total": info["rows"],
+                               "capture": capture_name, "speed": speed}
+
+        def _progress(st):
+            st = dict(st)
+            st["speed"] = speed
+            self._replay_status = st
+
+        def _run():
+            try:
+                replay_capture(
+                    str(path), target_ip="127.0.0.1", udp_port=self.udp_port,
+                    speed=speed, loop=loop, stop_event=stop,
+                    on_progress=_progress, quest_sink=self.ingest_quest_packet)
+            except Exception as e:
+                self.log_buffer.error("replay", "replay failed: {}".format(e))
+                self._replay_status = {"active": False, "error": str(e)}
+
+        t = threading.Thread(target=_run, name="om-replay", daemon=True)
+        self._replay_thread = t
+        t.start()
+        self.log_buffer.info(
+            "replay", "started replay of {} ({} rows, {}x{})".format(
+                capture_name, info["rows"], speed, ", loop" if loop else ""))
+        return {"capture": capture_name, "rows": info["rows"], "speed": speed,
+                "loop": loop, "roles": info["roles"],
+                "device_ids": info["device_ids"], "has_quest": info["has_quest"]}
+
+    def stop_replay(self) -> dict:
+        if self._replay_stop is not None:
+            self._replay_stop.set()
+        t = self._replay_thread
+        if t is not None:
+            t.join(timeout=2.0)
+        self._replay_thread = None
+        self._replay_stop = None
+        self._replay_status = {"active": False}
+        self.log_buffer.info("replay", "replay stopped")
+        return {"stopped": True}
 
     def _meta_path(self, csv_name: str) -> Optional[Path]:
         """Sidecar path for a capture's metadata JSON. Whitelist-guarded so

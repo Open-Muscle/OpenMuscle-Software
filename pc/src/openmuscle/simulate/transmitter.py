@@ -30,7 +30,14 @@ def run_simulator(port: int = 3141, device_type: str = "flexgrid",
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     if replay_file:
-        _replay(sock, replay_file, target_ip, port)
+        # Reconstruct FlexGrid (UDP) + Quest (/ws/quest) frames from the capture
+        # so a recorded two-hand session re-runs the whole pipeline. The web
+        # server must be up for the Quest WebSocket leg.
+        from openmuscle.simulate.replay import replay_capture
+        print(f"Replaying {replay_file} -> UDP {target_ip}:{port}, "
+              f"quest -> ws://{target_ip}:{web_port}/ws/quest")
+        replay_capture(replay_file, target_ip=target_ip, udp_port=port,
+                       web_port=web_port, speed=1.0)
     elif device_type in ("quest_hand", "combo"):
         _generate_quest(sock, device_type, target_ip, port, web_port)
     else:
@@ -141,26 +148,6 @@ def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
         print(f"\nStopped after {frame_num} hand frames")
 
 
-def _replay(sock, filepath: str, ip: str, port: int):
-    """Replay a capture file by re-sending each line as a UDP packet."""
-    import ast
-
-    print(f"Replaying {filepath} -> {ip}:{port}")
-    pkt_num = 0
-
-    with open(filepath, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-
-            # Try to send the raw line (preserves original format)
-            sock.sendto(line.encode("utf-8"), (ip, port))
-            pkt_num += 1
-
-            if pkt_num % 100 == 0:
-                print(f"Replayed {pkt_num} packets")
-
-            time.sleep(0.001)
-
-    print(f"Replay complete: {pkt_num} packets sent")
+# Capture replay moved to simulate/replay.py (CSV-aware: reconstructs per-band
+# FlexGrid UDP + per-hand Quest /ws/quest frames, timestamp-paced). The old
+# raw-line UDP pipe could not replay a recorded CSV or a two-hand session.
