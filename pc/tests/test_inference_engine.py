@@ -20,18 +20,19 @@ _COLS = ["R0C0", "R0C1", "R1C0", "R1C1"]      # 2x2 grid, row-major
 _MATRIX = [[0.1, 0.3], [0.2, 0.4]]            # [cols][rows] -> 4 features
 
 
-def _make_model(tmp_path, named=True):
+def _make_model(tmp_path, named=True, n_labels=3, subdir="m"):
     rng = np.random.RandomState(0)
     X = pd.DataFrame(rng.rand(20, 4), columns=_COLS)
-    y = pd.DataFrame(rng.rand(20, 3), columns=["label_0", "label_1", "label_2"])
+    cols = [f"label_{i}" for i in range(n_labels)]
+    y = pd.DataFrame(rng.rand(20, n_labels), columns=cols)
     model = RandomForestRegressor(n_estimators=5, random_state=0)
     model.fit(X if named else X.values, y)     # named -> feature_names_in_ set
-    d = tmp_path / "m"
+    d = tmp_path / subdir
     d.mkdir()
     with open(d / "model.pkl", "wb") as f:
         pickle.dump(model, f)
     (d / "metadata.json").write_text(
-        json.dumps({"metrics": {"n_features": 4, "n_labels": 3}}))
+        json.dumps({"metrics": {"n_features": 4, "n_labels": n_labels}}))
     return str(d / "model.pkl"), model
 
 
@@ -104,3 +105,55 @@ def test_per_band_inference_in_snapshot(tmp_path):
     inf = s._snapshot()["inference"]
     assert set(inf["by_device"]) == {"fg-left", "fg-right"}
     assert len(inf["by_device"]["fg-left"]) == 3      # model has 3 outputs
+
+
+def test_per_role_engines_route_each_band_to_its_own_model(tmp_path):
+    # Separate-model-per-hand: --model-left and --model-right load two distinct
+    # models; a band tagged 'left' runs the left model, 'right' the right model.
+    # The two models have DIFFERENT output counts (3 vs 2) so routing is provable
+    # by the length of each band's prediction.
+    import time as _t
+    from openmuscle.web.state import AppState
+    from openmuscle.protocol.schema import OpenMusclePacket, CURRENT_VERSION
+
+    left_path, _ = _make_model(tmp_path, n_labels=3, subdir="left")
+    right_path, _ = _make_model(tmp_path, n_labels=2, subdir="right")
+    s = AppState(udp_port=53889, captures_dir=str(tmp_path),
+                 model_left=left_path, model_right=right_path,
+                 enable_discovery=False)
+    assert s.engine is None                       # no shared model, only per-role
+    assert s._has_any_engine() and s.inference_enabled
+    # The Sources-panel role tags the router reads (discovery is off in the test).
+    s._role_by_device = {"fg-left": "left", "fg-right": "right"}
+
+    def fg(did):
+        return OpenMusclePacket(
+            version=CURRENT_VERSION, device_type="flexgrid", device_id=did,
+            timestamp_ms=0, data={"matrix": [[0.1, 0.3], [0.2, 0.4]]},
+            receive_time=_t.time())
+
+    s._handle_packet(fg("fg-left"))
+    s._handle_packet(fg("fg-right"))
+    inf = s._snapshot()["inference"]
+    assert len(inf["by_device"]["fg-left"]) == 3      # left model -> 3 outputs
+    assert len(inf["by_device"]["fg-right"]) == 2     # right model -> 2 outputs
+    assert "left=" in inf["model"] and "right=" in inf["model"]
+
+
+def test_untagged_band_falls_back_to_shared_model(tmp_path):
+    # A band with no left/right tag uses --model (the shared engine) so single-
+    # model mode and mixed setups still predict.
+    import time as _t
+    from openmuscle.web.state import AppState
+    from openmuscle.protocol.schema import OpenMusclePacket, CURRENT_VERSION
+
+    shared_path, _ = _make_model(tmp_path, n_labels=3, subdir="shared")
+    s = AppState(udp_port=53890, captures_dir=str(tmp_path),
+                 model_path=shared_path, enable_discovery=False)
+    # No role map entry -> _engine_for_role("") returns the shared engine.
+    s._handle_packet(OpenMusclePacket(
+        version=CURRENT_VERSION, device_type="flexgrid", device_id="fg-x",
+        timestamp_ms=0, data={"matrix": [[0.1, 0.3], [0.2, 0.4]]},
+        receive_time=_t.time()))
+    inf = s._snapshot()["inference"]
+    assert len(inf["by_device"]["fg-x"]) == 3

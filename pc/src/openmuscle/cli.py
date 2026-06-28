@@ -78,6 +78,14 @@ def _lan_ip():
 @click.option("--model", "model_path", default=None, type=click.Path(),
               help="Path to a trained model.pkl. When set, FlexGrid frames are run "
                    "through the model and predictions appear in the LASK Inference panel.")
+@click.option("--model-left", "model_left", default=None, type=click.Path(),
+              help="SEPARATE-MODEL-PER-HAND: model.pkl for the LEFT band. A band "
+                   "tagged 'left' in the Sources panel runs through this model; "
+                   "pair with --model-right for true two-hand prediction (one model "
+                   "per arm). Falls back to --model for any untagged band.")
+@click.option("--model-right", "model_right", default=None, type=click.Path(),
+              help="SEPARATE-MODEL-PER-HAND: model.pkl for the RIGHT band. See "
+                   "--model-left.")
 @click.option("--hand", "hand", default=None,
               help="Robot hand target as HOST or HOST:PORT (e.g. 10.0.0.55 or "
                    "10.0.0.55:3145). When set together with --model, inference "
@@ -90,7 +98,8 @@ def _lan_ip():
                    "on the headset (Settings -> Security -> Install a certificate).")
 @click.option("--ssl-keyfile", default=None, type=click.Path(exists=True, dir_okay=False),
               help="Path to TLS private key (PEM). Pair with --ssl-certfile.")
-def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl_certfile, ssl_keyfile):
+def web(host, port, udp_port, announce_port, captures_dir, model_path, model_left,
+        model_right, hand, ssl_certfile, ssl_keyfile):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
     # Auto-load the mkcert TLS pair if it's configured, so plain `openmuscle web`
@@ -118,6 +127,10 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl
         click.echo("")
     if model_path:
         click.echo(f"Inference model: {model_path}")
+    if model_left:
+        click.echo(f"Left-hand model:  {model_left}")
+    if model_right:
+        click.echo(f"Right-hand model: {model_right}")
     hand_target = None
     if hand:
         if ":" in hand:
@@ -130,7 +143,8 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, hand, ssl
             hand_target = (hand, 3145)
         click.echo(f"Forwarding inference to robot hand at {hand_target[0]}:{hand_target[1]}")
     serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
-          model_path=model_path, hand_target=hand_target,
+          model_path=model_path, model_left=model_left, model_right=model_right,
+          hand_target=hand_target,
           ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
           announce_port=announce_port)
 

@@ -72,13 +72,17 @@ def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
 def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                model_path: Optional[str] = None,
                hand_target: Optional[tuple] = None,
-               announce_port: int = 3140) -> FastAPI:
+               announce_port: int = 3140,
+               model_left: Optional[str] = None,
+               model_right: Optional[str] = None) -> FastAPI:
     state = AppState(
         udp_port=udp_port,
         captures_dir=captures_dir,
         model_path=model_path,
         hand_target=hand_target,
         discovery_announce_port=announce_port,
+        model_left=model_left,
+        model_right=model_right,
     )
 
     @asynccontextmanager
@@ -701,7 +705,9 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           hand_target: Optional[tuple] = None,
           ssl_certfile: Optional[str] = None,
           ssl_keyfile: Optional[str] = None,
-          announce_port: int = 3140):
+          announce_port: int = 3140,
+          model_left: Optional[str] = None,
+          model_right: Optional[str] = None):
     """Run the web UI server (blocks).
 
     Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
@@ -716,6 +722,8 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         model_path=model_path,
         hand_target=hand_target,
         announce_port=announce_port,
+        model_left=model_left,
+        model_right=model_right,
     )
     uvicorn.run(app, host=host, port=port, log_level="info",
                 ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)

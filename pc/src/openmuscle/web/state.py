@@ -251,7 +251,9 @@ class AppState:
                  model_path: Optional[str] = None,
                  hand_target: Optional[tuple] = None,
                  enable_discovery: bool = True,
-                 discovery_announce_port: int = 3140):
+                 discovery_announce_port: int = 3140,
+                 model_left: Optional[str] = None,
+                 model_right: Optional[str] = None):
         """
         Args:
             udp_port: incoming device telemetry port (FlexGrid + LASK5)
@@ -303,8 +305,18 @@ class AppState:
         self._started = False
 
         # ----- inference -----
+        # Separate-model-per-hand (Tory 2026-06-27): one model can NOT predict
+        # both arms (mirror musculature, different per-arm placement), so a band
+        # tagged left/right runs through ITS hand's model. self.engine is the
+        # shared/single-model engine (legacy + the fallback when no per-role
+        # model is set); self.engines holds the optional per-role pair. The
+        # router (_engine_for_role) sends a band to engines[role] if present,
+        # else self.engine. Band roles come from the Sources-panel tags
+        # (self._role_by_device, refreshed each snapshot from discovery).
         self.engine: Optional[InferenceEngine] = None
+        self.engines: dict = {"left": None, "right": None}
         self.engine_status: str = "no model loaded"
+        self._role_by_device: dict = {}
         if model_path:
             try:
                 self.engine = InferenceEngine(model_path)
@@ -314,11 +326,24 @@ class AppState:
                 # Don't crash the server on bad model; show the error in the UI.
                 self.engine_status = "load failed: {}".format(e)
                 self.log_buffer.error("inference", "model load failed at startup: {}".format(e))
+        for _role, _mp in (("left", model_left), ("right", model_right)):
+            if not _mp:
+                continue
+            try:
+                self.engines[_role] = InferenceEngine(_mp)
+                self.engine_status = "loaded"
+                self.log_buffer.info(
+                    "inference", "{}-hand model loaded from CLI: {}".format(
+                        _role, self.engines[_role].name))
+            except Exception as e:
+                self.engine_status = "{} load failed: {}".format(_role, e)
+                self.log_buffer.error(
+                    "inference", "{}-hand model load failed at startup: {}".format(_role, e))
 
-        # Runtime on/off for inference. Defaults to True iff a model was
-        # passed at startup -- if you launched `openmuscle web` without
-        # --model, inference stays paused until you load + Resume in the UI.
-        self.inference_enabled: bool = self.engine is not None
+        # Runtime on/off for inference. Defaults to True iff ANY model (single
+        # or per-role) was passed at startup -- if you launched `openmuscle web`
+        # without a --model*, inference stays paused until you load + Resume.
+        self.inference_enabled: bool = self._has_any_engine()
 
         # Forwarding socket to robot hand. Opened lazily.
         self.hand_target: Optional[tuple] = hand_target
@@ -400,11 +425,17 @@ class AppState:
         # paused. We do this synchronously in the same thread as packet
         # handling -- RF predict is ~ms, well under the 40ms inter-frame
         # budget at 25Hz.
-        if (self.engine and self.inference_enabled
+        if (self.inference_enabled and self._has_any_engine()
                 and pkt.device_type == "flexgrid"):
             mat = pkt.data.get("matrix")
             if mat:
-                pred = self.engine.predict(mat)
+                # Route the band to ITS hand's model (separate-model-per-hand):
+                # a band tagged left/right runs through engines[role] if loaded,
+                # else the shared single engine. role comes from the Sources-
+                # panel tag (refreshed into _role_by_device each snapshot).
+                role = self._role_by_device.get(pkt.device_id, "")
+                eng = self._engine_for_role(role)
+                pred = eng.predict(mat) if eng is not None else None
                 if pred is not None:
                     now = time.time()
                     self._last_inference_values = pred
@@ -412,7 +443,8 @@ class AppState:
                     # Keep a per-band copy so two-hand mode can map each band's
                     # prediction to its own real hand via the band's role.
                     self._inference_by_device[pkt.device_id] = {
-                        "values": pred, "ts": now}
+                        "values": pred, "ts": now, "role": role,
+                        "model": eng.name}
                     if self.hand_target:
                         self._forward_to_hand(pred)
 
@@ -817,6 +849,14 @@ class AppState:
         # state without merging two arrays. Built once per snapshot.
         disc_by_id = {e["device_id"]: e
                       for e in (self.discovery.snapshot() if self.discovery else [])}
+        # Refresh the band -> role tag map the inference router reads (separate-
+        # model-per-hand). Source is the Sources-panel tag carried on discovery;
+        # an active recording's sensors map is authoritative, so it overlays.
+        # Reassign whole (atomic for the listener thread's lock-free reads).
+        role_map = {did: (e.get("role") or "") for did, e in disc_by_id.items()}
+        if self.recording is not None:
+            role_map.update(self.recording.sensors)
+        self._role_by_device = role_map
         devices_out = []
         for d in self.devices.values():
             status_age = (round(time.time() - d.status_updated_at, 2)
@@ -889,6 +929,43 @@ class AppState:
             "discovery": self.discovery.snapshot() if self.discovery else [],
         }
 
+    def _has_any_engine(self) -> bool:
+        """True if any inference model (single or per-role) is loaded."""
+        return self.engine is not None or any(self.engines.values())
+
+    def _engine_for_role(self, role: str):
+        """The model that should run a band tagged `role` (left/right).
+
+        Separate-model-per-hand: prefer the per-role engine; fall back to the
+        shared single engine so single-model mode (`--model`) is unchanged.
+        """
+        eng = self.engines.get(role) if role in ("left", "right") else None
+        return eng or self.engine
+
+    def _active_engines(self) -> list:
+        """Distinct loaded engines (shared + per-role), de-duped by identity."""
+        out, seen = [], set()
+        for e in (self.engine, self.engines.get("left"), self.engines.get("right")):
+            if e is not None and id(e) not in seen:
+                seen.add(id(e))
+                out.append(e)
+        return out
+
+    def _model_label(self) -> Optional[str]:
+        """Human-readable model identity for the snapshot (per-hand aware)."""
+        if any(self.engines.values()):
+            parts = []
+            for r in ("left", "right"):
+                e = self.engines.get(r)
+                if e:
+                    parts.append("{}={}".format(r, e.name))
+                elif self.engine:
+                    parts.append("{}={}(shared)".format(r, self.engine.name))
+                else:
+                    parts.append("{}=none".format(r))
+            return " ".join(parts)
+        return self.engine.name if self.engine else None
+
     def _inference_snapshot(self) -> dict:
         """Predicted-LASK output from the FlexGrid -> model pipeline.
 
@@ -902,7 +979,7 @@ class AppState:
         hand_str = (f"{self.hand_target[0]}:{self.hand_target[1]}"
                     if self.hand_target else None)
 
-        if not self.engine:
+        if not self._has_any_engine():
             return {
                 "available": False,
                 "enabled": False,
@@ -912,11 +989,12 @@ class AppState:
                 "hand_target": hand_str,
             }
 
+        model_label = self._model_label()
         if not self.inference_enabled:
             return {
                 "available": False,
                 "enabled": False,
-                "model": self.engine.name,
+                "model": model_label,
                 "piston_values": None,
                 "status": "paused",
                 "hand_target": hand_str,
@@ -929,7 +1007,8 @@ class AppState:
             self._last_inference_values is not None
             and (time.time() - self._last_inference_ts) < 2.0
         )
-        last_err = self.engine.last_error
+        last_err = next((e.last_error for e in self._active_engines()
+                         if e.last_error), None)
         if last_err:
             status = last_err
         elif fresh:
@@ -948,7 +1027,7 @@ class AppState:
         return {
             "available": fresh,
             "enabled": True,
-            "model": self.engine.name,
+            "model": model_label,
             "piston_values": self._last_inference_values,
             "by_device": by_device,
             "status": status,
