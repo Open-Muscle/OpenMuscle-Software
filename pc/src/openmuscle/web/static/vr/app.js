@@ -417,7 +417,12 @@ function makeUITexture(canvas) {
 const dragState = {
     target: null,
     controller: null,
+    // Ray-grab: the panel sits at (rayOrigin + rayDir*grabDistance) + grabOffset,
+    // so AIMING the controller sweeps the panel (it follows the cursor) and the
+    // thumbstick pushes/pulls grabDistance. grabOffset preserves the panel's
+    // offset from the ray point at grab so grabbing the handle doesn't snap it.
     grabOffset: new THREE.Vector3(),
+    grabDistance: 1.0,
     handleMat: null,        // material to color-flash while grabbed
     endAt: 0,               // when selectend (pinch release) was seen; 0 = held.
                             // A brief grace before actually ending the drag so a
@@ -2200,7 +2205,16 @@ function setRecordingCollapsedUI(isRecording) {
 function startDrag(target, controller, handleMat) {
     dragState.target = target;
     dragState.controller = controller;
-    dragState.grabOffset.copy(target.position).sub(controller.position);
+    // Capture the grab against the POINTER RAY so the panel follows where you
+    // aim (not just where your hand translates). grabDistance = current reach
+    // along the ray; grabOffset = panel origin minus that ray point (keeps the
+    // panel from snapping to the cursor when you grab its corner handle).
+    _dragDir.set(0, 0, -1).applyQuaternion(controller.quaternion).normalize();
+    dragState.grabDistance = THREE.MathUtils.clamp(
+        controller.position.distanceTo(target.position),
+        DRAG_MIN_REACH, DRAG_MAX_REACH);
+    _dragTmp.copy(controller.position).addScaledVector(_dragDir, dragState.grabDistance);
+    dragState.grabOffset.copy(target.position).sub(_dragTmp);
     dragState.handleMat = handleMat;
     dragState.endAt = 0;
     dragState.lastStickT = 0;
@@ -2348,32 +2362,30 @@ function updateDrag() {
         endDrag();
         return;
     }
-    // Thumbstick push/pull: slide the grabbed panel along the pointer ray. The
-    // controller stick Y (xr-standard gamepad axes[3]) grows/shrinks the grab
-    // reach, so you can park a panel from face-distance to across the room
-    // without walking -- much less limited than translate-only grab-drag.
+    // Thumbstick push/pull: the controller stick Y (xr-standard gamepad axes[3])
+    // grows/shrinks the reach along the ray, so you can park a panel from
+    // face-distance to across the room without walking.
     const gp = dragState.controller.userData.inputSource &&
                dragState.controller.userData.inputSource.gamepad;
     if (gp && gp.axes && gp.axes.length >= 4) {
         const now = performance.now();
         const dt = Math.min(0.05, (now - (dragState.lastStickT || now)) / 1000);
         dragState.lastStickT = now;
-        let y = gp.axes[3] || 0;                    // stick Y: -1 up/forward
+        const y = gp.axes[3] || 0;                  // stick Y: -1 up/forward
         if (Math.abs(y) >= DRAG_STICK_DEADZONE) {
-            _dragDir.set(0, 0, -1)
-                .applyQuaternion(dragState.controller.quaternion).normalize();
-            // stick up (y<0) pushes away (+ray); down pulls closer
-            _dragTmp.copy(dragState.grabOffset)
-                .addScaledVector(_dragDir, -y * DRAG_PUSH_SPEED * dt);
-            const reach = _dragTmp.length();
-            if (reach >= DRAG_MIN_REACH && reach <= DRAG_MAX_REACH) {
-                dragState.grabOffset.copy(_dragTmp);
-            }
+            dragState.grabDistance = THREE.MathUtils.clamp(
+                dragState.grabDistance - y * DRAG_PUSH_SPEED * dt,  // up (y<0)=away
+                DRAG_MIN_REACH, DRAG_MAX_REACH);
         }
     }
-    dragState.target.position
-        .copy(dragState.controller.position)
-        .add(dragState.grabOffset);
+    // Position the panel ALONG the pointer ray at grabDistance, so AIMING the
+    // controller sweeps the panel (it follows the cursor) -- not just hand
+    // translation. grabOffset keeps the grab point under the cursor.
+    _dragDir.set(0, 0, -1)
+        .applyQuaternion(dragState.controller.quaternion).normalize();
+    _dragTmp.copy(dragState.controller.position)
+        .addScaledVector(_dragDir, dragState.grabDistance);
+    dragState.target.position.copy(_dragTmp).add(dragState.grabOffset);
 }
 
 // Toggle live inference on/off. Server-side: POST /api/inference/enabled
