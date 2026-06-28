@@ -57,6 +57,13 @@ const XR_SESSION_TYPE = MODE === 'ar' ? 'immersive-ar' : 'immersive-vr';
 const PINCH_THRESHOLD_M  = 0.025;   // 2.5 cm index-tip <-> thumb-tip
 const PINCH_HOLD_MS      = 1000;    // hold this long to toggle recording (captured arm)
 const DRAG_END_GRACE_MS  = 200;     // bridge a brief pinch-release flicker mid-drag
+// Thumbstick push/pull: while a panel is grabbed, the controller stick Y slides
+// it along the pointer ray so you can park it anywhere without walking, instead
+// of being stuck at arm's length (the old grab-only drag felt sluggish/limited).
+const DRAG_PUSH_SPEED     = 2.2;     // metres/sec along the ray at full deflection
+const DRAG_STICK_DEADZONE = 0.15;    // ignore Quest stick drift
+const DRAG_MIN_REACH      = 0.30;    // don't pull a panel into your face
+const DRAG_MAX_REACH      = 6.0;     // don't shove it out of reach
 
 // AR mode pushes panels further away + shrinks them so they don't dominate
 // your view of the real world. The same panel sizes that read as
@@ -417,7 +424,10 @@ const dragState = {
                             // momentary hand-tracking pinch dropout doesn't drop
                             // the panel mid-move (a re-pinch within the grace
                             // cancels it). See DRAG_END_GRACE_MS.
+    lastStickT: 0,          // performance.now() of the last thumbstick push tick
 };
+const _dragDir = new THREE.Vector3();   // controller forward (ray) for push/pull
+const _dragTmp = new THREE.Vector3();
 
 // Menu panel + buttons. Each button is a rectangular Mesh (PlaneGeometry +
 // canvas texture) parented to menuPanel so they move together. Hit-tested
@@ -622,11 +632,16 @@ function initScene() {
         const ctrl = renderer.xr.getController(i);
         scene.add(ctrl);
         ctrl.userData.handedness = null;
+        ctrl.userData.inputSource = null;
         ctrl.addEventListener('connected', (event) => {
             ctrl.userData.handedness = event.data?.handedness || null;
+            // Keep the XRInputSource so we can poll its gamepad.axes (thumbstick)
+            // each frame -- used to push/pull a grabbed panel along the ray.
+            ctrl.userData.inputSource = event.data || null;
         });
         ctrl.addEventListener('disconnected', () => {
             ctrl.userData.handedness = null;
+            ctrl.userData.inputSource = null;
             // If this controller was mid-drag when it dropped out, release
             // the panel so it doesn't get orphaned in the GRAB state.
             if (dragState.controller === ctrl) cancelDrag();
@@ -859,8 +874,14 @@ function createMenuPanel() {
         new THREE.MeshBasicMaterial({
             color: 0x0d1117, transparent: true, opacity: 0.55,
             side: THREE.DoubleSide,
+            // depthWrite OFF: a transparent surface that writes depth seeds the
+            // depth buffer and makes the coplanar buttons in front fail/pass the
+            // depth test as the head moves (the grey<->bright flicker). Every
+            // other UI quad already does this; the plate was the lone exception.
+            depthWrite: false,
         }));
     plate.position.z = -0.001;   // sit just behind the buttons (which are at z=0)
+    plate.renderOrder = 0;       // plate first, buttons (renderOrder 1) on top
     menuPanel.add(plate);
     scene.add(menuPanel);
 }
@@ -881,6 +902,7 @@ function createMenuButton(name, label, isActive, onActivate, row, col) {
     const xOffset = (col - (MENU_COLS - 1) / 2) * (MENU_BTN_W + MENU_BTN_GAP);
     const yOffset = -(row - (MENU_ROWS - 1) / 2) * (MENU_BTN_H + MENU_BTN_GAP);
     mesh.position.set(xOffset, yOffset, 0);
+    mesh.renderOrder = 1;             // above the menu plate (renderOrder 0)
     mesh.userData.buttonName = name;  // raycaster will look this up
     menuPanel.add(mesh);
     buttons[name] = {
@@ -985,7 +1007,12 @@ function _roundRectPath(ctx, W, H, r) {
 // delegates to. Returns the button entry.
 function createConfigButton(name, w, h, localPos, onActivate, customDraw) {
     const canvas = document.createElement('canvas');
-    canvas.width = 512; canvas.height = 80;
+    // Size the canvas to the PLANE's aspect so glyphs map 1:1. A fixed 512x80
+    // (6.4:1) canvas on a square 0.045x0.045 sub-button squished "L"/"R"/"clear"
+    // to ~16% width (vertical slivers). Keep 80px tall so the draw fonts (sized
+    // for an 80px canvas, drawn at H/2) stay valid; derive width from w/h.
+    canvas.height = 80;
+    canvas.width = Math.max(1, Math.round(80 * (w / h)));
     const ctx = canvas.getContext('2d');
     const tex = makeUITexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -994,6 +1021,7 @@ function createConfigButton(name, w, h, localPos, onActivate, customDraw) {
     });
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
     mesh.position.copy(localPos);
+    mesh.renderOrder = 1;              // above the config plate (renderOrder 0)
     mesh.userData.buttonName = name;   // raycaster looks this up
     configPanel.add(mesh);
     const btn = {
@@ -1377,8 +1405,10 @@ function createConfigPanel() {
         new THREE.MeshBasicMaterial({
             color: 0x0d1117, transparent: true, opacity: 0.6,
             side: THREE.DoubleSide,
+            depthWrite: false,   // see menu plate: stops the head-move flicker
         }));
     plate.position.z = -0.001;
+    plate.renderOrder = 0;       // plate first, config children (renderOrder 1) on top
     configPanel.add(plate);
 
     // Layout: lay children top-to-bottom from the panel top. yTop is the local
@@ -2173,6 +2203,7 @@ function startDrag(target, controller, handleMat) {
     dragState.grabOffset.copy(target.position).sub(controller.position);
     dragState.handleMat = handleMat;
     dragState.endAt = 0;
+    dragState.lastStickT = 0;
     if (handleMat) {
         handleMat.color.setHex(HANDLE_COLOR_GRAB);
         handleMat.emissive.setHex(HANDLE_COLOR_GRAB);
@@ -2316,6 +2347,29 @@ function updateDrag() {
     if (dragState.endAt && performance.now() - dragState.endAt >= DRAG_END_GRACE_MS) {
         endDrag();
         return;
+    }
+    // Thumbstick push/pull: slide the grabbed panel along the pointer ray. The
+    // controller stick Y (xr-standard gamepad axes[3]) grows/shrinks the grab
+    // reach, so you can park a panel from face-distance to across the room
+    // without walking -- much less limited than translate-only grab-drag.
+    const gp = dragState.controller.userData.inputSource &&
+               dragState.controller.userData.inputSource.gamepad;
+    if (gp && gp.axes && gp.axes.length >= 4) {
+        const now = performance.now();
+        const dt = Math.min(0.05, (now - (dragState.lastStickT || now)) / 1000);
+        dragState.lastStickT = now;
+        let y = gp.axes[3] || 0;                    // stick Y: -1 up/forward
+        if (Math.abs(y) >= DRAG_STICK_DEADZONE) {
+            _dragDir.set(0, 0, -1)
+                .applyQuaternion(dragState.controller.quaternion).normalize();
+            // stick up (y<0) pushes away (+ray); down pulls closer
+            _dragTmp.copy(dragState.grabOffset)
+                .addScaledVector(_dragDir, -y * DRAG_PUSH_SPEED * dt);
+            const reach = _dragTmp.length();
+            if (reach >= DRAG_MIN_REACH && reach <= DRAG_MAX_REACH) {
+                dragState.grabOffset.copy(_dragTmp);
+            }
+        }
     }
     dragState.target.position
         .copy(dragState.controller.position)
