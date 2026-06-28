@@ -56,6 +56,7 @@ const MODE = params.get('mode') === 'ar' ? 'ar' : 'vr';
 const XR_SESSION_TYPE = MODE === 'ar' ? 'immersive-ar' : 'immersive-vr';
 const PINCH_THRESHOLD_M  = 0.025;   // 2.5 cm index-tip <-> thumb-tip
 const PINCH_HOLD_MS      = 1000;    // hold this long to toggle recording (captured arm)
+const DRAG_END_GRACE_MS  = 200;     // bridge a brief pinch-release flicker mid-drag
 
 // AR mode pushes panels further away + shrinks them so they don't dominate
 // your view of the real world. The same panel sizes that read as
@@ -395,6 +396,11 @@ const dragState = {
     controller: null,
     grabOffset: new THREE.Vector3(),
     handleMat: null,        // material to color-flash while grabbed
+    endAt: 0,               // when selectend (pinch release) was seen; 0 = held.
+                            // A brief grace before actually ending the drag so a
+                            // momentary hand-tracking pinch dropout doesn't drop
+                            // the panel mid-move (a re-pinch within the grace
+                            // cancels it). See DRAG_END_GRACE_MS.
 };
 
 // Menu panel + buttons. Each button is a rectangular Mesh (PlaneGeometry +
@@ -414,6 +420,42 @@ let hoveredButton = null;        // whichever button the off-hand ray is current
 let hoveredHandle = null;        // drag-handle entry the off-hand ray is over (mutually
                                  // exclusive with hoveredButton -- the ray hits one or
                                  // the other based on geometric closest-first)
+
+// Hover hysteresis. Hand-tracking rays JITTER: the headset estimates hand pose
+// from its cameras, so simply turning your HEAD wobbles the ray even with a
+// still hand, sweeping the highlight across buttons. So a button only becomes
+// hovered after the ray SETTLES on it for HOVER_DWELL_MS, and an existing hover
+// is released only after the ray leaves all buttons for HOVER_RELEASE_MS. The
+// visual ray line + click target stay responsive; only the highlight commit is
+// debounced, which kills the "everything flickers when I look around" feel.
+const HOVER_DWELL_MS = 90;
+const HOVER_RELEASE_MS = 130;
+let _hoverCandidate = null;       // button the ray is currently settling onto
+let _hoverCandidateSince = 0;
+let _hoverMissSince = 0;          // when the ray last left all buttons (0 = on one)
+
+// Debounce the button highlight against ray jitter; updates hoveredButton.
+function _settleHover(raw, now) {
+    if (raw === hoveredButton) {            // steady on the current button
+        _hoverCandidate = null;
+        _hoverMissSince = 0;
+        return;
+    }
+    if (raw === null) {                     // ray left all buttons
+        _hoverCandidate = null;
+        if (!_hoverMissSince) _hoverMissSince = now;
+        if (now - _hoverMissSince >= HOVER_RELEASE_MS) hoveredButton = null;
+        return;
+    }
+    _hoverMissSince = 0;                     // a different button is under the ray
+    if (raw !== _hoverCandidate) {
+        _hoverCandidate = raw;
+        _hoverCandidateSince = now;
+    } else if (now - _hoverCandidateSince >= HOVER_DWELL_MS) {
+        hoveredButton = raw;                 // settled long enough -> commit
+        _hoverCandidate = null;
+    }
+}
 
 // Server-derived state (mirrored into button visuals each frame from /ws/live)
 const uiState = {
@@ -576,9 +618,14 @@ function initScene() {
         ctrl.addEventListener('selectstart', () => onControllerSelect(ctrl));
         // selectend fires when pinch releases -- only used to end an active
         // drag. Button activations are instantaneous (no hold required), so
-        // we don't need to track selectend for them.
+        // we don't need to track selectend for them. Don't end IMMEDIATELY:
+        // hand tracking drops the pinch for a frame or two while you move,
+        // which used to drop the panel mid-drag. Mark the time and let the
+        // frame loop end it after DRAG_END_GRACE_MS unless the pinch returns.
         ctrl.addEventListener('selectend', () => {
-            if (dragState.controller === ctrl) endDrag();
+            if (dragState.controller === ctrl && !dragState.endAt) {
+                dragState.endAt = performance.now();
+            }
         });
         const lineGeo = new THREE.BufferGeometry().setFromPoints([
             new THREE.Vector3(0, 0, 0),
@@ -2109,6 +2156,7 @@ function startDrag(target, controller, handleMat) {
     dragState.controller = controller;
     dragState.grabOffset.copy(target.position).sub(controller.position);
     dragState.handleMat = handleMat;
+    dragState.endAt = 0;
     if (handleMat) {
         handleMat.color.setHex(HANDLE_COLOR_GRAB);
         handleMat.emissive.setHex(HANDLE_COLOR_GRAB);
@@ -2135,6 +2183,7 @@ function endDrag() {
     dragState.target = null;
     dragState.controller = null;
     dragState.handleMat = null;
+    dragState.endAt = 0;
     // Persist whatever the user just settled on so it survives session
     // reloads (and pause/resume). Per-MODE key because VR and AR should
     // have independent layouts -- you might dock the menu top-right in
@@ -2160,6 +2209,7 @@ function cancelDrag() {
     dragState.target = null;
     dragState.controller = null;
     dragState.handleMat = null;
+    dragState.endAt = 0;
     savePanelLayout();
 }
 
@@ -2245,6 +2295,12 @@ function clearPanelLayout() {
 
 function updateDrag() {
     if (!dragState.target || !dragState.controller) return;
+    // A queued pinch-release that wasn't cancelled by a re-pinch within the
+    // grace window: actually end the drag now.
+    if (dragState.endAt && performance.now() - dragState.endAt >= DRAG_END_GRACE_MS) {
+        endDrag();
+        return;
+    }
     dragState.target.position
         .copy(dragState.controller.position)
         .add(dragState.grabOffset);
@@ -2299,6 +2355,14 @@ function onControllerSelect(ctrl) {
     const handedness = ctrl.userData?.handedness;
     if (handedness === ARM) return;       // captured arm: handled elsewhere
 
+    // Mid-drag re-pinch: a brief pinch dropout queued a drag-end (endAt). The
+    // pinch came back within the grace window, so cancel the end + keep moving
+    // the panel rather than starting a new grab / firing a button.
+    if (dragState.controller === ctrl && dragState.endAt) {
+        dragState.endAt = 0;
+        return;
+    }
+
     // Priority 1: hovered drag handle -> start a drag (preempts buttons)
     if (hoveredHandle) {
         startDrag(hoveredHandle.target, ctrl, hoveredHandle.mat);
@@ -2340,10 +2404,12 @@ let _stopLastActivateAt = 0;
 // hovering buttons while you're trying to perform a gesture.
 const _tmpMat = new THREE.Matrix4();
 function updateRaycast() {
-    // Reset all hover states each frame; raycast hits below re-set them.
-    hoveredButton = null;
+    // Drag handles + the STOP button reset each frame (immediate -- those are
+    // deliberate grabs). hoveredButton is NOT reset here: it is debounced via
+    // _settleHover below so hand-tracking jitter can't flicker the highlight.
     hoveredHandle = null;
     _hoveredMeshIsStopButton = false;
+    let rawHitButton = null;          // the button the ray points at THIS frame
 
     // Build the raycast target list. Drag handles take precedence over
     // buttons when both are reachable -- but Three.js's raycaster returns
@@ -2411,7 +2477,7 @@ function updateRaycast() {
             const name = hit.object.userData.buttonName;
             const btn = buttons[name];
             if (btn) {
-                hoveredButton = btn;
+                rawHitButton = btn;       // debounced into hoveredButton below
                 line.scale.z = hit.distance;
                 line.material.color.setHex(RAY_COLOR_HOVER);
                 continue;
@@ -2421,6 +2487,9 @@ function updateRaycast() {
         line.scale.z = RAY_IDLE_LEN_M;
         line.material.color.setHex(RAY_COLOR_IDLE);
     }
+
+    // Commit the (debounced) button highlight from this frame's raw hit.
+    _settleHover(rawHitButton, performance.now());
 
     // Repaint the collapsed STOP idle state if we didn't hover it this frame
     if (!_hoveredMeshIsStopButton && stopButtonMesh.visible) {
