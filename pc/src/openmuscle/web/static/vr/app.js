@@ -73,11 +73,13 @@ const HEATMAP_W          = 0.40;    // 40cm panel matches FlexGrid 15:4 aspect
 const HEATMAP_H          = 0.12;
 
 // Menu panel sits below the heatmap. Flat plane with rectangular buttons in
-// a 3-wide x 2-tall grid, hit-tested by raycast from the off-hand. Top row
-// = "what's running right now" toggles (REC / SESSION / PREDICT). Bottom
-// row = actions and system (TRAIN / RECENTER / EXIT VR).
+// a 3-wide x 3-tall grid, hit-tested by raycast from the off-hand. Row 0
+// = "what's running right now" toggles (REC / SESSION / PREDICT). Row 1
+// = actions (TRAIN / SETUP / RECENTER). Row 2 = system (EXIT VR). SETUP
+// opens the config panel (capture replay etc.); the layout math below is
+// driven by MENU_COLS/MENU_ROWS so adding the row stayed automatic.
 const MENU_COLS          = 3;
-const MENU_ROWS          = 2;
+const MENU_ROWS          = 3;
 const MENU_BTN_W         = 0.16;
 const MENU_BTN_H         = 0.07;
 const MENU_BTN_GAP       = 0.012;
@@ -95,7 +97,11 @@ const COMPARE_W            = HEATMAP_W;
 const COMPARE_H            = 0.05;
 const COMPARE_OFFSET_DOWN  = 0.14;
 
-const STATUS_ROW_DOWN    = 0.41;    // status strip sits below the menu
+// Status strip sits below the menu. Pushed down by one button-row's height
+// (MENU_BTN_H + MENU_BTN_GAP) when the grid grew from 2 to 3 rows, so the
+// taller menu's bottom row keeps its ~1cm clearance above the strip instead
+// of overlapping it. (Was 0.41 for the 2-row grid.)
+const STATUS_ROW_DOWN    = 0.41 + (MENU_BTN_H + MENU_BTN_GAP);    // 3-row menu
 const STATUS_W           = HEATMAP_W;
 const STATUS_H           = 0.045;
 const BANDSTATUS_W       = HEATMAP_W;   // per-band battery/signal rows under status
@@ -125,11 +131,32 @@ const HANDLE_COLOR_IDLE  = 0x6b7280;     // slate gray
 const HANDLE_COLOR_HOVER = 0xfbbf24;     // same amber as ray hover -- visual continuity
 const HANDLE_COLOR_GRAB  = 0x10b981;     // emerald when actively grabbed
 
-// Collapsed STOP button shown while recording. Replaces the full 3x2 menu
+// Collapsed STOP button shown while recording. Replaces the full 3x3 menu
 // grid so the user's view isn't dominated by action buttons they don't need
 // during natural-activity capture sessions.
 const STOP_W             = 0.18;
 const STOP_H             = 0.10;
+
+// SETUP config panel (replay-from-headset). A dedicated THREE.Group anchored
+// under menuRoot, built like the menu cluster (canvas-mesh panels + raycast
+// targets) with its own drag handle. Toggled by the SETUP menu button. The
+// REPLAY section lists past captures (GET /api/captures) as canvas-drawn rows
+// that are raycast-selectable exactly like the menu buttons, plus a REPLAY /
+// STOP REPLAY action button (POST/DELETE /api/simulate/replay) and a speed
+// toggle. Sits to the RIGHT of the menu so it doesn't cover the heatmap.
+const CONFIG_OFFSET_RIGHT = 0.30;   // panel center this far right of menuRoot
+const CONFIG_W            = 0.34;
+const CONFIG_TITLE_H      = 0.05;   // header strip ("SETUP / REPLAY")
+const CONFIG_ROW_W        = 0.30;   // capture-row + action-button width
+const CONFIG_ROW_H        = 0.045;  // one capture row / action button height
+const CONFIG_ROW_GAP      = 0.008;
+const CONFIG_LIST_ROWS    = 4;      // visible capture rows (no scroll yet; top N)
+const CONFIG_PAD          = 0.018;
+// Panel height = title + N list rows + action row + speed row, plus gaps/pad.
+const CONFIG_H            = CONFIG_TITLE_H
+    + (CONFIG_LIST_ROWS + 2) * CONFIG_ROW_H
+    + (CONFIG_LIST_ROWS + 2) * CONFIG_ROW_GAP
+    + 2 * CONFIG_PAD;
 
 // ---------------------------------------------------------------------------
 // Landing-page checks (run before VR session starts)
@@ -282,6 +309,16 @@ let xrPausedAt = 0;        // timestamp of last pause start (for status display)
 let infoGroup;
 let menuRoot;
 
+// SETUP config panel (replay section). A THREE.Group under menuRoot holding a
+// title strip, N capture-list rows, a REPLAY/STOP action button, and a speed
+// toggle. The list rows + action + speed are registered in `buttons[]` so the
+// off-hand ray + pinch select them like any menu button (no new input system).
+// configRowButtons holds the per-row button entries (name -> entry) so we can
+// rebuild them when the capture list changes.
+let configPanel;
+let configTitleMesh, configTitleCanvas, configTitleCtx, configTitleTex;
+const configRowButtons = [];   // capture-row button entries (in `buttons[]` too)
+
 // Collapsed STOP button shown in place of menuRoot while recording. Anchored
 // to the same world position as menuRoot, but only one of the two is visible
 // at any time (toggled by uiState.recording in updateFromSnapshot).
@@ -341,6 +378,19 @@ let lastReportAt = 0;
 let lastStatusAt = 0;
 let lastStatusText = '';
 
+// SETUP config panel state. Drives the REPLAY section: the cached capture
+// list (from GET /api/captures), which capture row is selected, the replay
+// speed toggle, and whether the panel is open. The per-frame replay progress
+// + STOP/REPLAY button state are read live from latestSnapshot.replay (driven
+// in drawReplaySection), not stored here.
+const configState = {
+    open: false,
+    captures: [],          // [{name, rows, size_bytes, ...}] cached on open
+    selected: null,        // chosen capture name (string) or null
+    speed: 1.0,            // replay speed sent to POST /api/simulate/replay
+    loading: false,        // a GET /api/captures fetch is in flight
+};
+
 function initScene() {
     scene = new THREE.Scene();
     // In AR mode, leave the background null so passthrough shows through.
@@ -388,7 +438,15 @@ function initScene() {
     window.OMVR = { bands, getBands, reconcileBands, getStatusDevices, drawBandStatus,
                     drawDebug, debugState, uiState, predForSide, ghosts,
                     drawOrientationGizmo, updateBandImu, THREE,
-                    bandStatusCtx: () => bandStatusCtx, debugCtx: () => debugCtx };
+                    bandStatusCtx: () => bandStatusCtx, debugCtx: () => debugCtx,
+                    // SETUP / REPLAY panel handles for headless preview driving
+                    // (no XR session needed): open/close the panel, inject a
+                    // fake capture list, pick a capture, and render the replay
+                    // section given a fake snapshot. configPanel is the group.
+                    configState,
+                    get configPanel() { return configPanel; },
+                    openSetup, closeSetup, toggleSetup,
+                    setCaptures, selectCapture, fetchCaptures, drawReplaySection };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
     headerCanvas = document.createElement('canvas');
@@ -412,10 +470,12 @@ function initScene() {
     createMenuButton('REC',     'REC',     () => uiState.recording,        toggleRecording, 0, 0);
     createMenuButton('SESSION', 'SESSION', () => uiState.sessionActive,    toggleSession,   0, 1);
     createMenuButton('PREDICT', 'PREDICT', () => uiState.inferenceEnabled, togglePredict,   0, 2);
-    // Row 1: actions
-    createMenuButton('TRAIN',   'TRAIN',    () => uiState.training, runTrain,    1, 0);
-    createMenuButton('RECENTER','RECENTER', () => false,            recenterUI,  1, 1);
-    createMenuButton('EXIT',    'EXIT VR',  () => false,            exitVR,      1, 2);
+    // Row 1: actions + setup (SETUP toggles the config/replay panel)
+    createMenuButton('TRAIN',   'TRAIN',    () => uiState.training,    runTrain,    1, 0);
+    createMenuButton('SETUP',   'SETUP',    () => configState.open,    toggleSetup, 1, 1);
+    createMenuButton('RECENTER','RECENTER', () => false,               recenterUI,  1, 2);
+    // Row 2: system
+    createMenuButton('EXIT',    'EXIT VR',  () => false,               exitVR,      2, 0);
 
     // Controller objects (one per hand). renderer.xr.getController(i) returns
     // a Three.js Object3D whose transform is updated each frame by the XR
@@ -551,6 +611,12 @@ function initScene() {
                      new THREE.Vector3(-MENU_W / 2 - HANDLE_SIZE_M,
                                         MENU_H / 2 + HANDLE_SIZE_M, 0));
 
+    // SETUP config panel (replay-from-headset). Built here so it exists for
+    // headless preview (window.OMVR.openSetup()) without an XR session. Hidden
+    // until the SETUP button toggles it. Anchored under menuRoot so it
+    // inherits the menu cluster's drag/tilt/AR-scale.
+    createConfigPanel();
+
     // Sync slate: 60 x 20 cm panel for the SYNC_SLATE_MS splash at REC press.
     // Hidden by default; brought to life by showSyncSlate(filename, unixMs).
     slateCanvas = document.createElement('canvas');
@@ -683,6 +749,12 @@ function createMenuButton(name, label, isActive, onActivate, row, col) {
 }
 
 function drawMenuButton(btn, hovered) {
+    // Config-panel buttons (capture rows, REPLAY action, speed toggle) draw
+    // their own canvas via a customDraw hook so they can show capture names,
+    // progress lines, selection highlight etc. They still live in `buttons[]`
+    // so the existing raycast + pinch + cooldown machinery targets them with
+    // no new input system. customDraw owns the redraw-skip decision itself.
+    if (btn.customDraw) { btn.customDraw(btn, hovered); return; }
     const active = !!btn.isActive();
     const flashing = (btn.flashUntil || 0) > performance.now();
     // Skip the redraw + GPU texture re-upload when nothing about this button's
@@ -736,6 +808,432 @@ function drawMenuButton(btn, hovered) {
 function exitVR() {
     const session = renderer.xr.getSession();
     if (session) session.end();
+}
+
+// ---------------------------------------------------------------------------
+// SETUP config panel + REPLAY section (replay a past capture from the headset)
+//
+// A dedicated THREE.Group (configPanel) anchored under menuRoot, built like
+// the menu cluster (a dark plate + canvas-mesh children) with its own drag
+// handle. Toggled by the SETUP menu button. The REPLAY section is a list of
+// past captures (GET /api/captures) rendered as canvas-drawn rows; each row
+// is registered in `buttons[]` as a raycast target so the off-hand ray +
+// pinch selects it exactly like a menu button. A REPLAY action button POSTs
+// /api/simulate/replay; while a replay is active it becomes STOP REPLAY and a
+// progress line shows "replaying <capture> N/T". A speed toggle cycles 1x/2x.
+// All interaction reuses onControllerSelect + BUTTON_COOLDOWN_MS -- no new
+// input system. The panel is built at initScene so window.OMVR can drive it
+// headless (no XR session) for preview verification.
+// ---------------------------------------------------------------------------
+
+// Shared rounded-rect path helper (same geometry the menu/STOP buttons inline).
+function _roundRectPath(ctx, W, H, r) {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(W - r, 0); ctx.arcTo(W, 0, W, r, r);
+    ctx.lineTo(W, H - r); ctx.arcTo(W, H, W - r, H, r);
+    ctx.lineTo(r, H);     ctx.arcTo(0, H, 0, H - r, r);
+    ctx.lineTo(0, r);     ctx.arcTo(0, 0, r, 0, r);
+    ctx.closePath();
+}
+
+// Create a config-panel button: a PlaneGeometry + canvas-texture mesh parented
+// to configPanel, registered in `buttons[]` (so the existing raycast/pinch/
+// cooldown path targets it) with a customDraw hook that drawMenuButton
+// delegates to. Returns the button entry.
+function createConfigButton(name, w, h, localPos, onActivate, customDraw) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    mesh.position.copy(localPos);
+    mesh.userData.buttonName = name;   // raycaster looks this up
+    configPanel.add(mesh);
+    const btn = {
+        name, label: name, mesh, canvas, ctx, tex, mat,
+        isActive: () => false, onActivate, lastActivateAt: 0,
+        customDraw, _lastDrawKey: null,
+        isConfig: true,   // gated by configPanel.visible in updateRaycast
+    };
+    buttons[name] = btn;
+    return btn;
+}
+
+// Capture-row paint: capture name + row count, highlighted when it's the
+// chosen capture (configState.selected) or hovered by the off-hand ray.
+function drawCaptureRow(btn, hovered) {
+    const cap = btn.userData_capture;   // {name, rows} or null (empty-list row)
+    const selected = cap && configState.selected === cap.name;
+    const drawKey = `${hovered}|${selected}|${cap ? cap.name : ''}|${cap ? cap.rows : ''}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    let bg;
+    if (selected)     bg = '#15803d';   // emerald: chosen capture
+    else if (hovered) bg = '#1f6feb';
+    else              bg = '#2a3142';
+    ctx.fillStyle = bg;
+    _roundRectPath(ctx, W, H, 16);
+    ctx.fill();
+    ctx.fillStyle = '#f0f4f8';
+    ctx.textBaseline = 'middle';
+    if (!cap) {
+        // Empty-list placeholder row (not selectable in practice).
+        ctx.font = '30px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText('no captures yet', W / 2, H / 2);
+    } else {
+        // Name left-aligned (trimmed), row count right-aligned.
+        ctx.font = '30px system-ui';
+        ctx.textAlign = 'left';
+        const name = cap.name.length > 28 ? cap.name.slice(0, 27) + '…' : cap.name;
+        ctx.fillText(name, 18, H / 2);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#9fb3c8';
+        const rows = (typeof cap.rows === 'number') ? `${cap.rows} rows` : '';
+        ctx.fillText(rows, W - 18, H / 2);
+    }
+    btn.tex.needsUpdate = true;
+}
+
+// REPLAY / STOP REPLAY action button paint. Driven by latestSnapshot.replay
+// (active state) each frame so it flips to STOP REPLAY while a replay runs.
+function drawReplayAction(btn, hovered) {
+    const snap = latestSnapshot;
+    const rp = (snap && snap.replay) || { active: false };
+    const flashing = (btn.flashUntil || 0) > performance.now();
+    const label = rp.active ? 'STOP REPLAY' : 'REPLAY';
+    const ready = !!configState.selected || rp.active;   // need a pick to start
+    const drawKey = `${hovered}|${flashing}|${label}|${ready}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    let bg;
+    if (flashing)        bg = '#ffffff';
+    else if (rp.active)  bg = '#ef4444';   // red while replaying (tap = stop)
+    else if (!ready)     bg = '#374151';   // muted: no capture selected yet
+    else if (hovered)    bg = '#1f6feb';
+    else                 bg = '#2563eb';
+    ctx.fillStyle = bg;
+    _roundRectPath(ctx, W, H, 16);
+    ctx.fill();
+    ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';
+    ctx.font = 'bold 34px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, W / 2, H / 2);
+    btn.tex.needsUpdate = true;
+}
+
+// Speed toggle paint: shows the current replay speed (1x / 2x).
+function drawSpeedToggle(btn, hovered) {
+    const flashing = (btn.flashUntil || 0) > performance.now();
+    const label = `SPEED ${configState.speed % 1 === 0
+        ? configState.speed.toFixed(0) : configState.speed}x`;
+    const drawKey = `${hovered}|${flashing}|${label}`;
+    if (btn._lastDrawKey === drawKey) return;
+    btn._lastDrawKey = drawKey;
+    const ctx = btn.ctx;
+    const W = btn.canvas.width, H = btn.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    let bg;
+    if (flashing)     bg = '#ffffff';
+    else if (hovered) bg = '#1f6feb';
+    else              bg = '#2a3142';
+    ctx.fillStyle = bg;
+    _roundRectPath(ctx, W, H, 16);
+    ctx.fill();
+    ctx.fillStyle = flashing ? '#0d1117' : '#f0f4f8';
+    ctx.font = 'bold 32px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, W / 2, H / 2);
+    btn.tex.needsUpdate = true;
+}
+
+// Title strip paint: "SETUP · REPLAY" plus the live progress line when a
+// replay is active ("replaying <capture> N/T"). Always redrawn (cheap, one
+// strip) because the progress counter changes every frame during replay.
+function drawConfigTitle() {
+    const snap = latestSnapshot;
+    const rp = (snap && snap.replay) || { active: false };
+    const ctx = configTitleCtx;
+    const W = configTitleCanvas.width, H = configTitleCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(13, 17, 23, 0.85)';
+    _roundRectPath(ctx, W, H, 14);
+    ctx.fill();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#f0f4f8';
+    ctx.font = 'bold 34px system-ui';
+    ctx.fillText('SETUP · REPLAY', 20, H * 0.3);
+    // Progress / hint line.
+    ctx.font = '28px system-ui';
+    if (rp.active) {
+        ctx.fillStyle = '#34d399';
+        const cap = rp.capture || configState.selected || '';
+        const capShort = cap.length > 22 ? cap.slice(0, 21) + '…' : cap;
+        ctx.fillText(`replaying ${capShort}  ${rp.frame || 0}/${rp.total || 0}`,
+                     20, H * 0.72);
+    } else {
+        ctx.fillStyle = '#9fb3c8';
+        const sel = configState.selected
+            ? `selected ${configState.selected.length > 22
+                ? configState.selected.slice(0, 21) + '…' : configState.selected}`
+            : (configState.loading ? 'loading captures…' : 'pick a capture below');
+        ctx.fillText(sel, 20, H * 0.72);
+    }
+    configTitleTex.needsUpdate = true;
+}
+
+// Build the config panel group, its title strip, the (rebuildable) capture-row
+// buttons, the REPLAY action button, and the speed toggle. Hidden until open.
+function createConfigPanel() {
+    configPanel = new THREE.Group();
+    // Translucent plate behind everything so the section reads as one surface.
+    const plate = new THREE.Mesh(
+        new THREE.PlaneGeometry(CONFIG_W, CONFIG_H),
+        new THREE.MeshBasicMaterial({
+            color: 0x0d1117, transparent: true, opacity: 0.6,
+            side: THREE.DoubleSide,
+        }));
+    plate.position.z = -0.001;
+    configPanel.add(plate);
+
+    // Layout: lay children top-to-bottom from the panel top. yTop is the local
+    // y of the top inner edge; we step down by each element's height + gap.
+    const topY = CONFIG_H / 2 - CONFIG_PAD;
+
+    // Title strip.
+    configTitleCanvas = document.createElement('canvas');
+    configTitleCanvas.width = 640; configTitleCanvas.height = 120;
+    configTitleCtx = configTitleCanvas.getContext('2d');
+    configTitleTex = new THREE.CanvasTexture(configTitleCanvas);
+    configTitleTex.colorSpace = THREE.SRGBColorSpace;
+    configTitleMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(CONFIG_ROW_W, CONFIG_TITLE_H),
+        new THREE.MeshBasicMaterial({ map: configTitleTex, transparent: true,
+                                       depthWrite: false }));
+    configTitleMesh.position.set(0, topY - CONFIG_TITLE_H / 2, 0.001);
+    configPanel.add(configTitleMesh);
+
+    // Capture-row slots. We create CONFIG_LIST_ROWS fixed-position row buttons
+    // up front; setCaptures() binds each to a capture (or hides extras).
+    let y = topY - CONFIG_TITLE_H - CONFIG_ROW_GAP;
+    for (let i = 0; i < CONFIG_LIST_ROWS; i++) {
+        const rowY = y - CONFIG_ROW_H / 2;
+        const btn = createConfigButton(
+            `CAPROW_${i}`, CONFIG_ROW_W, CONFIG_ROW_H,
+            new THREE.Vector3(0, rowY, 0.001),
+            () => onCaptureRowSelect(i), drawCaptureRow);
+        btn.userData_rowIndex = i;
+        btn.userData_capture = null;   // bound in setCaptures
+        configRowButtons.push(btn);
+        y -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+    }
+
+    // REPLAY / STOP REPLAY action button.
+    const actY = y - CONFIG_ROW_H / 2;
+    createConfigButton('REPLAY_ACTION', CONFIG_ROW_W, CONFIG_ROW_H,
+                       new THREE.Vector3(0, actY, 0.001),
+                       onReplayAction, drawReplayAction);
+    y -= CONFIG_ROW_H + CONFIG_ROW_GAP;
+
+    // Speed toggle.
+    const spdY = y - CONFIG_ROW_H / 2;
+    createConfigButton('REPLAY_SPEED', CONFIG_ROW_W, CONFIG_ROW_H,
+                       new THREE.Vector3(0, spdY, 0.001),
+                       onSpeedToggle, drawSpeedToggle);
+
+    // Drag handle in the top-left corner, like the other panels.
+    createDragHandle(configPanel,
+                     new THREE.Vector3(-CONFIG_W / 2 - HANDLE_SIZE_M,
+                                        CONFIG_H / 2 + HANDLE_SIZE_M, 0));
+
+    configPanel.visible = false;
+    menuRoot.add(configPanel);
+    // Sits to the right of the menu cluster (local offset within menuRoot).
+    configPanel.position.set(CONFIG_OFFSET_RIGHT, 0, 0.002);
+
+    // First paint so it looks right the instant it's shown.
+    setCaptures(configState.captures);
+    drawConfigTitle();
+}
+
+// Bind the cached capture list onto the fixed row slots. Extra rows (beyond
+// the capture count) are hidden; an empty list shows a single "no captures
+// yet" placeholder. Re-renders each affected row.
+function setCaptures(list) {
+    configState.captures = Array.isArray(list) ? list : [];
+    const caps = configState.captures;
+    for (let i = 0; i < configRowButtons.length; i++) {
+        const btn = configRowButtons[i];
+        if (caps.length === 0) {
+            // Show the placeholder on row 0 only; hide the rest.
+            btn.userData_capture = null;
+            btn.mesh.visible = (i === 0);
+        } else if (i < caps.length) {
+            btn.userData_capture = caps[i];
+            btn.mesh.visible = true;
+        } else {
+            btn.userData_capture = null;
+            btn.mesh.visible = false;
+        }
+        btn._lastDrawKey = null;            // force a repaint
+        drawCaptureRow(btn, false);
+    }
+    return caps;
+}
+
+// Row-select handler: choose the capture bound to row `i` (no-op for the
+// empty-list placeholder). Selection drives the highlight + the REPLAY POST.
+function onCaptureRowSelect(i) {
+    const btn = configRowButtons[i];
+    const cap = btn && btn.userData_capture;
+    if (!cap) return;
+    selectCapture(cap.name);
+}
+
+// Mark `name` as the chosen capture and force the rows to repaint so the
+// highlight moves. Exposed on window.OMVR for headless driving.
+function selectCapture(name) {
+    configState.selected = name;
+    for (const btn of configRowButtons) { btn._lastDrawKey = null; }
+    setStatus(`replay capture: ${name}`);
+}
+
+// Fetch the capture list (GET /api/captures) and render it. Called when the
+// SETUP panel opens (re-fetch on every open so the list is current). Each item
+// from list_captures has {name, size_bytes, mtime, meta}; we also derive a row
+// count for display. list_captures doesn't include a row count, so we show the
+// file size as a proxy when rows are unknown (see note in report).
+async function fetchCaptures() {
+    configState.loading = true;
+    drawConfigTitle();
+    try {
+        const r = await fetch('/api/captures');
+        if (!r.ok) {
+            setStatus(`captures load failed: HTTP ${r.status}`);
+            setCaptures([]);
+            return;
+        }
+        const list = await r.json();
+        // Normalize: surface a `rows` field for the row renderer. list_captures
+        // returns size_bytes (not a row count); we expose KB so the operator
+        // still gets a size cue. If a future backend adds rows, it wins.
+        const norm = (Array.isArray(list) ? list : []).map((c) => ({
+            ...c,
+            rows: (typeof c.rows === 'number')
+                ? c.rows
+                : Math.max(1, Math.round((c.size_bytes || 0) / 1024)) + 'KB',
+        }));
+        setCaptures(norm);
+    } catch (e) {
+        setStatus(`captures load error: ${e.message}`);
+        setCaptures([]);
+    } finally {
+        configState.loading = false;
+        drawConfigTitle();
+    }
+}
+
+// REPLAY action: start or stop a replay depending on the live snapshot state.
+// Start -> POST /api/simulate/replay {capture, speed}; a 409 (recording or
+// another replay active) surfaces the server's detail in the status strip.
+// Stop -> DELETE /api/simulate/replay.
+async function onReplayAction() {
+    const rp = (latestSnapshot && latestSnapshot.replay) || { active: false };
+    try {
+        if (rp.active) {
+            const r = await fetch('/api/simulate/replay', { method: 'DELETE' });
+            if (r.ok) setStatus('replay stopped');
+            else      setStatus(`stop replay failed: HTTP ${r.status}`);
+            return;
+        }
+        if (!configState.selected) {
+            setStatus('pick a capture to replay first');
+            return;
+        }
+        const r = await fetch('/api/simulate/replay', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ capture: configState.selected,
+                                   speed: configState.speed }),
+        });
+        if (r.ok) {
+            const data = await r.json();
+            setStatus(`replaying ${data.capture} (${data.rows} rows, ${data.speed}x)`);
+        } else {
+            // 409 = recording or another replay active. Surface the server's
+            // detail ("stop the recording first" etc.) verbatim.
+            let detail = `HTTP ${r.status}`;
+            try {
+                const err = await r.json();
+                if (err && err.detail) detail = err.detail;
+            } catch (e) { /* non-JSON error body */ }
+            setStatus(`replay failed: ${detail}`.slice(0, 80));
+        }
+    } catch (e) {
+        setStatus(`replay error: ${e.message}`);
+    }
+}
+
+// Speed toggle: cycle 1x -> 2x -> 1x. Sent as the `speed` field on the next
+// REPLAY POST. (Changing speed mid-replay needs a stop + restart; the toggle
+// only affects the NEXT start, matching the locked design.)
+function onSpeedToggle() {
+    configState.speed = configState.speed >= 2.0 ? 1.0 : 2.0;
+    setStatus(`replay speed ${configState.speed}x`);
+}
+
+// Render the whole REPLAY section given a snapshot (used live each frame and
+// for headless preview via window.OMVR.drawReplaySection(fakeSnap)). Title +
+// action button track the snapshot's replay state; rows track selection. The
+// per-button customDraw hooks read latestSnapshot, so for a headless fake we
+// temporarily point latestSnapshot at the supplied snap.
+function drawReplaySection(snap) {
+    const prev = latestSnapshot;
+    if (snap !== undefined) latestSnapshot = snap;
+    try {
+        drawConfigTitle();
+        for (const btn of configRowButtons) {
+            if (btn.mesh.visible) drawCaptureRow(btn, btn === hoveredButton);
+        }
+        const action = buttons['REPLAY_ACTION'];
+        if (action) drawReplayAction(action, action === hoveredButton);
+        const speed = buttons['REPLAY_SPEED'];
+        if (speed) drawSpeedToggle(speed, speed === hoveredButton);
+    } finally {
+        if (snap !== undefined) latestSnapshot = prev;
+    }
+}
+
+// SETUP button handler: toggle the config panel. Opening re-fetches the
+// capture list so it's current.
+function toggleSetup() {
+    if (configState.open) closeSetup();
+    else openSetup();
+}
+
+function openSetup() {
+    configState.open = true;
+    if (configPanel) configPanel.visible = true;
+    fetchCaptures();          // re-fetch on every open
+}
+
+function closeSetup() {
+    configState.open = false;
+    if (configPanel) configPanel.visible = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,8 +1553,13 @@ function updateRaycast() {
     // buttons when both are reachable -- but Three.js's raycaster returns
     // hits sorted by distance, so we mix both sets and let geometry decide.
     // Visible-only filter: hidden meshes shouldn't be hoverable.
+    // Menu buttons are hoverable only while the menu grid is shown; config-
+    // panel buttons (capture rows, REPLAY, speed) only while the SETUP panel
+    // is open. Both still funnel through the same buttons[] + raycast path.
+    const configOpen = !!(configPanel && configPanel.visible);
     const buttonMeshes = Object.values(buttons)
-        .filter(b => b.mesh.visible && menuPanel.visible)
+        .filter(b => b.mesh.visible
+            && (b.isConfig ? configOpen : menuPanel.visible))
         .map(b => b.mesh);
     const handleMeshes = dragHandles
         .filter(h => h.target.visible)
@@ -2147,6 +2650,15 @@ function updateFromSnapshot(snap, timestampMs) {
     // Re-render the status strip every frame so its fade animates without
     // needing a separate timer.
     drawStatus(lastStatusText);
+
+    // SETUP panel: while open, repaint the title strip every frame so the
+    // replay progress line ("replaying <capture> N/T") tracks the live
+    // snapshot.replay counter. The capture rows + REPLAY/speed buttons repaint
+    // through updateButtonVisual -> customDraw (they own their redraw-skip),
+    // so we only need to drive the non-button title here.
+    if (configPanel && configPanel.visible) {
+        drawConfigTitle();
+    }
 }
 
 // ---------------------------------------------------------------------------
