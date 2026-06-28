@@ -387,6 +387,7 @@ function initScene() {
     // the band visuals without an XR session + inspect band state.
     window.OMVR = { bands, getBands, reconcileBands, getStatusDevices, drawBandStatus,
                     drawDebug, debugState, uiState, predForSide, ghosts,
+                    drawOrientationGizmo, updateBandImu, THREE,
                     bandStatusCtx: () => bandStatusCtx, debugCtx: () => debugCtx };
 
     // Header strip above the heatmap (status text rendered on its own canvas)
@@ -1690,6 +1691,69 @@ function makeImuBand() {
     return band;
 }
 
+// --- Orientation gizmo (locked board #0206 convention) ----------------------
+// A 2D XYZ axis gizmo so the VR orientation widget is pixel-consistent with the
+// phone's Compose Canvas gizmo. Convention (locked #0206, phone signed off
+// #0222): world frame +X right / +Y up / +Z toward viewer; axis colors X red
+// ef4444 / Y green 22c55e / Z blue 3b82f6; orthographic -Z projection (drop the
+// rotated z, screen y points up); vectors from center, len 0.4*min(w,h);
+// painter-sorted far-to-near by projected z so the nearer axis draws on top.
+// Fed the accel-tilt orientation (interim, correct pitch/roll, no yaw) until
+// firmware states the gyro scale + mounting (#0200); the SAME quaternion will
+// then come from the Madgwick filter (fusion.py) with NO change to this draw.
+// THIS is the JS reference phone mirrors in Kotlin (#0206 / #0222).
+const _GIZMO_AXES = [
+    { v: [1, 0, 0], color: '#ef4444', label: 'X' },
+    { v: [0, 1, 0], color: '#22c55e', label: 'Y' },
+    { v: [0, 0, 1], color: '#3b82f6', label: 'Z' },
+];
+const _gizV = new THREE.Vector3();
+function drawOrientationGizmo(ctx, w, h, quat) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(13,17,23,0.82)';
+    ctx.fillRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2, len = 0.4 * Math.min(w, h);
+    // Rotate each unit axis by the orientation, then project orthographically
+    // onto the -Z view: screen x = +model x, screen y = -model y (so +Y is UP).
+    const proj = _GIZMO_AXES.map((ax) => {
+        _gizV.set(ax.v[0], ax.v[1], ax.v[2]).applyQuaternion(quat);
+        return { ax, sx: cx + _gizV.x * len, sy: cy - _gizV.y * len, z: _gizV.z };
+    });
+    proj.sort((a, b) => a.z - b.z);          // far (-z) first, near (+z) on top
+    ctx.lineWidth = Math.max(3, len * 0.06);
+    ctx.lineCap = 'round';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold ' + Math.round(len * 0.22) + 'px system-ui';
+    for (const p of proj) {
+        ctx.globalAlpha = p.z >= 0 ? 1 : 0.5;   // dim an axis pointing away
+        ctx.strokeStyle = p.ax.color;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(p.sx, p.sy);
+        ctx.stroke();
+        ctx.fillStyle = p.ax.color;
+        ctx.fillText(p.ax.label, cx + (p.sx - cx) * 1.13, cy + (p.sy - cy) * 1.13);
+    }
+    ctx.globalAlpha = 1;
+}
+
+// Small per-band canvas panel that renders the orientation gizmo above.
+function makeGizmoPanel() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 96; canvas.height = 96;
+    const ctx = canvas.getContext('2d');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(BAND_H, BAND_H),     // small square panel
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true,
+                                      side: THREE.DoubleSide }));
+    drawOrientationGizmo(ctx, canvas.width, canvas.height, new THREE.Quaternion());
+    tex.needsUpdate = true;
+    return { mesh, canvas, ctx, tex };
+}
+
 // Lazily create the per-band group (heatmap mesh + canvas + IMU widget) for a
 // device_id, added to bandRow. Reused on subsequent frames.
 function ensureBand(deviceId) {
@@ -1704,11 +1768,14 @@ function ensureBand(deviceId) {
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BAND_W, BAND_H),
         new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
     group.add(mesh);
-    const imuMesh = makeImuBand();
-    imuMesh.position.set(0, -(BAND_H * 0.5 + 0.03), 0.01);
-    group.add(imuMesh);
+    // Orientation widget: the locked #0206 XYZ axis gizmo (pixel-consistent with
+    // the phone) fed by the band's accel-tilt. Replaces the older tilting box.
+    const giz = makeGizmoPanel();
+    giz.mesh.position.set(0, -(BAND_H * 0.5 + 0.04), 0.01);
+    group.add(giz.mesh);
     bandRow.add(group);
-    rec = { group, mesh, canvas, ctx, tex, imuMesh, vmax: 100, lastSig: '' };
+    rec = { group, mesh, canvas, ctx, tex, giz, gizQuat: new THREE.Quaternion(),
+            vmax: 100, lastSig: '' };
     bands.set(deviceId, rec);
     return rec;
 }
@@ -2002,13 +2069,16 @@ function drawHeader(text, isRecording, qualityColor) {
 // mapping as the desktop imu-viewer for cross-hub consistency (the mapping is the
 // one tunable to align with phone, board #0197).
 function updateBandImu(rec, imu) {
-    if (!rec.imuMesh || !imu) return;
+    if (!rec.giz || !imu) return;
     const a = imu.accel;
     if (!Array.isArray(a) || a.length < 3) return;
     if (Math.hypot(a[0], a[1], a[2]) < 1e-3) return;   // freefall / bad read
     _imuUp.set(a[0], a[2], -a[1]).normalize();          // sensor -> model axes
     _imuTargetQuat.setFromUnitVectors(_imuNormal, _imuUp);
-    rec.imuMesh.quaternion.slerp(_imuTargetQuat, 0.3);  // smooth the jitter
+    rec.gizQuat.slerp(_imuTargetQuat, 0.3);             // smooth the jitter
+    drawOrientationGizmo(rec.giz.ctx, rec.giz.canvas.width,
+                         rec.giz.canvas.height, rec.gizQuat);
+    rec.giz.tex.needsUpdate = true;
 }
 
 function updateFromSnapshot(snap, timestampMs) {
