@@ -219,7 +219,13 @@ def record(port, output, duration, role):
 @click.option("--output", "-o", default=None, help="Output model path (default: data/models/)")
 @click.option("--test-split", default=0.2, type=float, help="Test set fraction")
 @click.option("--trees", default=100, type=int, help="Number of trees (RandomForest)")
-def train(data_paths, model_type, output, test_split, trees):
+@click.option("--role", default=None, type=click.Choice(["left", "right"]),
+              help="SEPARATE-MODEL-PER-HAND: keep only this role's rows from a "
+                   "two-hand schema-v2 capture and train a single-arm model. Run "
+                   "twice (--role left -o model_left.pkl; --role right -o "
+                   "model_right.pkl) to get one independent model per hand. Omit "
+                   "for the legacy single/bilateral-pivot behavior.")
+def train(data_paths, model_type, output, test_split, trees, role):
     """Train an ML model from one or more captured CSV files.
 
     \b
@@ -232,6 +238,12 @@ def train(data_paths, model_type, output, test_split, trees):
                          data/raw/merged/session_c.csv
 
     All CSVs must share the same schema (sensor + label columns).
+
+    \b
+    For two-hand captures, train one model per hand with --role:
+
+        openmuscle train two_hand.csv --role left  -o model_left.pkl
+        openmuscle train two_hand.csv --role right -o model_right.pkl
     """
     import tempfile
     import os
@@ -241,7 +253,8 @@ def train(data_paths, model_type, output, test_split, trees):
     if len(data_paths) == 1:
         # Single-CSV: train directly, no temp file dance.
         train_model(data_path=data_paths[0], model_type=model_type,
-                    output=output, test_split=test_split, n_estimators=trees)
+                    output=output, test_split=test_split, n_estimators=trees,
+                    role=role)
         return
 
     # Multiple captures: concatenate to a temp file, train, clean up.
@@ -252,7 +265,8 @@ def train(data_paths, model_type, output, test_split, trees):
         n_rows = combine_csvs(list(data_paths), tmp_path)
         click.echo(f"Combined into {n_rows} rows -> {tmp_path}")
         train_model(data_path=tmp_path, model_type=model_type,
-                    output=output, test_split=test_split, n_estimators=trees)
+                    output=output, test_split=test_split, n_estimators=trees,
+                    role=role)
     finally:
         try:
             os.unlink(tmp_path)

@@ -13,7 +13,7 @@ from openmuscle.ml.registry import ModelRegistry
 
 def train_model(data_path: str, model_type: str = "random_forest",
                 output: str = None, test_split: float = 0.2,
-                n_estimators: int = 100) -> tuple:
+                n_estimators: int = 100, role: str = None) -> tuple:
     """Train a model from a CSV capture file.
 
     Args:
@@ -22,13 +22,18 @@ def train_model(data_path: str, model_type: str = "random_forest",
         output: explicit output path (overrides registry)
         test_split: fraction of data for testing
         n_estimators: number of trees for RandomForest
+        role: left/right -> SEPARATE-MODEL-PER-HAND. Keep only that role's rows
+            and train a single-arm model. Run twice for model_left + model_right.
+            None = legacy behavior (bilateral pivot if both roles present).
 
     Returns:
         (model, metrics_dict)
     """
-    X, y = load_training_data(data_path)
+    X, y = load_training_data(data_path, role=role)
     sensor_cols = list(X.columns)
     label_cols = list(y.columns)
+    if role:
+        print(f"Role filter: {role} -> {len(X)} rows, single-arm model")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_split, random_state=42
@@ -54,6 +59,7 @@ def train_model(data_path: str, model_type: str = "random_forest",
         "label_columns": label_cols,
         "model_type": model_type,
         "n_estimators": n_estimators,
+        "role": role,
     }
 
     registry = ModelRegistry()

@@ -85,7 +85,8 @@ def pivot_bilateral(df: pd.DataFrame,
 
 
 def load_training_data(csv_path: str,
-                       bilateral_window_ms: int = 50) -> tuple[pd.DataFrame, pd.DataFrame]:
+                       bilateral_window_ms: int = 50,
+                       role: str = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load a capture CSV and split into features (X) and labels (y).
 
     Schema-v2 multi-role (bilateral) captures are pivoted to the wide
@@ -93,10 +94,29 @@ def load_training_data(csv_path: str,
     long CSV must NEVER fall through to the single-source path, which would
     silently pool left + right rows into one role-agnostic 60-feature set.
 
+    `role` (left/right) selects the SEPARATE-MODEL-PER-HAND path (Tory directive
+    2026-06-27): keep only that role's rows, then train a normal single-arm model
+    on its own 60 muscle features -> its own hand labels. Run twice (left, right)
+    to get two independent models. This deliberately SKIPS the bilateral pivot --
+    we are NOT concatenating L||R into one model; each hand gets its own.
+
     Returns:
         (X, y) DataFrames
     """
     df = load_capture(csv_path)
+    if role:
+        role = str(role).strip().lower()
+        if "role" not in df.columns:
+            raise ValueError(
+                f"--role {role} requested but the CSV has no 'role' column "
+                "(not a schema-v2 capture)")
+        df = df[df["role"] == role].reset_index(drop=True)
+        if df.empty:
+            roles = sorted({str(r) for r in load_capture(csv_path)["role"].unique()})
+            raise ValueError(
+                f"No rows with role={role} in {csv_path} (found roles: {roles})")
+        sensor_cols, label_cols = detect_columns(df)
+        return df[sensor_cols], df[label_cols]
     if is_bilateral_v2(df):
         return pivot_bilateral(df, window_ms=bilateral_window_ms)
     sensor_cols, label_cols = detect_columns(df)

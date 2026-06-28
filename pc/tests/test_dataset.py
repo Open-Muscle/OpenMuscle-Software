@@ -111,6 +111,56 @@ def test_load_training_data_single_role_v2_uses_standard_path():
     assert X.shape == (2, 4)
 
 
+# ---- separate-model-per-hand: the --role filter (Tory 2026-06-27) ---------
+
+def test_role_left_keeps_only_left_single_arm():
+    # role=left on a two-hand capture -> the LEFT rows as a single-arm matrix
+    # (4 cols, NOT the 8-wide bilateral pivot). One model per hand.
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "two_hand.csv"
+        _write_csv(p, BILATERAL_ROWS)
+        X, y = load_training_data(str(p), role="left")
+    assert list(X.columns) == ["R0C0", "R0C1", "R1C0", "R1C1"]   # single-arm width
+    assert X.shape == (2, 4)
+    assert list(X.iloc[0]) == [12, 18, 20, 25]                   # the left band
+    assert list(y.iloc[0]) == [1.0, 0.5]
+
+
+def test_role_right_keeps_only_right():
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "two_hand.csv"
+        _write_csv(p, BILATERAL_ROWS)
+        X, y = load_training_data(str(p), role="right")
+    assert X.shape == (2, 4)
+    assert list(X.iloc[0]) == [30, 28, 22, 19]                   # the right band
+
+
+def test_role_is_case_insensitive():
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "two_hand.csv"
+        _write_csv(p, BILATERAL_ROWS)
+        X, _ = load_training_data(str(p), role="LEFT")
+    assert list(X.iloc[0]) == [12, 18, 20, 25]
+
+
+def test_role_on_csv_without_role_column_raises():
+    v1_cols = ["timestamp", "R0C0", "R0C1", "R1C0", "R1C1", "label_0", "label_1"]
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "v1.csv"
+        _write_csv(p, [[0.0, 1, 2, 3, 4, 0.1, 0.2]], columns=v1_cols)
+        with pytest.raises(ValueError, match="no 'role' column"):
+            load_training_data(str(p), role="left")
+
+
+def test_role_with_no_matching_rows_raises():
+    left_only = [r for r in BILATERAL_ROWS if r[1] == "left"]
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "left_only.csv"
+        _write_csv(p, left_only)
+        with pytest.raises(ValueError, match="role=right"):
+            load_training_data(str(p), role="right")
+
+
 def test_load_training_data_v1_unchanged():
     v1_cols = ["timestamp", "R0C0", "R0C1", "R1C0", "R1C1", "label_0", "label_1"]
     rows = [[0.0, 1, 2, 3, 4, 0.1, 0.2], [0.03, 5, 6, 7, 8, 0.3, 0.4]]
