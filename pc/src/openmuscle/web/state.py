@@ -1531,6 +1531,11 @@ class AppState:
             # Compact summary fields for the table view; full meta is fetched
             # via /api/captures/{name}/meta when the user clicks edit.
             meta_summary = None
+            # Hand count for the in-VR list: a bilateral (two-hand) capture has
+            # both a left AND a right band role; anything else is single-hand.
+            band_roles = {str(r) for r in (meta.get("roles") or {}).values()
+                          if r in ("left", "right")} if meta else set()
+            hands = 2 if {"left", "right"} <= band_roles else 1
             if meta:
                 meta_summary = {
                     "arm": meta.get("arm"),
@@ -1538,11 +1543,14 @@ class AppState:
                     "gesture": meta.get("gesture") or None,
                     "tags": meta.get("tags") or [],
                     "has_notes": bool(meta.get("notes")),
+                    "session_id": (meta.get("auto") or {}).get("session_id"),
                 }
             out.append({
                 "name": p.name,
                 "size_bytes": stat.st_size,
                 "mtime": stat.st_mtime,
+                "hands": hands,                 # 1 or 2 (for the in-VR badge)
+                "session_id": (meta.get("auto") or {}).get("session_id") if meta else None,
                 "meta": meta_summary,
             })
         return out

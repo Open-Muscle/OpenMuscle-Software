@@ -514,8 +514,14 @@ let lastStatusText = '';
 // in drawReplaySection), not stored here.
 const configState = {
     open: false,
-    captures: [],          // [{name, rows, size_bytes, ...}] cached on open
-    selected: null,        // chosen capture name (string) or null
+    captures: [],          // [{name, rows, size_bytes, mtime, hands, ...}] cached on open
+    selected: null,        // last-tapped capture name (the REPLAY target) or null
+    // Multi-select for training: the set of capture NAMES the user has marked
+    // (by tapping rows) to train on. Tapping a row TOGGLES its membership AND
+    // makes it the replay target (configState.selected), so REPLAY still acts on
+    // the last-tapped row while TRAIN trains on every marked capture. Empty set
+    // => pickTrainCaptures() falls back to the session / most-recent behavior.
+    trainSet: new Set(),   // Set<string> of capture names chosen for training
     speed: 1.0,            // replay speed sent to POST /api/simulate/replay
     loading: false,        // a GET /api/captures fetch is in flight
     // TRAIN + MODELS section state.
@@ -583,6 +589,11 @@ function initScene() {
                     get configPanel() { return configPanel; },
                     openSetup, closeSetup, toggleSetup,
                     setCaptures, selectCapture, fetchCaptures, drawReplaySection,
+                    // Multi-select-for-training hooks (headless-drivable): toggle a
+                    // capture's training-set membership (also sets the replay
+                    // target, like a row tap), and read the current picks.
+                    toggleTrainCapture,
+                    get trainSet() { return configState.trainSet; },
                     // BANDS section handles: inject a fake devices array + render
                     // the band rows headless (setDevices), or paint from an
                     // explicit snapshot (drawBandsSection). setBandRole posts a
@@ -1039,19 +1050,55 @@ function createConfigButton(name, w, h, localPos, onActivate, customDraw) {
     return btn;
 }
 
-// Capture-row paint: capture name + row count, highlighted when it's the
-// chosen capture (configState.selected) or hovered by the off-hand ray.
+// Human date/time label from a capture's mtime (unix SECONDS -> local). The
+// embedded capture_<unix>.csv timestamp in the name is redundant once this
+// shows, so the row leads with this instead of the long raw filename. Returns
+// '' when mtime is absent (older server) so the row falls back to the name.
+const _MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function captureDateLabel(cap) {
+    const mt = cap && cap.mtime;
+    if (typeof mt !== 'number' || !isFinite(mt) || mt <= 0) return '';
+    const d = new Date(mt * 1000);   // unix seconds -> ms
+    if (isNaN(d.getTime())) return '';
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    // e.g. "Jun 28 11:02"
+    return `${_MONTHS[d.getMonth()]} ${d.getDate()} ${hh}:${mm}`;
+}
+
+// Hand-count badge ("2H" / "1H") from a capture's `hands` field, or '' when the
+// field is absent (older server) so no badge shows.
+function captureHandsBadge(cap) {
+    const h = cap && cap.hands;
+    if (h === 2 || h === '2') return '2H';
+    if (h === 1 || h === '1') return '1H';
+    return '';
+}
+
+// Capture-row paint: human date/time + a 2H/1H hand-count badge (from mtime +
+// hands) in place of the long raw filename, highlighted when it's the REPLAY
+// target (configState.selected) or hovered. A capture marked for training
+// (configState.trainSet) gets a distinct "selected for training" mark: a green
+// left-edge bar + a checkmark, so it reads apart from the replay-target
+// highlight. Falls back to the raw name (no date, no badge) when mtime/hands are
+// missing. trainSet membership + selected are in the drawKey so the row
+// repaints when either changes.
 function drawCaptureRow(btn, hovered) {
-    const cap = btn.userData_capture;   // {name, rows} or null (empty-list row)
+    const cap = btn.userData_capture;   // {name, rows, mtime, hands} or null (empty-list row)
     const selected = cap && configState.selected === cap.name;
-    const drawKey = `${hovered}|${selected}|${cap ? cap.name : ''}|${cap ? cap.rows : ''}`;
+    const inTrain = cap && configState.trainSet.has(cap.name);
+    const dateStr = cap ? captureDateLabel(cap) : '';
+    const badge = cap ? captureHandsBadge(cap) : '';
+    const drawKey = `${hovered}|${selected}|${inTrain}|${cap ? cap.name : ''}`
+        + `|${cap ? cap.rows : ''}|${dateStr}|${badge}`;
     if (btn._lastDrawKey === drawKey) return;
     btn._lastDrawKey = drawKey;
     const ctx = btn.ctx;
     const W = btn.canvas.width, H = btn.canvas.height;
     ctx.clearRect(0, 0, W, H);
     let bg;
-    if (selected)     bg = '#15803d';   // emerald: chosen capture
+    if (selected)     bg = '#15803d';   // emerald: the replay target (last-tapped)
     else if (hovered) bg = '#1f6feb';
     else              bg = '#2a3142';
     ctx.fillStyle = bg;
@@ -1064,17 +1111,43 @@ function drawCaptureRow(btn, hovered) {
         ctx.font = '30px system-ui';
         ctx.textAlign = 'center';
         ctx.fillText('no captures yet', W / 2, H / 2);
-    } else {
-        // Name left-aligned (trimmed), row count right-aligned.
-        ctx.font = '30px system-ui';
-        ctx.textAlign = 'left';
-        const name = cap.name.length > 28 ? cap.name.slice(0, 27) + '…' : cap.name;
-        ctx.fillText(name, 18, H / 2);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#9fb3c8';
-        const rows = (typeof cap.rows === 'number') ? `${cap.rows} rows` : '';
-        ctx.fillText(rows, W - 18, H / 2);
+        btn.tex.needsUpdate = true;
+        return;
     }
+    // Training mark: a bright green bar down the left edge + a checkmark, drawn
+    // ON TOP of the row bg so it stays visible whether or not the row is the
+    // replay target. This is the "selected for training" affordance, distinct
+    // from the emerald-fill replay highlight above.
+    let leftPad = 18;
+    if (inTrain) {
+        ctx.fillStyle = '#22c55e';                 // green left-edge bar
+        ctx.fillRect(0, 6, 8, H - 12);
+        ctx.fillStyle = '#22c55e';                 // checkmark glyph
+        ctx.font = 'bold 30px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText('✓', 16, H / 2);
+        leftPad = 52;                              // push the text past the mark
+    }
+    // Lead with the human date (or the raw name when mtime is absent), then the
+    // hand-count badge, then the row/size cue right-aligned.
+    const primary = dateStr ||
+        (cap.name.length > 28 ? cap.name.slice(0, 27) + '…' : cap.name);
+    ctx.fillStyle = '#f0f4f8';
+    ctx.font = '30px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(primary, leftPad, H / 2);
+    // Badge sits just right of the date (skip when there's no date to anchor it).
+    if (badge && dateStr) {
+        const px = leftPad + ctx.measureText(primary + '  ').width;
+        ctx.fillStyle = badge === '2H' ? '#34d399' : '#9fb3c8';
+        ctx.font = 'bold 26px system-ui';
+        ctx.fillText(badge, px, H / 2);
+    }
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#9fb3c8';
+    ctx.font = '30px system-ui';
+    const rows = (typeof cap.rows === 'number') ? `${cap.rows} rows` : (cap.rows || '');
+    ctx.fillText(rows, W - 18, H / 2);
     btn.tex.needsUpdate = true;
 }
 
@@ -1624,10 +1697,20 @@ function createConfigPanel() {
 
 // Bind the cached capture list onto the fixed row slots. Extra rows (beyond
 // the capture count) are hidden; an empty list shows a single "no captures
-// yet" placeholder. Re-renders each affected row.
+// yet" placeholder. Re-renders each affected row. Accepts the new capture shape
+// {name, mtime, hands, session_id, rows, size_bytes, meta}; mtime/hands feed the
+// date + 2H/1H badge, and missing fields fall back gracefully (no date/badge).
 function setCaptures(list) {
     configState.captures = Array.isArray(list) ? list : [];
     const caps = configState.captures;
+    // Prune training picks that are no longer in the list (a capture deleted or
+    // rotated out shouldn't linger as a phantom train target).
+    if (configState.trainSet.size) {
+        const names = new Set(caps.map((c) => c && c.name));
+        for (const n of Array.from(configState.trainSet)) {
+            if (!names.has(n)) configState.trainSet.delete(n);
+        }
+    }
     for (let i = 0; i < configRowButtons.length; i++) {
         const btn = configRowButtons[i];
         if (caps.length === 0) {
@@ -1647,17 +1730,41 @@ function setCaptures(list) {
     return caps;
 }
 
-// Row-select handler: choose the capture bound to row `i` (no-op for the
-// empty-list placeholder). Selection drives the highlight + the REPLAY POST.
+// Row-select handler: tapping the capture bound to row `i` (no-op for the
+// empty-list placeholder) TOGGLES that capture in the training set AND makes it
+// the REPLAY target. So a tap both marks/unmarks it for TRAIN and points REPLAY
+// at the last-tapped row -- one gesture, two effects (see toggleTrainCapture).
 function onCaptureRowSelect(i) {
     const btn = configRowButtons[i];
     const cap = btn && btn.userData_capture;
     if (!cap) return;
-    selectCapture(cap.name);
+    toggleTrainCapture(cap.name);
 }
 
-// Mark `name` as the chosen capture and force the rows to repaint so the
-// highlight moves. Exposed on window.OMVR for headless driving.
+// Toggle `name` in the training set AND set it as the replay target. Forces a
+// row repaint so both the training mark + the replay highlight move. Exposed on
+// window.OMVR so it can be driven headless. Returns true if `name` is now IN the
+// training set, false if it was just removed.
+function toggleTrainCapture(name) {
+    let nowIn;
+    if (configState.trainSet.has(name)) {
+        configState.trainSet.delete(name);
+        nowIn = false;
+    } else {
+        configState.trainSet.add(name);
+        nowIn = true;
+    }
+    // Always make the last-tapped row the replay target so REPLAY keeps working
+    // on it even when the tap REMOVED it from the training set.
+    configState.selected = name;
+    for (const btn of configRowButtons) { btn._lastDrawKey = null; }
+    const n = configState.trainSet.size;
+    setStatus(`${nowIn ? 'train +' : 'train -'} ${name}  ·  ${n} selected`);
+    return nowIn;
+}
+
+// Mark `name` as the REPLAY target only (no training-set change). Force the rows
+// to repaint so the highlight moves. Exposed on window.OMVR for headless driving.
 function selectCapture(name) {
     configState.selected = name;
     for (const btn of configRowButtons) { btn._lastDrawKey = null; }
@@ -1666,9 +1773,10 @@ function selectCapture(name) {
 
 // Fetch the capture list (GET /api/captures) and render it. Called when the
 // SETUP panel opens (re-fetch on every open so the list is current). Each item
-// from list_captures has {name, size_bytes, mtime, meta}; we also derive a row
-// count for display. list_captures doesn't include a row count, so we show the
-// file size as a proxy when rows are unknown (see note in report).
+// from list_captures has {name, size_bytes, mtime (unix seconds), hands (1|2),
+// session_id, meta}; we also derive a row count for display. mtime/hands feed the
+// row's date + 2H/1H badge (handled missing gracefully). list_captures doesn't
+// include a row count, so we show the file size as a proxy when rows are unknown.
 async function fetchCaptures() {
     configState.loading = true;
     drawConfigTitle();
@@ -1932,7 +2040,10 @@ async function trainBoth(roleOverride) {
             setStatus('no captures to train on -- record something first');
             return;
         }
-        setStatus(`training ${roles.join(' + ')} on ${captures.length} capture(s)…`);
+        // Surface the count so the user isn't blind to whether more than one
+        // capture is being used. "BOTH" when training both hands, else the side.
+        const what = roleOverride ? roleOverride.toUpperCase() : 'BOTH';
+        setStatus(`training ${what} on ${captures.length} capture(s)…`);
         const parts = [];
         let anyActive = false;
         for (const role of roles) {
@@ -1966,6 +2077,14 @@ async function trainBoth(roleOverride) {
         }
         setStatus(`trained ${configState.trainResult}` +
                   (anyActive ? ' · loaded ✓' : ' (saved only)') + predictTail);
+        // Auto-clear the explicit training picks after a successful train so the
+        // next run starts from a clean slate (and the green marks disappear,
+        // confirming the train consumed them). The fallback paths leave nothing
+        // to clear. The replay target (configState.selected) is left intact.
+        if (configState.trainSet.size) {
+            configState.trainSet.clear();
+            for (const b of configRowButtons) { b._lastDrawKey = null; }
+        }
         // Refresh the model registry so the new models show in the MODEL rows.
         fetchModels();
     } catch (e) {
@@ -3712,12 +3831,20 @@ async function toggleSession() {
     }
 }
 
-// Pick the capture(s) to train on: the active session's captures if a session
-// is running, else the most recent capture only. The fallback keeps the "tap
-// TRAIN right after a recording" flow alive even without sessions. Returns a
-// (possibly empty) array of capture filenames. Shared by runTrain (pooled) and
-// the TRAIN BOTH path so both train on the SAME capture(s).
+// Pick the capture(s) to train on. Priority:
+//   1. configState.trainSet (the rows the user explicitly tapped to mark for
+//      training) -- when non-empty this wins, so TRAIN trains on exactly the
+//      captures the user picked, however many.
+//   2. the active session's captures if a session is running.
+//   3. else the most recent capture only -- keeps the "tap TRAIN right after a
+//      recording" flow alive even without sessions.
+// Returns a (possibly empty) array of capture filenames. Shared by runTrain
+// (pooled) and the TRAIN BOTH path so both train on the SAME capture(s).
 async function pickTrainCaptures() {
+    // 1. Explicit multi-select wins, no fetch needed.
+    if (configState.trainSet.size) {
+        return Array.from(configState.trainSet);
+    }
     let captureNames = [];
     if (uiState.sessionActive) {
         const r = await fetch(`/api/sessions/${uiState.sessionId}`);
@@ -3754,6 +3881,7 @@ async function runTrain() {
         }
 
         uiState.training = true;
+        // Show the count so the user sees how many captures feed this train.
         setStatus(`training on ${captureNames.length} capture(s)…`);
         const r = await fetch('/api/train', {
             method: 'POST',
@@ -3783,6 +3911,12 @@ async function runTrain() {
             setStatus(`trained: R²=${r2str}` +
                       (result.active ? ' · model loaded ✓' : ' (saved only)') +
                       predictTail);
+            // Auto-clear the explicit training picks after a successful train so
+            // the next run starts clean + the green marks clear (mirrors trainBoth).
+            if (configState.trainSet.size) {
+                configState.trainSet.clear();
+                for (const b of configRowButtons) { b._lastDrawKey = null; }
+            }
         } else {
             const err = await r.text();
             setStatus(`train failed: ${err.slice(0, 80)}`);
