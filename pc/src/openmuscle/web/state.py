@@ -57,6 +57,7 @@ def _quest_label_column(joint_index: int, channel_index: int) -> int:
 from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.discovery import DiscoveryManager
+from openmuscle.forearm import forearm_roll, joints_from_flat
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
@@ -222,6 +223,10 @@ class ActiveCapture:
     # label_id_side: {labeler_device_id: "left"/"right"} for routing label frames.
     side_matchers: dict = field(default_factory=dict)
     label_id_side: dict = field(default_factory=dict)
+    # Forearm-orientation ground-truth: when the labeler is a Quest hand we
+    # derive (forearm_roll_deg, palm_up) from the matched hand's joints and write
+    # the two columns. Omitted (flag False) when no Quest labeler is present.
+    with_forearm: bool = False
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -588,6 +593,7 @@ class AppState:
 
         # Try to pair this sensor frame with the closest label in window
         label_imu = None
+        matched_label = None         # the paired label packet, for forearm derive
         if rec.side_matchers:
             # Bilateral: match this band against the labeler of its OWN side, so
             # the left band gets the left hand and the right band the right hand.
@@ -602,6 +608,7 @@ class AppState:
                 rec.matched_count += 1
                 label_values = list(matched.data.get("values", []))
                 label_imu = matched.data.get("imu")
+                matched_label = matched
         elif rec.label_device_id is None:
             # Sensor-only mode (no label device): just write sensor + empty labels.
             label_values = []
@@ -615,6 +622,7 @@ class AppState:
             # The matched labeler's IMU = the orientation ground-truth (e.g. a
             # LASK5 gyro for supination). Recorded into the lbl_imu_* columns.
             label_imu = matched.data.get("imu")
+            matched_label = matched
 
         # Guarantee a rectangular CSV. If the label width was locked (quest_hand)
         # and this matched label has a different length, pad with zeros or
@@ -645,10 +653,24 @@ class AppState:
         # role + device_id and a hub-arrival epoch-ms timestamp. Features are
         # already row-major (above); labels are the matched label vector.
         ts_hub_ms = int(pkt.receive_time * 1000)
+        # Forearm orientation (gravity-relative roll + palm-up) from the matched
+        # Quest hand, written as the forearm_roll_deg/palm_up columns (#0228).
+        # Handedness drives the palm-normal sign: prefer what the Quest frame
+        # tagged, else the band's own side (left band <-> left hand). None when
+        # the joints are too few -> empty cells.
+        forearm = None
+        if (rec.with_forearm and matched_label is not None
+                and matched_label.device_type == "quest_hand"):
+            positions = joints_from_flat(matched_label.data.get("values") or [])
+            hand = matched_label.data.get("handedness")
+            if hand not in ("left", "right"):
+                side = rec.sensors.get(pkt.device_id)
+                hand = side if side in ("left", "right") else "right"
+            forearm = forearm_roll(positions, hand)
         rec.writer.write_row_v2(ts_hub_ms, rec.sensors[pkt.device_id],
                                 pkt.device_id, flat, label_values,
                                 sensor_imu=pkt.data.get("imu"),
-                                label_imu=label_imu)
+                                label_imu=label_imu, forearm=forearm)
 
     def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
         """Emit the per-capture labels-schema sidecar.
@@ -1190,6 +1212,10 @@ class AppState:
         label_device_type = label_dev_for_width.device_type if label_dev_for_width else None
         if label_device_type == "quest_hand":
             effective_label_count = None
+        # Forearm-orientation columns are written only when the capture has a
+        # Quest labeler (omit-when-no-quest, board #0228). A bilateral capture's
+        # primary labeler is a Quest stream too, so this covers both paths.
+        with_forearm = (label_device_type == "quest_hand")
 
         # Pick the match window: explicit arg wins; otherwise per-device-type
         # default (Quest needs a wider window than LASK5 because WebXR
@@ -1221,6 +1247,7 @@ class AppState:
             label_count=effective_label_count,
             schema_version="v2",
             with_imu=with_imu,
+            with_forearm=with_forearm,
         )
 
         # Open sidecars block-buffered (4 KB). Earlier we used buffering=1
@@ -1264,6 +1291,7 @@ class AppState:
             labels_schema_path=labels_schema_sidecar,
             side_matchers=side_matchers,
             label_id_side=label_id_side,
+            with_forearm=with_forearm,
         )
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(
@@ -1300,6 +1328,9 @@ class AppState:
             # When set, the CSV carries imu_* (sensor band) + lbl_imu_* (matched
             # labeler, e.g. LASK5 gyro for supination) columns after the labels.
             "imu_columns": bool(with_imu),
+            # When set, the CSV carries forearm_roll_deg + palm_up (gravity-
+            # relative orientation from the matched Quest hand, board #0228).
+            "forearm_columns": bool(with_forearm),
             # {device_id: {chip, gyro_dps_per_lsb, accel_g_per_lsb}} for bands +
             # labeler that advertised it; the trainer multiplies raw*scale.
             "imu_scale": imu_scale,

@@ -30,9 +30,17 @@ class CaptureWriter:
     _IMU_LABEL_COLS = ["lbl_imu_gx", "lbl_imu_gy", "lbl_imu_gz",
                        "lbl_imu_ax", "lbl_imu_ay", "lbl_imu_az"]
 
+    # Forearm-orientation ground-truth derived from the matched Quest hand
+    # (forearm.py): a gravity-relative roll angle + a palm-up flag (board
+    # #0207/#0228, ratified single-column). Appended AFTER the labels + IMU so
+    # name-addressable readers stay backward compatible and label-count
+    # inference is unaffected. Omitted when the capture has no Quest labeler.
+    _FOREARM_COLS = ["forearm_roll_deg", "palm_up"]
+
     def __init__(self, output_path: str = None, matrix_rows: int = 4,
                  matrix_cols: int = 16, label_count: Optional[int] = 4,
-                 schema_version: str = "v1", with_imu: bool = False):
+                 schema_version: str = "v1", with_imu: bool = False,
+                 with_forearm: bool = False):
         if output_path is None:
             os.makedirs("data/raw/merged", exist_ok=True)
             output_path = f"data/raw/merged/capture_{int(time.time())}.csv"
@@ -51,6 +59,9 @@ class CaptureWriter:
         # Append raw-IMU columns (sensor band + matched labeler). v2 only; opt-in
         # so the schema-v2 byte golden (no IMU) stays the default.
         self._with_imu = bool(with_imu) and schema_version == "v2"
+        # Append forearm-orientation columns (from the matched Quest hand). v2
+        # only; on when the capture has a Quest labeler (omit-when-no-quest).
+        self._with_forearm = bool(with_forearm) and schema_version == "v2"
 
         self._file = open(self.path, "w", newline="")
         self._writer = csv.writer(self._file)
@@ -67,7 +78,9 @@ class CaptureWriter:
             lead = ["timestamp"]
         imu_cols = (self._IMU_SENSOR_COLS + self._IMU_LABEL_COLS
                     if self._with_imu else [])
-        self._writer.writerow(lead + sensor_cols + label_cols + imu_cols)
+        forearm_cols = self._FOREARM_COLS if self._with_forearm else []
+        self._writer.writerow(
+            lead + sensor_cols + label_cols + imu_cols + forearm_cols)
         self._label_count = label_count
         self._header_written = True
 
@@ -84,6 +97,15 @@ class CaptureWriter:
 
         return three("gyro") + three("accel")
 
+    @staticmethod
+    def _forearm_cells(forearm) -> list:
+        """Flatten a (forearm_roll_deg, palm_up) tuple to 2 cells. None (no Quest
+        match / too few joints) -> empty cells, distinguishable from a real 0."""
+        if not forearm:
+            return ["", ""]
+        roll, palm_up = forearm[0], forearm[1]
+        return [roll, int(bool(palm_up))]
+
     def write_row(self, timestamp: float, sensor_values: list, label_values: list):
         if not self._header_written:
             count = (self._label_count if self._label_count is not None
@@ -94,7 +116,7 @@ class CaptureWriter:
 
     def write_row_v2(self, ts_hub_ms: int, role: str, device_id: str,
                      sensor_values: list, label_values: list,
-                     sensor_imu=None, label_imu=None):
+                     sensor_imu=None, label_imu=None, forearm=None):
         """Write one schema-v2 row: ts_hub_ms, role, device_id, then row-major
         sensor features and labels. `sensor_values` MUST already be flattened
         row-major (R{r}C{c}, r outer) to match the header + the byte golden.
@@ -104,7 +126,10 @@ class CaptureWriter:
 
         sensor_imu / label_imu are {gyro,accel} dicts (or None) for the band
         that produced the row and the matched labeler; only written when the
-        writer was built with_imu=True (else ignored)."""
+        writer was built with_imu=True (else ignored).
+
+        forearm is a (forearm_roll_deg, palm_up) tuple (or None) derived from the
+        matched Quest hand; only written when built with_forearm=True."""
         if self._schema_version != "v2":
             raise ValueError("write_row_v2 requires schema_version='v2'")
         if not self._header_written:
@@ -114,6 +139,8 @@ class CaptureWriter:
         row = [ts_hub_ms, role, device_id] + sensor_values + label_values
         if self._with_imu:
             row += self._imu_cells(sensor_imu) + self._imu_cells(label_imu)
+        if self._with_forearm:
+            row += self._forearm_cells(forearm)
         self._writer.writerow(row)
         self._count += 1
 

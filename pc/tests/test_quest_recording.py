@@ -105,10 +105,12 @@ class TestQuestRecordingRectangular:
 
             # Schema v2 width = 3 lead (ts_hub_ms, role, device_id) + 60 sensor
             # + 175 label (25 joints * 7) + 12 IMU (imu_* band + lbl_imu_*
-            # labeler; with_imu defaults on). Rectangularity must still hold.
-            assert len(header) == 3 + 60 + 175 + 12, len(header)
+            # labeler; with_imu defaults on) + 2 forearm (forearm_roll_deg +
+            # palm_up, since the labeler is a Quest hand). Rectangularity holds.
+            assert len(header) == 3 + 60 + 175 + 12 + 2, len(header)
             assert header[:3] == ["ts_hub_ms", "role", "device_id"], header[:3]
             assert "imu_gx" in header and "lbl_imu_gx" in header
+            assert header[-2:] == ["forearm_roll_deg", "palm_up"]
             # Every data row carries the lowercase role token + the sensor id.
             assert data_rows[0][1] == "left"
             assert data_rows[0][2] == "fg-test"
@@ -533,3 +535,55 @@ class TestRecordingDefaults:
             s.stop_recording()
             meta = s.read_capture_meta("imuscale.csv")
             assert meta["auto"]["imu_scale"] == {"fg-imu": scale}
+
+    def test_forearm_columns_written_for_quest_capture(self):
+        # A quest_hand labeler -> forearm_roll_deg + palm_up columns derived from
+        # the matched hand each frame (board #0228, gravity-relative orientation).
+        def _hand():
+            j = [{"name": f"j{i}", "pos": [0.0, 0.0, 0.0], "rot": [0, 0, 0, 1]}
+                 for i in range(26)]
+            j[0]["pos"] = [0.0, 0.0, 0.0]     # wrist
+            j[10]["pos"] = [1.0, 0.0, 0.0]    # middle metacarpal = hand long axis
+            j[6]["pos"] = [0.8, 0.0, 0.3]     # index knuckle (thumb side)
+            j[21]["pos"] = [0.8, 0.0, -0.3]   # pinky knuckle
+            return j
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            s = _make_state(tmp)
+            s._handle_packet(_flexgrid_packet(device_id="fg-test"))
+            s.ingest_quest_packet({"device_id": "quest-right",
+                                   "handedness": "right", "joints": _hand()})
+            rec = s.start_recording(sensor_device_id="fg-test",
+                                    label_device_id="quest-right",
+                                    filename="fa.csv")
+            assert rec.with_forearm is True
+            t = time.time()
+            s.ingest_quest_packet({"device_id": "quest-right",
+                                   "handedness": "right", "joints": _hand()})
+            s._handle_packet(_flexgrid_packet(device_id="fg-test",
+                                              recv_time=t + 0.001))
+            s.stop_recording()
+            with open(tmp / "fa.csv") as f:
+                rows = list(csv.reader(f))
+            header, data = rows[0], rows[1:]
+            assert header[-2:] == ["forearm_roll_deg", "palm_up"]
+            assert data, "expected a paired row"
+            assert data[0][-2] != "" and data[0][-1] in ("0", "1")   # real values
+            assert s.read_capture_meta("fa.csv")["auto"]["forearm_columns"] is True
+
+    def test_no_forearm_columns_without_quest(self):
+        # A LASK5-only capture has no Quest labeler -> omit the forearm columns.
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            s = _make_state(tmp)
+            s._handle_packet(_flexgrid_packet(device_id="fg-test"))
+            s._handle_packet(_lask5_packet(device_id="lask5-test"))
+            rec = s.start_recording(sensor_device_id="fg-test",
+                                    filename="nofa.csv")
+            assert rec.with_forearm is False
+            s.stop_recording()
+            with open(tmp / "nofa.csv") as f:
+                header = next(csv.reader(f))
+            assert "forearm_roll_deg" not in header
+            assert s.read_capture_meta("nofa.csv")["auto"]["forearm_columns"] is False

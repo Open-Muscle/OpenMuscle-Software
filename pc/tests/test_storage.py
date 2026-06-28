@@ -212,3 +212,58 @@ class TestImuColumns:
             w.close()
             header = _read_csv_lines(path)[0]
         assert "imu_gx" not in header     # IMU columns are v2-only
+
+
+class TestForearmColumns:
+    """with_forearm appends forearm_roll_deg + palm_up (gravity-relative
+    orientation from the matched Quest hand) AFTER the labels + any IMU cols."""
+
+    def test_header_and_rows(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "fa.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=2,
+                              label_count=2, schema_version="v2", with_forearm=True)
+            w.write_row_v2(1000, "left", "fg-1", [10, 20], [0.0, 1.0],
+                           forearm=(42.5, True))
+            w.write_row_v2(1001, "left", "fg-1", [11, 21], [0.0, 1.0])  # no match
+            w.close()
+            lines = _read_csv_lines(path)
+        assert lines[0][-2:] == ["forearm_roll_deg", "palm_up"]
+        assert lines[1][-2:] == ["42.5", "1"]            # palm_up bool -> 1
+        assert lines[2][-2:] == ["", ""]                 # no forearm -> empty cells
+
+    def test_palm_down_is_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "fa0.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=1,
+                              label_count=1, schema_version="v2", with_forearm=True)
+            w.write_row_v2(1, "right", "fg", [5], [0.0], forearm=(-170.0, False))
+            w.close()
+            lines = _read_csv_lines(path)
+        assert lines[1][-2:] == ["-170.0", "0"]
+
+    def test_forearm_after_imu_when_both(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "both.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=1,
+                              label_count=1, schema_version="v2",
+                              with_imu=True, with_forearm=True)
+            w.write_row_v2(1, "left", "fg", [5], [0.0],
+                           sensor_imu={"gyro": [1, 2, 3], "accel": [4, 5, 6]},
+                           forearm=(10.0, True))
+            w.close()
+            header = _read_csv_lines(path)[0]
+        # forearm columns are the final two, after all imu columns.
+        assert header[-2:] == ["forearm_roll_deg", "palm_up"]
+        assert header.index("imu_gx") < header.index("forearm_roll_deg")
+
+    def test_default_off_no_forearm_columns(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "off.csv"
+            w = CaptureWriter(output_path=str(path), matrix_rows=1, matrix_cols=2,
+                              label_count=2, schema_version="v2")  # default off
+            w.write_row_v2(1, "left", "fg", [1, 2], [0.0, 0.0], forearm=(1.0, True))
+            w.close()
+            header = _read_csv_lines(path)[0]
+        assert "forearm_roll_deg" not in header
+        assert header[-1] == "label_1"
