@@ -52,6 +52,12 @@ Then in the desktop UI (`http://localhost:8000/`):
 If all of that works, a real-headset failure is in the headset/network
 layer, not the PC pipeline.
 
+The two-hand per-hand path (Scenario G) also has an automated end-to-end test
+that records a synthetic bilateral session, trains a model per hand via
+`--role`, and asserts each band predicts through its own model -- run
+`cd pc && python -m pytest tests/test_two_hand_pipeline.py` to confirm the
+record -> train -> infer wiring before you bring up hardware.
+
 ---
 
 ## 2-minute smoke test (no FlexGrid required)
@@ -175,6 +181,40 @@ This is the v1.12 feature.
 - An amber ghost hand overlays your real hand, anchored to your real wrist position + orientation, showing what the model predicts.
 - As the model improves with more training data, the ghost should track your real hand more closely.
 
+### Scenario G: Two-hand bilateral capture + per-hand models
+
+The two-band workflow: capture BOTH arms at once, train one model per hand, and see a ghost predict next to each real hand. This is the push-button path for the first real two-hand test. Each hand gets its OWN model (mirror musculature + different per-arm placement mean one model cannot predict both arms).
+
+**Extra bring-up:** power BOTH FlexGrid bands (one per forearm) and wait for each to join Wi-Fi. If a band does not appear in the Devices/Sources panel (DHCP moved its IP, or its beacon is suppressed because another hub holds it), use the Sources panel **Scan subnet** to find it.
+
+1. **Start the server.** `cd pc` then `openmuscle web`. It auto-loads the mkcert TLS pair from `~/.openmuscle/` (see [`vr-setup.md`](vr-setup.md)) and prints the headset URL.
+2. **Tag the bands.** In the PC desktop UI Sources panel, tag one band **left** and the other **right** (tag the LASK5/labeler too if you use one). The tag is which forearm each band is physically on.
+3. **Verify the tags BEFORE recording (the one step that matters most).** Squeeze each band in turn and watch the in-headset status panel + heatmaps: the band you squeeze should be the one whose heatmap lights up, on the side you expect. Both bands should show battery + a non-zero Hz + a green signal dot, and each shows an XYZ orientation gizmo that tilts as you rotate that forearm. If left/right are swapped here, re-tag now -- a swap trains the models backwards.
+4. **Open two-hand AR in the headset:** `/vr?mode=ar&arm=both`, or tap the **AR / Two-hand** preset button on the landing page (no typing in the headset). Hold up BOTH hands: you should see a heatmap per band side by side and joint spheres on both hands.
+5. **Record.** Tap **REC** (or "Record two-hand"), do the chore/gesture with both hands in view, tap **STOP**. One CSV is written with both bands' rows (role-tagged left/right); each band's rows carry ITS hand's labels + `forearm_roll_deg`/`palm_up`, and the per-device IMU `scale_dict` lands in the `.meta.json`.
+6. **Train one model per hand** from that single CSV:
+   ```bash
+   cd pc
+   openmuscle train data/raw/merged/<capture>.csv --role left  -o model_left.pkl
+   openmuscle train data/raw/merged/<capture>.csv --role right -o model_right.pkl
+   ```
+7. **Restart the server with both models:**
+   ```bash
+   openmuscle web --model-left model_left.pkl --model-right model_right.pkl
+   ```
+8. **Re-open** `/vr?mode=ar&arm=both`, confirm PREDICT is on, hold up both hands and curl fingers.
+
+**Expected:**
+- Step 3: squeezing the LEFT band lights the LEFT heatmap (and right the right).
+- Step 5: STOP shows the row count; the CSV has a `role` column with both `left` and `right` rows, plus `forearm_roll_deg`/`palm_up`, and `auto.imu_scale` in the `.meta.json`.
+- Step 6: each run prints `Role filter: <side> -> N rows, single-arm model` and saves its own `.pkl`.
+- Step 8: an amber ghost hand overlays EACH real hand, each driven by ITS hand's model (left ghost from model_left, right from model_right). Curling one hand moves only its own ghost.
+
+**Watch for:**
+- **Only one heatmap / one ghost:** only one band is tagged or streaming. Check both are tagged left/right in Sources and both show Hz > 0.
+- **No ghost at all:** the model grid must match the band (a 15x4 band = 60 features; a model trained on a different grid will not load against it). The inference status shows the feature-count mismatch.
+- **Ghosts swapped / mirrored:** left/right were swapped at capture (step 3), so each model trained on the wrong arm. Re-tag and re-capture.
+
 ---
 
 ## What "good" looks like (acceptance bar)
@@ -188,6 +228,7 @@ Before calling the app "ready to demo or hand to a tester," these should all be 
 - [ ] Scenario D collapses and restores the menu correctly
 - [ ] Scenario E remembers panel layout across a reload and RECENTER clears it
 - [ ] Scenario F shows the ghost hand tracking once a model is trained
+- [ ] Scenario G captures both arms, trains a model per hand, and shows a ghost per real hand driven by its own model
 
 ---
 
