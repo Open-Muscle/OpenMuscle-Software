@@ -21,6 +21,11 @@ import time
 import om_logger as log
 
 
+# Cooperative-yield interval for the discover listener loop. Keeps the
+# socket polling cheap while still responding to a probe within ~50 ms.
+_DISCOVER_POLL_MS = 50
+
+
 class Discovery:
     def __init__(self, settings, subscribers, sta,
                  device_type, services, caps,
@@ -65,6 +70,31 @@ class Discovery:
         except Exception as e:
             log.warn("SO_BROADCAST setsockopt failed: {}".format(e))
 
+        # boot_seq is a monotonic restart counter persisted in
+        # settings.json and incremented once per boot (in labeler.py
+        # main() before the Discovery instance is constructed). Hubs
+        # include it on every announce so a phone can detect a fresh
+        # boot vs same session and flush cached subscription state.
+        self.boot_seq = int(settings.get("boot_seq", 0))
+
+        # Listener socket for {verb:"discover"} probes on the announce
+        # port (PROTOCOL.md section 5.5). Lets a phone joining a new
+        # network pull an announce immediately instead of waiting one
+        # beacon interval.
+        self._discover_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            self._discover_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+        try:
+            self._discover_sock.bind(("", self.beacon_port))
+            self._discover_sock.setblocking(False)
+            self._discover_listen_ok = True
+        except OSError as e:
+            log.warn("Discover listener bind failed (errno={}); active discovery disabled".format(
+                getattr(e, "errno", None) or (e.args[0] if e.args else None)))
+            self._discover_listen_ok = False
+
         self._mdns_registered = False
 
     def _announce_payload(self):
@@ -81,6 +111,10 @@ class Discovery:
             "caps":      list(self.caps),
             "services":  dict(self.services),
             "ts":        time.ticks_ms(),
+            # boot_seq lets a phone detect that the device just rebooted
+            # (counter jumped) so it can drop cached subscription state
+            # and re-subscribe cleanly. Monotonic per-device.
+            "boot_seq":  self.boot_seq,
         }
         for k, v in self.extra_fields.items():
             pkt[k] = v
@@ -158,3 +192,57 @@ class Discovery:
                 log.warn("Beacon send failed: errno={} {}".format(errno, e))
         except Exception as e:
             log.warn("Beacon send unexpected error: {}".format(e))
+
+    async def discover_listener_loop(self):
+        """Listen on the announce port for active discovery probes from
+        phones/hubs and respond with an immediate announce.
+
+        Probe shape (PROTOCOL.md section 5.5):
+            {"v":"1.0", "type":"cmd", "data":{"verb":"discover"}}
+
+        On receipt we broadcast an announce (reaches every hub bound to
+        3140 on the link) AND unicast a copy to the prober's addr
+        (covers probers that bound to an ephemeral port). Mirror of the
+        V4 implementation so the wire behavior is identical across
+        device classes. Hardened with SystemExit/CancelledError re-raise
+        + BaseException catch matching the rest of the LASK5 loops.
+        """
+        if not self._discover_listen_ok:
+            log.warn("discover_listener_loop: socket not bound; exiting task")
+            return
+        while True:
+            try:
+                while True:
+                    try:
+                        data, addr = self._discover_sock.recvfrom(1024)
+                    except OSError:
+                        break
+                    self._handle_discover(data, addr)
+            except (asyncio.CancelledError, SystemExit):
+                raise
+            except BaseException as e:
+                log.warn("discover_listener iter failed: {} ({})".format(
+                    type(e).__name__, e))
+            await asyncio.sleep_ms(_DISCOVER_POLL_MS)
+
+    def _handle_discover(self, data, addr):
+        try:
+            msg = ujson.loads(data)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(msg, dict):
+            return
+        if msg.get("type") != "cmd":
+            return
+        verb = msg.get("data", {}).get("verb") if isinstance(msg.get("data"), dict) else None
+        if verb != "discover":
+            return
+        payload = ujson.dumps(self._announce_payload()).encode("utf-8")
+        try:
+            self._beacon_sock.sendto(payload, ("255.255.255.255", self.beacon_port))
+        except OSError:
+            pass
+        try:
+            self._discover_sock.sendto(payload, addr)
+        except OSError:
+            pass

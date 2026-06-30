@@ -71,6 +71,11 @@ class LASK5(BaseDevice):
         "announce_interval_s":  1,
         "max_subscribers":      4,
         "heartbeat_timeout_s":  5,
+        # Monotonic restart counter, incremented once per boot in
+        # LASK5.__init__() so the announce envelope carries it
+        # (PROTOCOL.md section 5.6) and phones can detect a fresh boot
+        # and flush cached subscription state.
+        "boot_seq":             0,
     }
 
     # Menu UX: a single "Start" button both OPENS the menu (from live) and
@@ -87,6 +92,17 @@ class LASK5(BaseDevice):
 
     def __init__(self):
         super().__init__()
+
+        # boot_seq: monotonic restart counter (PROTOCOL.md section 5.6).
+        # Bumped exactly once per boot, here, before Discovery is built
+        # in run(). Persisted via Settings.save() so it survives reboot.
+        # The save is the only flash write this path makes; cheap.
+        try:
+            self.settings["boot_seq"] = int(self.settings.get("boot_seq", 0)) + 1
+            self.settings.save()
+            log.info("boot_seq: {}".format(self.settings["boot_seq"]))
+        except Exception as e:
+            log.warn("boot_seq persist failed (non-fatal): {}".format(e))
 
         # Calibration: load from settings up front so the sensor returns
         # normalized 0..1 values from the very first packet. Source of truth
@@ -346,6 +362,11 @@ class LASK5(BaseDevice):
         asyncio.create_task(self._display_loop())
         asyncio.create_task(self._menu_loop())
         asyncio.create_task(self._discovery.announce_loop())
+        # Active discovery listener: phones broadcast {verb:"discover"}
+        # on the announce port and we reply with an immediate announce
+        # (PROTOCOL.md section 5.6). Catches the "phone just joined a new
+        # network and does not want to wait one beacon interval" case.
+        asyncio.create_task(self._discovery.discover_listener_loop())
         asyncio.create_task(self._subscriber_prune_loop())
         asyncio.create_task(self._reboot_watcher())
 
