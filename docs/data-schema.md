@@ -43,16 +43,17 @@ Everything the BAND itself produces, available at BOTH train and inference time.
 3. Band IMU fused orientation: derived from `imu_*` (Madgwick/Mahony). Compute the
    SAME way at train and inference. Optional feature (toggle), not on disk today.
 
-FLAG (forearm orientation, needs a decision): `forearm_roll_deg` / `palm_up` are
-CURRENTLY derived from the Quest hand (`forearm.py`), which is a LABEL source and
-is NOT available at inference. So as written they cannot be a feature. Options to
-ratify:
-- (a) Treat `forearm_roll_deg` / `palm_up` as a LABEL (predict forearm rotation
-  from muscle), OR
-- (b) Recompute forearm orientation from the BAND IMU fused orientation (#3) so it
-  is a true input feature available at inference.
-Do not train a model that takes a Quest-derived column as an INPUT and then expect
-that column to exist at inference.
+RATIFIED (Tory, 2026-06-30): forearm orientation is BOTH, from two DIFFERENT
+sources that are never conflated:
+- LABEL: the Quest-derived `forearm_roll_deg` / `palm_up` (`forearm.py`) is a
+  TARGET the model predicts (forearm rotation from muscle), part of "hand pose in
+  as much detail as possible". It lives with the other labels (see LABELS below).
+- FEATURE: a SEPARATE band-IMU fused orientation (#3 above) is an INPUT available
+  at inference. Proposed distinct column names `imu_roll_deg` / `imu_palm_up`
+  (band-sourced, gravity-relative) so they never collide with the Quest-derived
+  label columns.
+A Quest-derived column is only ever a label; the band-IMU orientation is only ever
+a feature. Never train a model that takes a Quest-derived column as an INPUT.
 
 Note: `lbl_imu_*` is the LABELER device's IMU (label-side context), not the band's.
 Keep it out of X unless deliberately chosen.
@@ -124,7 +125,9 @@ articulated hand.
 
 ## Open questions (ratify with Tory)
 
-1. `forearm_roll_deg` / `palm_up`: FEATURE (from band IMU) or LABEL (from Quest)?
+1. RESOLVED (Tory 2026-06-30): forearm orientation is BOTH -- Quest-derived
+   `forearm_roll_deg`/`palm_up` = a LABEL; a separate band-IMU `imu_roll_deg`/
+   `imu_palm_up` = a FEATURE. (band-IMU feature column names still to confirm.)
 2. LASK5 piston count + finger mapping + 0..1 -> degrees calibration range (phone).
 3. Column-name prefix: `flex_` / `ang_` vs an `lbl_` prefix for schema-v2 parity.
 4. Tier-1 aggregation: how VR per-joint angles reduce to one per-finger flex scalar
