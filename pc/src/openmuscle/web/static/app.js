@@ -200,6 +200,8 @@ function renderHandViewer(questDev, inference) {
 
 let _discoveryProbeWired = false;
 
+let _discoverySig = null;   // last-rendered Sources state; skip rebuilds when unchanged
+
 function renderDiscovery(discovery) {
     const list = document.getElementById('discovery-list');
     const count = document.getElementById('discovery-count');
@@ -209,6 +211,27 @@ function renderDiscovery(discovery) {
     const subs = discovery.filter(d => d.subscribed).length;
     if (count) count.textContent = discovery.length
         ? `${subs}/${discovery.length} subscribed` : '';
+
+    // Rebuild the list ONLY when its meaningful state changes, not every WS tick.
+    // Rebuilding ~5x/sec destroyed the role <select> mid-interaction, so it
+    // "glitched" and could not be used (Tory). `age` is excluded from the
+    // signature (it ticks every frame) and refreshed in place instead, so an open
+    // dropdown / focused control is never blown away.
+    const sig = JSON.stringify(discovery.map(d => [
+        d.device_id, d.role || '', !!d.subscribed, d.sub_error || '',
+        d.device_type, d.ip, d.cmd_port, d.source,
+    ]));
+    if (sig === _discoverySig) {
+        const byId = {};
+        discovery.forEach(d => { byId[d.device_id] = d; });
+        list.querySelectorAll('li.src').forEach(li => {
+            const d = byId[li.dataset.id];
+            const ageEl = li.querySelector('.age');
+            if (d && ageEl) ageEl.textContent = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
+        });
+        return;
+    }
+    _discoverySig = sig;
 
     if (!discovery.length) {
         list.innerHTML = '<li class="empty">No V4 sources discovered yet…</li>';
