@@ -58,6 +58,7 @@ from openmuscle.receiver.matcher import TemporalMatcher
 from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.discovery import DiscoveryManager
 from openmuscle.forearm import forearm_roll, joints_from_flat
+from openmuscle import hand_angles
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
@@ -227,6 +228,11 @@ class ActiveCapture:
     # derive (forearm_roll_deg, palm_up) from the matched hand's joints and write
     # the two columns. Omitted (flag False) when no Quest labeler is present.
     with_forearm: bool = False
+    # Canonical lbl_* label columns (DATA_SCHEMA.md #0302), derived at capture
+    # time. Additive/opt-in; the raw label_* + .jsonl are preserved, so the
+    # canonical encoding is never the only copy (re-derivable if calibration
+    # or piston order is revised later).
+    with_canonical: bool = False
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -666,18 +672,29 @@ class AppState:
         # tagged, else the band's own side (left band <-> left hand). None when
         # the joints are too few -> empty cells.
         forearm = None
-        if (rec.with_forearm and matched_label is not None
-                and matched_label.device_type == "quest_hand"):
+        canonical = None
+        if matched_label is not None and matched_label.device_type == "quest_hand":
             positions = joints_from_flat(matched_label.data.get("values") or [])
-            hand = matched_label.data.get("handedness")
-            if hand not in ("left", "right"):
-                side = rec.sensors.get(pkt.device_id)
-                hand = side if side in ("left", "right") else "right"
-            forearm = forearm_roll(positions, hand)
+            if rec.with_forearm:
+                hand = matched_label.data.get("handedness")
+                if hand not in ("left", "right"):
+                    side = rec.sensors.get(pkt.device_id)
+                    hand = side if side in ("left", "right") else "right"
+                forearm = forearm_roll(positions, hand)
+            if rec.with_canonical:
+                # Ratified canonical lbl_* (DATA_SCHEMA.md #0302) from the same
+                # Quest joints. Defensive: a derivation error must never break the
+                # recording -- the raw label_* row is still written.
+                try:
+                    canonical = hand_angles.canonical_labels(positions)
+                except Exception as e:
+                    self.log_buffer.warn(
+                        "recording", "canonical derive failed: {}".format(e))
         rec.writer.write_row_v2(ts_hub_ms, rec.sensors[pkt.device_id],
                                 pkt.device_id, flat, label_values,
                                 sensor_imu=pkt.data.get("imu"),
-                                label_imu=label_imu, forearm=forearm)
+                                label_imu=label_imu, forearm=forearm,
+                                canonical=canonical)
 
     def _write_labels_schema(self, rec: "ActiveCapture", pkt: OpenMusclePacket) -> None:
         """Emit the per-capture labels-schema sidecar.
@@ -1226,6 +1243,11 @@ class AppState:
         # Quest labeler (omit-when-no-quest, board #0228). A bilateral capture's
         # primary labeler is a Quest stream too, so this covers both paths.
         with_forearm = (label_device_type == "quest_hand")
+        # Canonical lbl_* columns: derived at capture time from the Quest joints
+        # (hand_angles). Quest-labeled captures only for now; the LASK5 -> lbl_flex_*
+        # path lands once the piston order/calibration are confirmed. Additive: the
+        # raw label_* stay, so the canonical block is re-derivable.
+        with_canonical = (label_device_type == "quest_hand")
 
         # Pick the match window: explicit arg wins; otherwise per-device-type
         # default (Quest needs a wider window than LASK5 because WebXR
@@ -1258,6 +1280,7 @@ class AppState:
             schema_version="v2",
             with_imu=with_imu,
             with_forearm=with_forearm,
+            with_canonical=with_canonical,
         )
 
         # Open sidecars block-buffered (4 KB). Earlier we used buffering=1
@@ -1302,6 +1325,7 @@ class AppState:
             side_matchers=side_matchers,
             label_id_side=label_id_side,
             with_forearm=with_forearm,
+            with_canonical=with_canonical,
         )
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(
@@ -1341,6 +1365,10 @@ class AppState:
             # When set, the CSV carries forearm_roll_deg + palm_up (gravity-
             # relative orientation from the matched Quest hand, board #0228).
             "forearm_columns": bool(with_forearm),
+            # When set, the CSV carries the ratified canonical lbl_flex_* (Tier-1,
+            # normalized [0,1]) + lbl_ang_* (Tier-2, degrees) label columns derived
+            # at capture time (DATA_SCHEMA.md #0302). Additive: raw label_* kept.
+            "canonical_columns": bool(with_canonical),
             # {device_id: {chip, gyro_dps_per_lsb, accel_g_per_lsb}} for bands +
             # labeler that advertised it; the trainer multiplies raw*scale.
             "imu_scale": imu_scale,

@@ -106,11 +106,22 @@ class TestQuestRecordingRectangular:
             # Schema v2 width = 3 lead (ts_hub_ms, role, device_id) + 60 sensor
             # + 175 label (25 joints * 7) + 12 IMU (imu_* band + lbl_imu_*
             # labeler; with_imu defaults on) + 2 forearm (forearm_roll_deg +
-            # palm_up, since the labeler is a Quest hand). Rectangularity holds.
-            assert len(header) == 3 + 60 + 175 + 12 + 2, len(header)
+            # palm_up) + 15 canonical lbl_* (DATA_SCHEMA #0302, Quest capture).
+            # Rectangularity holds.
+            assert len(header) == 3 + 60 + 175 + 12 + 2 + 15, len(header)
             assert header[:3] == ["ts_hub_ms", "role", "device_id"], header[:3]
             assert "imu_gx" in header and "lbl_imu_gx" in header
-            assert header[-2:] == ["forearm_roll_deg", "palm_up"]
+            assert "forearm_roll_deg" in header and "palm_up" in header
+            # The 15 canonical lbl_* columns are appended last (additive).
+            assert header[-15:] == [
+                "lbl_flex_thumb", "lbl_flex_index", "lbl_flex_middle",
+                "lbl_flex_ring", "lbl_flex_pinky",
+                "lbl_ang_thumb_mcp", "lbl_ang_thumb_ip",
+                "lbl_ang_index_mcp", "lbl_ang_index_pip",
+                "lbl_ang_middle_mcp", "lbl_ang_middle_pip",
+                "lbl_ang_ring_mcp", "lbl_ang_ring_pip",
+                "lbl_ang_pinky_mcp", "lbl_ang_pinky_pip",
+            ]
             # Every data row carries the lowercase role token + the sensor id.
             assert data_rows[0][1] == "left"
             assert data_rows[0][2] == "fg-test"
@@ -567,10 +578,16 @@ class TestRecordingDefaults:
             with open(tmp / "fa.csv") as f:
                 rows = list(csv.reader(f))
             header, data = rows[0], rows[1:]
-            assert header[-2:] == ["forearm_roll_deg", "palm_up"]
+            assert "forearm_roll_deg" in header and "palm_up" in header
             assert data, "expected a paired row"
-            assert data[0][-2] != "" and data[0][-1] in ("0", "1")   # real values
+            fi, pi = header.index("forearm_roll_deg"), header.index("palm_up")
+            assert data[0][fi] != "" and data[0][pi] in ("0", "1")   # real forearm values
             assert s.read_capture_meta("fa.csv")["auto"]["forearm_columns"] is True
+            # The canonical lbl_* columns follow forearm and are POPULATED at
+            # capture time (the keeper-schema wiring, DATA_SCHEMA #0302).
+            assert header[-1] == "lbl_ang_pinky_pip"
+            assert data[0][header.index("lbl_flex_index")] != ""
+            assert s.read_capture_meta("fa.csv")["auto"]["canonical_columns"] is True
 
     def test_no_forearm_columns_without_quest(self):
         # A LASK5-only capture has no Quest labeler -> omit the forearm columns.
