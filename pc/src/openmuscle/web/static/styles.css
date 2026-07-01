@@ -185,8 +185,13 @@ main.studio {
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 10px 12px;
-    max-height: 320px;
+    /* Grow to fit the Devices + Sources + Orientation stack instead of a cramped
+       fixed box. A generous cap keeps a huge fleet scrollable, but at a normal
+       16:9 window a couple of bands show cleanly with no scrollbars; overflow-x
+       hidden kills the horizontal scrollbar (board #0304). */
+    max-height: 75vh;
     overflow-y: auto;
+    overflow-x: hidden;
 }
 .devices-rail .rail-head {
     margin: 0 0 8px;
@@ -1383,8 +1388,13 @@ footer {
 }
 .src.subscribed .src-role-sel { border-color: rgba(52, 211, 153, 0.35); }
 
-/* IMU readout in the device status line (fast data.imu gyro/accel counts) */
-.device-status .imu { color: #60a5fa; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* IMU readout in the device status line (fast data.imu gyro/accel counts).
+   Gets its own full-width line under the battery/uptime/rssi row and wraps, so
+   the gyro+accel counts never bleed past the narrow Devices rail (board #0304). */
+.device-status .imu {
+    color: #60a5fa; font-variant-numeric: tabular-nums;
+    flex-basis: 100%; white-space: normal; overflow-wrap: anywhere;
+}
 
 /* ---- IMU band-orientation widget (Sources rail) ---- */
 .rail-head-imu { margin-top: 16px; }
@@ -1472,3 +1482,29 @@ body.debug .debug-only { display: block; }
 .cap-verdict.cap-warn { background: rgba(255, 164, 44, 0.18); color: var(--orange); }
 .cap-verdict.cap-bad  { background: rgba(255, 90, 107, 0.20); color: var(--red); }
 .cap-warn-line { color: var(--orange); font-size: 12px; margin-top: 2px; }
+
+/* Multi-band LIVE heatmaps: one pressure grid per subscribed flexgrid, side by
+   side, so both forearms show at once in a two-hand session (board #0304). */
+.heatmap-grids {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+}
+.heatmap-cell { min-width: 0; }
+.heatmap-cell-label {
+    font-size: 11px; color: var(--fg-dim); margin-bottom: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.heatmap-cell canvas {
+    width: 100%; display: block; background: var(--bg);
+    border-radius: 4px; image-rendering: pixelated;
+}
+.hm-role {
+    font-size: 9px; padding: 0 4px; border-radius: 3px;
+    border: 1px solid var(--border); text-transform: uppercase;
+}
+.hm-left { color: var(--accent); }
+.hm-right { color: var(--accent-2); }
+.hm-labeler { color: var(--green); }
+.heatmap-empty { color: var(--fg-dim); font-size: 13px; padding: 24px; text-align: center; }

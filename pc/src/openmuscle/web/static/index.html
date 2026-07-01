@@ -97,12 +97,13 @@
                     </div>
                 </aside>
 
-                <!-- Heatmap (center, the hero) -->
+                <!-- Heatmap (center, the hero). One pressure grid PER subscribed
+                     flexgrid so both forearms show at once in a two-hand session
+                     (board #0304); app.js drawHeatmaps() fills this. -->
                 <div class="heatmap-hero">
-                    <div class="heatmap-header">
-                        <span id="heatmap-meta" class="meta-line"></span>
+                    <div id="heatmap-grids" class="heatmap-grids">
+                        <div class="heatmap-empty">Waiting for a flexgrid…</div>
                     </div>
-                    <canvas id="heatmap" width="900" height="240"></canvas>
                 </div>
 
                 <!-- GT-vs-Predicted comparator (right). Keeps the two existing

@@ -3,9 +3,6 @@
 
 const wsStatus    = document.getElementById('ws-status');
 const deviceList  = document.getElementById('device-list');
-const canvas      = document.getElementById('heatmap');
-const ctx         = canvas.getContext('2d');
-const heatmapMeta = document.getElementById('heatmap-meta');
 const recordBtn   = document.getElementById('record-btn');
 const recordMultibandBtn = document.getElementById('record-multiband-btn');
 const recordBilateralBtn = document.getElementById('record-bilateral-btn');
@@ -105,10 +102,9 @@ function handleTick(msg) {
     renderDiscovery(msg.discovery || []);
     renderRecordPickers();
     renderRecording();
-    const dev = selectedDevice();
-    if (dev) {
-        drawHeatmap(dev);
-    }
+    // Draw a pressure grid for EVERY streaming flexgrid (both hands at once in a
+    // two-hand session), not just the selected one (board #0304).
+    drawHeatmaps();
     // LASK5: render whichever LASK device is currently streaming.
     // (We don't require it to be the "selected" device — operators usually
     // want to see the FlexGrid heatmap and the LASK pistons at the same time.)
@@ -495,56 +491,89 @@ const HEATMAP_NOISE_GATE = 8;       // below this, treat as "untouched"
 const HEATMAP_VMAX_DEFAULT = 2000;  // ADC value that maps to peak color
 let heatmapVmax = HEATMAP_VMAX_DEFAULT;
 
-function drawHeatmap(dev) {
+// Render one pressure grid per streaming flexgrid, side by side, in a STABLE
+// order (left, then right, then others) so the two hands never swap positions.
+function drawHeatmaps() {
+    const grids = document.getElementById('heatmap-grids');
+    if (!grids) return;
+    const roleOrder = r => (r === 'left' ? 0 : r === 'right' ? 1 : 2);
+    const flex = lastDevices
+        .filter(d => d.device_type === 'flexgrid' && Array.isArray(d.matrix) && d.matrix.length)
+        .sort((a, b) => roleOrder(a.role) - roleOrder(b.role)
+                        || String(a.device_id).localeCompare(String(b.device_id)));
+    if (!flex.length) {
+        if (grids._ids !== '') { grids.innerHTML = '<div class="heatmap-empty">Waiting for a flexgrid…</div>'; grids._ids = ''; }
+        return;
+    }
+    // Shared vmax across ALL bands so the two hands compare on one scale (sticky
+    // high-water-mark + 1.2x headroom; never auto-shrinks).
+    let observedMax = 0;
+    for (const d of flex) for (const col of d.matrix) for (const v of col) if (v > observedMax) observedMax = v;
+    if (observedMax > heatmapVmax) heatmapVmax = Math.min(4096, Math.floor(observedMax * 1.2));
+    // Rebuild the canvas scaffold only when the set of bands changes (avoids
+    // canvas thrash + flicker every tick).
+    const ids = flex.map(d => d.device_id).join(',');
+    if (grids._ids !== ids) {
+        grids.innerHTML = flex.map(() =>
+            '<div class="heatmap-cell"><div class="heatmap-cell-label"></div><canvas></canvas></div>').join('');
+        grids._ids = ids;
+    }
+    flex.forEach((d, i) => {
+        const cell = grids.children[i];
+        if (cell) drawHeatmapInto(d, cell.querySelector('canvas'), cell.querySelector('.heatmap-cell-label'));
+    });
+}
+
+function drawHeatmapInto(dev, canvasEl, labelEl) {
+    if (!canvasEl) return;
+    const cx = canvasEl.getContext('2d');
     const matrix = dev.matrix;  // [cols][rows]
     if (!matrix || !matrix.length) return;
     const cols = matrix.length;
     const rows = matrix[0].length;
 
-    // Auto-adjust vmax upward if we see a value much higher than current scale;
-    // never auto-shrink (sticky high-water-mark plus 1.2x headroom).
     let observedMax = 0;
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < rows; r++) {
             if (matrix[c][r] > observedMax) observedMax = matrix[c][r];
         }
     }
-    if (observedMax * 1.0 > heatmapVmax) {
-        heatmapVmax = Math.min(4096, Math.floor(observedMax * 1.2));
+    if (labelEl) {
+        const roleTag = dev.role
+            ? `<span class="hm-role hm-${escapeHtml(dev.role)}">${escapeHtml(dev.role)}</span> ` : '';
+        labelEl.innerHTML = `${roleTag}<b>${escapeHtml(dev.device_id)}</b> · ${rows}×${cols}`
+            + ` · ${dev.hz.toFixed(1)} Hz · max ${observedMax}`;
     }
 
-    heatmapMeta.textContent =
-        `${dev.device_id} · ${rows}×${cols} · ${dev.hz.toFixed(1)} Hz · ${dev.packets} pkts · max=${observedMax} · vmax=${heatmapVmax}`;
-
     // Resize canvas to fit the matrix aspect ratio nicely
-    const w = canvas.clientWidth;
-    const h = Math.max(160, Math.floor(w * (rows / cols) * 1.3));
-    if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
+    const w = canvasEl.clientWidth || 400;
+    const h = Math.max(140, Math.floor(w * (rows / cols) * 1.3));
+    if (canvasEl.width !== w || canvasEl.height !== h) {
+        canvasEl.width = w;
+        canvasEl.height = h;
     }
 
     const cellW = w / cols;
     const cellH = h / rows;
 
     // Solid background — cells fully overdraw it.
-    ctx.fillStyle = '#1a1f2b';
-    ctx.fillRect(0, 0, w, h);
+    cx.fillStyle = '#1a1f2b';
+    cx.fillRect(0, 0, w, h);
 
     for (let c = 0; c < cols; c++) {
         for (let r = 0; r < rows; r++) {
             const v = matrix[c][r];
-            ctx.fillStyle = pressureColor(v, heatmapVmax);
-            ctx.fillRect(c * cellW, r * cellH, cellW - 1, cellH - 1);
+            cx.fillStyle = pressureColor(v, heatmapVmax);
+            cx.fillRect(c * cellW, r * cellH, cellW - 1, cellH - 1);
             // Show numeric value once it's above the noise gate — useful for
             // seeing exactly how much "bleed" a neighbor cell has.
             if (v >= 50) {
                 const t = v / heatmapVmax;
-                ctx.fillStyle = t > 0.55 ? '#0b0d12' : '#e7e9ee';
-                ctx.font = `${Math.floor(Math.min(cellW, cellH) * 0.30)}px ui-monospace, monospace`;
-                ctx.textBaseline = 'middle';
-                ctx.textAlign = 'center';
-                ctx.fillText(v, c * cellW + cellW / 2, r * cellH + cellH / 2);
+                cx.fillStyle = t > 0.55 ? '#0b0d12' : '#e7e9ee';
+                cx.font = `${Math.floor(Math.min(cellW, cellH) * 0.30)}px ui-monospace, monospace`;
+                cx.textBaseline = 'middle';
+                cx.textAlign = 'center';
+                cx.fillText(v, c * cellW + cellW / 2, r * cellH + cellH / 2);
             }
         }
     }
