@@ -303,6 +303,9 @@ def train(data_paths, model_type, output, test_split, trees, role):
         train_model(data_path=tmp_path, model_type=model_type,
                     output=output, test_split=test_split, n_estimators=trees,
                     role=role)
+    except ValueError as e:
+        # Mismatched-schema capture selection: fail loud + clean, not a traceback.
+        raise click.ClickException(str(e))
     finally:
         try:
             os.unlink(tmp_path)
@@ -370,9 +373,12 @@ def convert(input_path, output):
 @click.argument("csv_files", nargs=-1, required=True)
 @click.option("--output", "-o", required=True, help="Output combined CSV path")
 def combine(csv_files, output):
-    """Combine multiple CSV files into one training set."""
+    """Combine multiple CSV files into one training set (must share a schema)."""
     from openmuscle.data.converter import combine_csvs
-    total = combine_csvs(list(csv_files), output)
+    try:
+        total = combine_csvs(list(csv_files), output)
+    except ValueError as e:
+        raise click.ClickException(str(e))
     print(f"Combined {len(csv_files)} files -> {total} total rows in {output}")
 
 

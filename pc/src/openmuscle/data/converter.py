@@ -97,30 +97,83 @@ def convert_legacy_capture(input_path: str, output_path: str) -> int:
     return rows_written
 
 
+def _summarize_header(header: list) -> dict:
+    """Compact column-shape summary for a mismatch error message."""
+    import re
+    return {
+        "cols": len(header),
+        "sensor": sum(1 for c in header if re.match(r"^R\d+C\d+$", c)),
+        "label": sum(1 for c in header if c.startswith("label_")),
+        "imu": sum(1 for c in header if c.startswith("imu_") or c.startswith("lbl_imu_")),
+        "forearm": sum(1 for c in header if c in ("forearm_roll_deg", "palm_up")),
+    }
+
+
 def combine_csvs(csv_paths: list[str], output_path: str) -> int:
-    """Concatenate multiple CSVs (same schema) into one file.
+    """Concatenate multiple SCHEMA-COMPATIBLE CSVs into one file.
+
+    Every input MUST share the exact same header (same sensor R{r}C{c}, label_*,
+    and optional imu_/forearm_ columns, in the same order). This is the
+    anti-corruption guard from docs/data-schema.md: before, this helper wrote the
+    first file's header and blind-appended the other bodies, so mixing captures of
+    different width (a 4-label LASK5 capture with a 175-label Quest capture, or a
+    12-cell V1 band with a 60-cell V4 band) SILENTLY produced a ragged, corrupt
+    CSV. It now validates the headers up front and refuses instead.
+
+    role/device_id are ROW values in schema-v2, so left+right (or multi-band)
+    captures of the same schema concat cleanly -- that is the separable-per-hand
+    path. Pooling DIFFERENT label sources into one model is the canonical-label
+    merge (a separate, schema-aware path, docs/data-schema.md), not this helper.
 
     Args:
-        csv_paths: list of CSV file paths to combine
-        output_path: path for the combined output CSV
+        csv_paths: CSV file paths to combine (all the same schema).
+        output_path: path for the combined output CSV.
 
     Returns:
-        Total number of data rows written
+        Total number of data rows written.
+
+    Raises:
+        ValueError: if csv_paths is empty, any file is empty/headerless, or any
+            file's header differs from the first (the message names the file and
+            shows each header's column-shape so the mismatch is obvious).
     """
+    if not csv_paths:
+        raise ValueError("combine_csvs: no input files given")
+
+    # Validate schema compatibility BEFORE writing anything, so a mismatch never
+    # leaves a half-written (corrupt) output file behind.
+    ref_header = None
+    ref_path = None
+    for csv_path in csv_paths:
+        with open(csv_path, "r") as f_in:
+            reader = csv.reader(f_in)
+            try:
+                header = next(reader)
+            except StopIteration:
+                raise ValueError(
+                    f"combine_csvs: {Path(csv_path).name} is empty (no header row)")
+        if ref_header is None:
+            ref_header, ref_path = header, csv_path
+        elif header != ref_header:
+            raise ValueError(
+                "combine_csvs: refusing to merge captures with different schemas "
+                "(this would corrupt the CSV).\n"
+                f"  {Path(ref_path).name}: {_summarize_header(ref_header)}\n"
+                f"  {Path(csv_path).name}: {_summarize_header(header)}\n"
+                "All captures must share the same columns to concatenate. To pool "
+                "different label sources (e.g. a VR session + a LASK5 session) into "
+                "one model, use the canonical-label merge (docs/data-schema.md), "
+                "not combine_csvs.")
+
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     total = 0
-    header_written = False
-
     with open(output_path, "w", newline="") as f_out:
         writer = csv.writer(f_out)
-
+        writer.writerow(ref_header)
         for csv_path in csv_paths:
             with open(csv_path, "r") as f_in:
                 reader = csv.reader(f_in)
-                header = next(reader)
-                if not header_written:
-                    writer.writerow(header)
-                    header_written = True
+                next(reader)   # skip the (already-validated) header
                 for row in reader:
                     writer.writerow(row)
                     total += 1

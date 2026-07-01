@@ -155,7 +155,7 @@ openmuscle train data/raw/merged/session_a.csv \
 
 Variadic positional args: the CLI concats the CSVs to a temp file (same `combine_csvs` helper the web uses), trains, and removes the temp. Single-file invocation still works (`openmuscle train one.csv`).
 
-**Schema requirement:** all selected captures must share the same column layout (same matrix shape + same label count). `combine_csvs` writes the first file's header verbatim; subsequent files contribute body rows only. If you mix V1 (12-sensor) and V3 (60-sensor) captures, you'll get garbage — keep them in separate model lineages.
+**Schema requirement:** all selected captures must share the same column layout (same matrix shape + same label count + same optional imu/forearm columns). `combine_csvs` now validates every file's header up front and **refuses to merge mismatched schemas** (raises with a column-shape diff) instead of silently producing a ragged CSV. Same-schema captures (including left+right, which differ only by row values) concat cleanly. Mixing V1 (12-sensor) and V4 (60-sensor) captures, or a LASK5 (4-label) with a Quest (175-label) capture, is rejected: keep them in separate model lineages, or pool different label sources via the canonical-label merge (see `docs/data-schema.md`), not `combine_csvs`.
 
 ## ML inference (`--model` / `--hand`)
 

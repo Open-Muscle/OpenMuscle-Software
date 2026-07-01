@@ -2063,7 +2063,13 @@ class AppState:
             fd, combined_path = tempfile.mkstemp(prefix="om_combined_", suffix=".csv")
             os.close(fd)
             cleanup = combined_path
-            combine_csvs(paths, combined_path)
+            try:
+                combine_csvs(paths, combined_path)
+            except ValueError as e:
+                # Mismatched-schema capture selection is operator error, not a
+                # server fault -- surface it as a clean 400 (RuntimeError maps to
+                # 400 in /api/train) instead of a 500.
+                raise RuntimeError(str(e))
 
         try:
             model, metrics = train_model(
