@@ -1359,6 +1359,9 @@ class AppState:
             sid = self.active_session.get("id")
             auto["session_id"] = sid
             auto["session_name"] = self.active_session.get("name")
+            auto["session_wearer"] = self.active_session.get("wearer")
+            auto["session_take"] = self.active_session.get("take")
+            auto["session_labeler_source"] = self.active_session.get("labeler_source")
             if self.active_session.get("arm"):
                 seed_user["arm"] = self.active_session["arm"]
             if self.active_session.get("subject"):
@@ -1655,14 +1658,50 @@ class AppState:
         with open(p, "w") as f:
             json.dump(session, f, indent=2)
 
+    def _session_context_snapshot(self) -> dict:
+        """Snapshot the connected-device roster + environment at session start so
+        session.json is SELF-DESCRIBING (board #0284): what hardware produced this
+        dataset. Per device: id, type, hub-assigned role (L/R/labeler), matrix
+        shape, live Hz, firmware version + per-chip IMU scale (both advertised on
+        announce/get_info), and battery at start. Everything here is read from the
+        live device table + discovery, so it needs no extra device round-trip."""
+        disc_by_id = {e["device_id"]: e
+                      for e in (self.discovery.snapshot() if self.discovery else [])}
+        devices = []
+        for d in self.devices.values():
+            disc = disc_by_id.get(d.device_id) or {}
+            st = d.status or {}
+            devices.append({
+                "device_id": d.device_id,
+                "device_type": d.device_type,
+                "role": disc.get("role", "") or self._role_by_device.get(d.device_id, ""),
+                "shape": [d.rows, d.cols],
+                "hz": round(d.hz, 1),
+                "fw": disc.get("fw", ""),
+                "imu_scale": disc.get("imu"),
+                "vbat_at_start": st.get("vbat"),
+            })
+        return {
+            "protocol": "v2",
+            "devices": devices,
+            "sample_rates_hz": {d["device_id"]: d["hz"] for d in devices},
+        }
+
     def start_session(self, name: str = "", subject: str = "", arm: Optional[str] = None,
                       gestures: Optional[list] = None, notes: str = "",
-                      tags: Optional[list] = None) -> dict:
+                      tags: Optional[list] = None, wearer: str = "",
+                      take: Optional[int] = None, labeler_source: str = "",
+                      video_ref: str = "") -> dict:
         """Start a new session and mark it active.
 
         Refuses if another session is already active -- the operator should
         explicitly end the prior one. (We could allow stacked sessions but
         it's the kind of subtle UX bug that produces orphaned metadata.)
+
+        Beyond the human fields, the session snapshots a self-describing device
+        context (roster + fw + roles + IMU scale) and a sync marker (started_at_ms
+        on the same ts_hub_ms clock the CSV uses), so a screen/headset video pairs
+        to the exact rows and future-you knows what produced the data (#0284).
         """
         if self.active_session is not None:
             raise RuntimeError(
@@ -1670,24 +1709,38 @@ class AppState:
                     self.active_session.get("id")))
         sid = self._new_session_id()
         now = time.time()
+        labeler_source = (labeler_source or "").strip().lower()
+        if labeler_source not in ("lask5", "vr", "both", "gamepad", ""):
+            labeler_source = ""
         session = {
             "id": sid,
             "name": name or sid,
             "subject": subject or "",
+            "wearer": wearer or subject or "",
+            "take": take if isinstance(take, int) else None,
             "arm": arm if arm in ("left", "right") else None,
+            "labeler_source": labeler_source,
+            "video_ref": video_ref or "",
+            # Sync marker on the hub clock. video_sync_ms is filled when the
+            # operator ties a video frame to the session (set via update_session
+            # or the first recording's started_at_ms); the CSV ts_hub_ms shares it.
+            "video_sync_ms": None,
             "gestures": list(gestures or []),
             "tags": list(tags or []),
             "notes": notes or "",
             "started_at": now,
+            "started_at_ms": int(now * 1000),
             "ended_at": None,
+            "context": self._session_context_snapshot(),
             "captures": [],
             "capture_count": 0,
         }
         self._write_session(session)
         self.active_session = session
         self.log_buffer.info("session",
-            "started: {} (subject={}, arm={})".format(
-                sid, subject or "-", arm or "-"))
+            "started: {} (wearer={}, arm={}, labeler={}, {} device(s))".format(
+                sid, session["wearer"] or "-", arm or "-",
+                labeler_source or "-", len(session["context"]["devices"])))
         return session
 
     def end_session(self) -> Optional[dict]:

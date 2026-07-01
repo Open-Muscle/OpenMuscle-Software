@@ -641,6 +641,11 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         gestures: Optional[list] = None  # planned gesture set, free-form strings
         notes: Optional[str] = ""
         tags: Optional[list] = None
+        # Labeled-recording context (board #0284): a self-describing session.
+        wearer: Optional[str] = ""              # who is wearing the band(s)
+        take: Optional[int] = None              # take number (frontend prefills last+1)
+        labeler_source: Optional[str] = ""      # lask5 | vr | both | gamepad | ""
+        video_ref: Optional[str] = ""           # headset/screen video filename or note
 
     @app.get("/api/sessions")
     async def list_sessions_endpoint():
@@ -660,6 +665,10 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 gestures=body.gestures,
                 notes=body.notes or "",
                 tags=body.tags,
+                wearer=body.wearer or "",
+                take=body.take,
+                labeler_source=body.labeler_source or "",
+                video_ref=body.video_ref or "",
             )
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))
