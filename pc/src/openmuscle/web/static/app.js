@@ -579,6 +579,27 @@ function drawHeatmapInto(dev, canvasEl, labelEl) {
     }
 }
 
+// Band heatmap layout: side by side (default) vs stacked one above the other.
+// Persisted so it survives reloads. The .stacked class lives on #heatmap-grids
+// itself, so drawHeatmaps() rebuilding the inner cells never clears it.
+const HEATMAP_LAYOUT_KEY = 'om.heatmap_layout';   // '' = side by side | 'stacked'
+function applyHeatmapLayout() {
+    const grids = document.getElementById('heatmap-grids');
+    const btn = document.getElementById('heatmap-layout-toggle');
+    const stacked = localStorage.getItem(HEATMAP_LAYOUT_KEY) === 'stacked';
+    if (grids) grids.classList.toggle('stacked', stacked);
+    if (btn) btn.textContent = stacked ? '▥ Side by side' : '▤ Stack';
+}
+{
+    const btn = document.getElementById('heatmap-layout-toggle');
+    if (btn) btn.onclick = () => {
+        const stacked = localStorage.getItem(HEATMAP_LAYOUT_KEY) === 'stacked';
+        localStorage.setItem(HEATMAP_LAYOUT_KEY, stacked ? '' : 'stacked');
+        applyHeatmapLayout();
+    };
+    applyHeatmapLayout();
+}
+
 // "Inferno"-style ramp with a clearly visible low end. Anything above the
 // noise gate gets a perceptible color; only the truly idle cells stay near
 // the background.

@@ -1508,3 +1508,7 @@ body.debug .debug-only { display: block; }
 .hm-right { color: var(--accent-2); }
 .hm-labeler { color: var(--green); }
 .heatmap-empty { color: var(--fg-dim); font-size: 13px; padding: 24px; text-align: center; }
+
+/* Band heatmap layout toggle (side by side default; stacked = one above other) */
+.heatmap-hero-head { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.heatmap-grids.stacked { grid-template-columns: 1fr; }
