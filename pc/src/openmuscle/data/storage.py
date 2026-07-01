@@ -37,10 +37,26 @@ class CaptureWriter:
     # inference is unaffected. Omitted when the capture has no Quest labeler.
     _FOREARM_COLS = ["forearm_roll_deg", "palm_up"]
 
+    # Ratified canonical LABEL columns (DATA_SCHEMA.md #0302): the schema-aware
+    # training target every source maps onto. Tier-1 shared core = per-finger
+    # flexion NORMALIZED [0,1]; Tier-2 Quest-only = per-joint flexion in degrees
+    # (empty/NaN-masked when a source cannot fill them). Opt-in + appended AFTER
+    # the raw label_* / imu / forearm columns, so the schema-v2 byte golden and
+    # name-addressable readers stay backward compatible; the raw label_* stay in
+    # the CSV + .jsonl for re-derivation.
+    _CANONICAL_LABEL_COLS = [
+        "lbl_flex_thumb", "lbl_flex_index", "lbl_flex_middle", "lbl_flex_ring", "lbl_flex_pinky",
+        "lbl_ang_thumb_mcp", "lbl_ang_thumb_ip",
+        "lbl_ang_index_mcp", "lbl_ang_index_pip",
+        "lbl_ang_middle_mcp", "lbl_ang_middle_pip",
+        "lbl_ang_ring_mcp", "lbl_ang_ring_pip",
+        "lbl_ang_pinky_mcp", "lbl_ang_pinky_pip",
+    ]
+
     def __init__(self, output_path: str = None, matrix_rows: int = 4,
                  matrix_cols: int = 16, label_count: Optional[int] = 4,
                  schema_version: str = "v1", with_imu: bool = False,
-                 with_forearm: bool = False):
+                 with_forearm: bool = False, with_canonical: bool = False):
         if output_path is None:
             os.makedirs("data/raw/merged", exist_ok=True)
             output_path = f"data/raw/merged/capture_{int(time.time())}.csv"
@@ -62,6 +78,9 @@ class CaptureWriter:
         # Append forearm-orientation columns (from the matched Quest hand). v2
         # only; on when the capture has a Quest labeler (omit-when-no-quest).
         self._with_forearm = bool(with_forearm) and schema_version == "v2"
+        # Append the ratified canonical lbl_* label columns (derived at capture
+        # time). v2 only; opt-in so the byte golden (minimal v2) stays the default.
+        self._with_canonical = bool(with_canonical) and schema_version == "v2"
 
         self._file = open(self.path, "w", newline="")
         self._writer = csv.writer(self._file)
@@ -79,8 +98,9 @@ class CaptureWriter:
         imu_cols = (self._IMU_SENSOR_COLS + self._IMU_LABEL_COLS
                     if self._with_imu else [])
         forearm_cols = self._FOREARM_COLS if self._with_forearm else []
+        canonical_cols = self._CANONICAL_LABEL_COLS if self._with_canonical else []
         self._writer.writerow(
-            lead + sensor_cols + label_cols + imu_cols + forearm_cols)
+            lead + sensor_cols + label_cols + imu_cols + forearm_cols + canonical_cols)
         self._label_count = label_count
         self._header_written = True
 
@@ -106,6 +126,15 @@ class CaptureWriter:
         roll, palm_up = forearm[0], forearm[1]
         return [roll, int(bool(palm_up))]
 
+    def _canonical_cells(self, canonical) -> list:
+        """Flatten a canonical-labels dict to the fixed _CANONICAL_LABEL_COLS
+        order. A missing / None DOF -> empty cell (pandas reads it as NaN = the
+        masked target), distinguishable from a real 0.0 (a fully-extended finger).
+        Present values (incl. 0.0) are written as-is."""
+        canonical = canonical or {}
+        return ["" if canonical.get(c) is None else canonical.get(c)
+                for c in self._CANONICAL_LABEL_COLS]
+
     def write_row(self, timestamp: float, sensor_values: list, label_values: list):
         if not self._header_written:
             count = (self._label_count if self._label_count is not None
@@ -116,7 +145,7 @@ class CaptureWriter:
 
     def write_row_v2(self, ts_hub_ms: int, role: str, device_id: str,
                      sensor_values: list, label_values: list,
-                     sensor_imu=None, label_imu=None, forearm=None):
+                     sensor_imu=None, label_imu=None, forearm=None, canonical=None):
         """Write one schema-v2 row: ts_hub_ms, role, device_id, then row-major
         sensor features and labels. `sensor_values` MUST already be flattened
         row-major (R{r}C{c}, r outer) to match the header + the byte golden.
@@ -141,6 +170,8 @@ class CaptureWriter:
             row += self._imu_cells(sensor_imu) + self._imu_cells(label_imu)
         if self._with_forearm:
             row += self._forearm_cells(forearm)
+        if self._with_canonical:
+            row += self._canonical_cells(canonical)
         self._writer.writerow(row)
         self._count += 1
 

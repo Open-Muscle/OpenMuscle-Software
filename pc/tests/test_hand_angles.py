@@ -46,16 +46,17 @@ def test_straight_hand_is_all_zero():
     ang = ha.per_joint_angles(straight_hand())
     assert ang is not None
     assert set(ang.keys()) == {
-        "ang_index_mcp", "ang_index_pip", "ang_middle_mcp", "ang_middle_pip",
-        "ang_ring_mcp", "ang_ring_pip", "ang_pinky_mcp", "ang_pinky_pip",
-        "ang_thumb_mcp", "ang_thumb_ip",
+        "lbl_ang_index_mcp", "lbl_ang_index_pip", "lbl_ang_middle_mcp", "lbl_ang_middle_pip",
+        "lbl_ang_ring_mcp", "lbl_ang_ring_pip", "lbl_ang_pinky_mcp", "lbl_ang_pinky_pip",
+        "lbl_ang_thumb_mcp", "lbl_ang_thumb_ip",
     }
     for k, v in ang.items():
         assert v is not None and abs(v) < 1e-6, "%s should be ~0, got %s" % (k, v)
     flex = ha.per_finger_flexion(straight_hand())
-    assert set(flex.keys()) == {"flex_thumb", "flex_index", "flex_middle", "flex_ring", "flex_pinky"}
+    assert set(flex.keys()) == {"lbl_flex_thumb", "lbl_flex_index", "lbl_flex_middle",
+                                "lbl_flex_ring", "lbl_flex_pinky"}
     for k, v in flex.items():
-        assert abs(v) < 1e-6
+        assert abs(v) < 1e-6          # straight hand -> normalized flexion 0
 
 
 def test_known_bend_at_index_pip():
@@ -65,13 +66,13 @@ def test_known_bend_at_index_pip():
     P[8] = (x + 0.02, 0.0, 0.09)
     P[9] = (x + 0.04, 0.0, 0.09)
     ang = ha.per_joint_angles(P)
-    assert abs(ang["ang_index_pip"] - 90.0) < 1e-4
-    assert abs(ang["ang_index_mcp"]) < 1e-6          # MCP untouched
-    assert abs(ang["ang_middle_pip"]) < 1e-6          # neighbours untouched
-    # Tier-1 flexion for the index sums its joint angles (0 + 90).
+    assert abs(ang["lbl_ang_index_pip"] - 90.0) < 1e-4
+    assert abs(ang["lbl_ang_index_mcp"]) < 1e-6          # MCP untouched
+    assert abs(ang["lbl_ang_middle_pip"]) < 1e-6          # neighbours untouched
+    # Tier-1 is NORMALIZED [0,1]: index = mean(mcp/90, pip/110) = mean(0, 90/110).
     flex = ha.per_finger_flexion(P)
-    assert abs(flex["flex_index"] - 90.0) < 1e-4
-    assert abs(flex["flex_middle"]) < 1e-6
+    assert abs(flex["lbl_flex_index"] - (90.0 / 110.0) / 2.0) < 1e-4
+    assert abs(flex["lbl_flex_middle"]) < 1e-6
 
 
 def test_invariant_to_translation_and_rotation():
@@ -91,8 +92,8 @@ def test_invariant_to_translation_and_rotation():
 def test_canonical_labels_shape_and_guards():
     labels = ha.canonical_labels(straight_hand())
     assert labels is not None
-    assert len(labels) == 15                          # 5 flex_ (Tier 1) + 10 ang_ (Tier 2)
-    assert all(k.startswith("flex_") or k.startswith("ang_") for k in labels)
+    assert len(labels) == 15                          # 5 lbl_flex_ (Tier 1) + 10 lbl_ang_ (Tier 2)
+    assert all(k.startswith("lbl_flex_") or k.startswith("lbl_ang_") for k in labels)
     # Too few joints -> None (not a crash).
     assert ha.per_joint_angles([(0.0, 0.0, 0.0)] * 10) is None
     assert ha.canonical_labels([(0.0, 0.0, 0.0)] * 3) is None

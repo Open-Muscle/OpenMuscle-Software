@@ -69,60 +69,71 @@ def joints_from_flat(values):
 
 
 def per_joint_angles(positions):
-    """Tier-2 per-joint flexion angles (degrees), or None if too few joints. Keys
-    match docs/data-schema.md: ang_<finger>_mcp / _pip, plus ang_thumb_mcp / _ip."""
+    """Tier-2 per-joint flexion angles in DEGREES (flexion-positive, wrist-
+    relative), or None if too few joints. Ratified keys (DATA_SCHEMA.md #0302,
+    Quest-only): lbl_ang_<finger>_mcp / _pip, plus lbl_ang_thumb_mcp / _ip."""
     if not positions or len(positions) < _MIN_JOINTS:
         return None
     out = {}
     for name in _LONG_FINGERS:
         mc, prox, inter, dist, _tip = _FINGER_JOINTS[name]
         # MCP: metacarpal -> proximal -> intermediate. PIP: proximal -> intermediate -> distal.
-        out["ang_%s_mcp" % name] = _flex_deg(positions[mc], positions[prox], positions[inter])
-        out["ang_%s_pip" % name] = _flex_deg(positions[prox], positions[inter], positions[dist])
+        out["lbl_ang_%s_mcp" % name] = _flex_deg(positions[mc], positions[prox], positions[inter])
+        out["lbl_ang_%s_pip" % name] = _flex_deg(positions[prox], positions[inter], positions[dist])
     tmc, tprox, _none, tdist, ttip = _FINGER_JOINTS["thumb"]
     # Thumb MCP: metacarpal -> proximal -> distal. Thumb IP: proximal -> distal -> tip.
-    out["ang_thumb_mcp"] = _flex_deg(positions[tmc], positions[tprox], positions[tdist])
-    out["ang_thumb_ip"] = _flex_deg(positions[tprox], positions[tdist], positions[ttip])
+    out["lbl_ang_thumb_mcp"] = _flex_deg(positions[tmc], positions[tprox], positions[tdist])
+    out["lbl_ang_thumb_ip"] = _flex_deg(positions[tprox], positions[tdist], positions[ttip])
     return out
 
 
-def per_finger_flexion(positions, agg="sum"):
-    """Tier-1 shared-core per-finger flexion (degrees): flex_<finger>. Aggregates
-    each finger's own joint angles into one scalar (agg = 'sum' default, or 'max' /
-    'mean'). This is the column set BOTH VR and LASK5 fill, so it is what a
-    cross-source (pooled) model trains on. Returns None if too few joints."""
+# Nominal full-flex angle per joint type (degrees) used to normalize the Tier-1
+# shared core into [0,1] (0 = extended, 1 = curled) per DATA_SCHEMA.md #0302.
+# Nominal, not a per-subject calibration: a rough full-curl for each joint so the
+# VR-measured angles land on the same 0..1 scale LASK5 pistons already report.
+# Recalibrate per subject/ROM if needed (the range would then go in capture meta).
+_FULL_FLEX_DEG = {"mcp": 90.0, "pip": 110.0, "ip": 80.0}
+
+
+def per_finger_flexion(positions):
+    """Tier-1 SHARED CORE: per-finger flexion NORMALIZED to [0,1] (0 = extended,
+    1 = curled), wrist-relative. Ratified keys (DATA_SCHEMA.md #0302): lbl_flex_
+    <finger>. Each finger = mean of its joint angles, each normalized by a nominal
+    full-flex and clamped to [0,1]. This is the column set BOTH VR and LASK5 fill,
+    so it is what a cross-source (pooled) model trains on; None if too few joints.
+    LASK5 fills these directly from its 0..1 pistons; this is the VR path."""
     a = per_joint_angles(positions)
     if a is None:
         return None
 
-    def combine(vals):
-        vals = [v for v in vals if v is not None]
-        if not vals:
+    def nrm(deg, jt):
+        if deg is None:
             return None
-        if agg == "max":
-            return max(vals)
-        if agg == "mean":
-            return sum(vals) / len(vals)
-        return sum(vals)  # 'sum' is the default (open Q in the schema doc)
+        return max(0.0, min(1.0, deg / _FULL_FLEX_DEG[jt]))
+
+    def finger(mcp_deg, pip_deg, second="pip"):
+        vals = [v for v in (nrm(mcp_deg, "mcp"), nrm(pip_deg, second)) if v is not None]
+        return sum(vals) / len(vals) if vals else None
 
     out = {}
     for name in _LONG_FINGERS:
-        out["flex_%s" % name] = combine([a["ang_%s_mcp" % name], a["ang_%s_pip" % name]])
-    out["flex_thumb"] = combine([a["ang_thumb_mcp"], a["ang_thumb_ip"]])
+        out["lbl_flex_%s" % name] = finger(a["lbl_ang_%s_mcp" % name], a["lbl_ang_%s_pip" % name])
+    out["lbl_flex_thumb"] = finger(a["lbl_ang_thumb_mcp"], a["lbl_ang_thumb_ip"], second="ip")
     return out
 
 
-def canonical_labels(positions, agg="sum"):
-    """All canonical labels (Tier 1 + Tier 2) from 25 joint positions, or None.
-    Tier 2 is VR-only; a LASK5 capture masks (NaNs) the ang_* columns and fills
-    only the flex_* core."""
+def canonical_labels(positions):
+    """All ratified canonical labels from 25 joint positions, or None: Tier-1
+    lbl_flex_* (normalized [0,1]) + Tier-2 lbl_ang_* (degrees). Tier-2 is VR-only;
+    a LASK5 capture NaN-masks the lbl_ang_* columns and fills only the lbl_flex_*
+    core (DATA_SCHEMA.md #0302)."""
     tier2 = per_joint_angles(positions)
     if tier2 is None:
         return None
-    tier1 = per_finger_flexion(positions, agg=agg)
+    tier1 = per_finger_flexion(positions)
     return dict(tier1, **tier2)
 
 
-def canonical_labels_from_flat(values, agg="sum"):
+def canonical_labels_from_flat(values):
     """canonical_labels() straight from a flat quest_hand values array."""
-    return canonical_labels(joints_from_flat(values), agg=agg)
+    return canonical_labels(joints_from_flat(values))
