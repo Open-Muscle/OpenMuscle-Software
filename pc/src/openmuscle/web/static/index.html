@@ -15,6 +15,12 @@
     <script type="module" src="/static/imu-viewer.js?v=1"></script>
 </head>
 <body>
+    <!-- Debug-mode warning ribbon. Shown only when body.debug, which app.js
+         sets from GET /api/mode. The server is plain-HTTP + LAN-open +
+         unauthenticated when started with `openmuscle web --debug`. -->
+    <div id="debug-ribbon" class="debug-ribbon debug-only" role="alert">
+        ⚠ DEBUG MODE — plain HTTP, LAN-open &amp; unauthenticated. Lab bench / demo only.
+    </div>
     <header class="topbar">
         <div class="brand">
             <h1>OpenMuscle <span class="subtitle">Studio</span></h1>
@@ -166,6 +172,32 @@
                         <button id="infer-toggle" disabled>▶ Start</button>
                         <span class="comparator-hint">predictions to a robot hand: see Stage 4</span>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             DEBUG — raw truth per device (only rendered in --debug mode).
+             Hidden unless body.debug (app.js reads GET /api/mode). Surfaces
+             per-device stream health, per-channel matrix stats, IMU raw counts
+             (fused orientation is the Orientation widget in Stage 1), forearm
+             roll/palm-up from Quest joints, and a raw-frame inspector.
+             ============================================================ -->
+        <section id="stage-debug" class="stage stage-debug debug-only">
+            <header class="stage-head">
+                <h2 class="stage-title"><span class="stage-num">⚙</span> Debug</h2>
+                <span class="stage-sub">raw truth per device · stream health · IMU / forearm · packet inspector</span>
+            </header>
+            <div class="debug-grid">
+                <div id="debug-cards" class="debug-cards">
+                    <div class="empty">Waiting for a device…</div>
+                </div>
+                <div class="debug-inspector">
+                    <div class="debug-insp-head">
+                        <span>Raw frame · <b id="debug-insp-dev">select a device</b></span>
+                        <label class="debug-freeze"><input type="checkbox" id="debug-insp-freeze"> freeze</label>
+                    </div>
+                    <pre id="debug-insp-json" class="debug-insp-json">(no device selected)</pre>
                 </div>
             </div>
         </section>

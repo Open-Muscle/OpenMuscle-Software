@@ -54,6 +54,8 @@ let lastDevices = [];
 let recordingState = null;        // null when idle; {filename, rows, duration_s} when recording
 let activeSession = null;          // null when no session active; {id, name, arm, ...} otherwise
 let inferenceState = null;         // last inference snapshot, used for REC+LIVE detection
+let debugMode = false;             // GET /api/mode -> unlock the Debug section
+let debugFreeze = false;           // pause the raw-frame inspector for reading
 
 // ---------- WebSocket ----------
 
@@ -126,6 +128,8 @@ function handleTick(msg) {
     // IMU orientation widget: drive from a device carrying the fast data.imu
     // (prefer the selected device; else the first with imu).
     renderImuViewer();
+    // Debug section (only when the server is in --debug mode).
+    if (debugMode) renderDebugPanel();
 }
 
 // ---------- IMU orientation widget ----------
@@ -1813,6 +1817,144 @@ if (diagToggle && diagBody) {
     };
 }
 
+// ---------- debug dashboard (--debug mode) ----------
+// Unlocked by GET /api/mode. Surfaces the raw per-device truth for a recording
+// / troubleshooting session: stream health, per-channel matrix stats, IMU raw
+// counts (fused orientation is the Orientation widget in Stage 1), forearm
+// roll/palm-up derived from Quest hand joints, and a raw-frame inspector.
+
+async function initDebugMode() {
+    try {
+        const r = await fetch('/api/mode');
+        if (r.ok) {
+            const { debug } = await r.json();
+            debugMode = !!debug;
+            document.body.classList.toggle('debug', debugMode);
+        }
+    } catch (e) {
+        // Older servers may not expose /api/mode; stay in normal mode.
+    }
+    const freeze = document.getElementById('debug-insp-freeze');
+    if (freeze) freeze.onchange = () => { debugFreeze = freeze.checked; };
+}
+
+// --- forearm orientation from Quest hand joints (JS port of forearm.py) ---
+// Gravity-relative roll (0 = palm-up) + palm_up flag, from the wrist/knuckle
+// joint POSITIONS (not the wrist quaternion), so it matches the disk-written
+// forearm_roll_deg / palm_up columns without a firmware dependency.
+const _FA_WRIST = 0, _FA_MIDDLE_MCP = 10, _FA_INDEX = 6, _FA_PINKY = 21, _FA_MIN = 22;
+function _faSub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function _faDot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function _faCross(a, b) {
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function _faNorm(a) {
+    const m = Math.sqrt(_faDot(a, a));
+    return m > 1e-9 ? [a[0] / m, a[1] / m, a[2] / m] : [0, 0, 0];
+}
+function forearmFromQuest(dev) {
+    const values = dev && dev.values;
+    if (!Array.isArray(values) || values.length < _FA_MIN * 7) return null;
+    const P = [];
+    for (let i = 0; i < Math.floor(values.length / 7); i++) {
+        P.push([values[i * 7], values[i * 7 + 1], values[i * 7 + 2]]);
+    }
+    if (P.length < _FA_MIN) return null;
+    const axis = _faNorm(_faSub(P[_FA_MIDDLE_MCP], P[_FA_WRIST]));  // hand long axis
+    if (axis[0] === 0 && axis[1] === 0 && axis[2] === 0) return null;
+    const handed = (dev.role === 'left') ? 'left' : 'right';
+    let n = _faCross(_faSub(P[_FA_INDEX], P[_FA_WRIST]), _faSub(P[_FA_PINKY], P[_FA_WRIST]));
+    if (handed !== 'left') n = [-n[0], -n[1], -n[2]];     // point OUT of the palm
+    const pn = _faNorm(n);
+    const up = [0, 1, 0];
+    const proj = (v) => _faNorm(_faSub(v, axis.map(x => x * _faDot(v, axis))));
+    const f = proj(up), t = proj(pn);
+    const rollRad = Math.atan2(_faDot(axis, _faCross(f, t)), _faDot(f, t));
+    return { roll_deg: rollRad * 180 / Math.PI, palm_up: _faDot(pn, up) > 0 };
+}
+
+function matrixStats(matrix) {
+    // matrix is [cols][rows]; count cells above the heatmap noise gate + max/mean.
+    if (!Array.isArray(matrix) || !matrix.length) return null;
+    let max = 0, sum = 0, cells = 0, active = 0;
+    for (const col of matrix) {
+        for (const v of col) {
+            cells++; sum += v;
+            if (v > max) max = v;
+            if (v >= HEATMAP_NOISE_GATE) active++;
+        }
+    }
+    return { active, cells, max, mean: cells ? Math.round(sum / cells) : 0 };
+}
+
+function renderDebugPanel() {
+    const cardsEl = document.getElementById('debug-cards');
+    if (!cardsEl) return;
+    if (!lastDevices.length) {
+        cardsEl.innerHTML = '<div class="empty">Waiting for a device…</div>';
+    } else {
+        cardsEl.innerHTML = lastDevices.map(d => {
+            const stale = d.last_seen_age > 2.0;
+            const sub = (d.subscribed === true)
+                ? '<span class="dbg-ok">sub ✓</span>'
+                : (d.sub_error
+                    ? `<span class="dbg-bad">sub ✗ ${escapeHtml(String(d.sub_error))}</span>`
+                    : '<span class="dbg-muted">unsub</span>');
+            const role = d.role
+                ? `<span class="dbg-role dbg-role-${escapeHtml(d.role)}">${escapeHtml(d.role)}</span>` : '';
+            const rows = [];
+            rows.push(`<div class="dbg-line"><span>stream</span><b class="${stale ? 'dbg-bad' : 'dbg-ok'}">`
+                + `${d.hz.toFixed(1)} Hz · ${stale ? d.last_seen_age.toFixed(1) + 's stale' : 'live'}</b>`
+                + ` · ${d.packets} pkts · ${sub}</div>`);
+            const ms = matrixStats(d.matrix);
+            if (ms) rows.push(`<div class="dbg-line"><span>channels</span><b>${ms.active}/${ms.cells}</b>`
+                + ` active · max ${ms.max} · mean ${ms.mean}</div>`);
+            if (d.imu && Array.isArray(d.imu.gyro) && Array.isArray(d.imu.accel)) {
+                const scale = d.imu_scale ? '<span class="dbg-ok">scale ✓</span>' : '<span class="dbg-muted">no scale</span>';
+                rows.push(`<div class="dbg-line"><span>imu raw</span>g ${d.imu.gyro.join(',')} · a ${d.imu.accel.join(',')} · ${scale}</div>`);
+            }
+            const fa = (d.device_type === 'quest_hand') ? forearmFromQuest(d) : null;
+            if (fa) rows.push(`<div class="dbg-line"><span>forearm</span><b>${fa.roll_deg.toFixed(1)}°</b> · palm ${fa.palm_up ? 'UP' : 'down'}</div>`);
+            const st = d.status || {};
+            const bits = [];
+            if (typeof st.vbat === 'number') bits.push(`${st.vbat.toFixed(2)}V`);
+            if (typeof st.pct === 'number') bits.push(`${st.pct}%`);
+            if (typeof st.rssi === 'number') bits.push(`${st.rssi}dBm`);
+            if (typeof st.uptime_s === 'number') bits.push(formatUptime(st.uptime_s));
+            if (d.reboot_count) bits.push(`⟳${d.reboot_count}${d.last_reset_cause ? ' ' + d.last_reset_cause : ''}`);
+            if (bits.length) rows.push(`<div class="dbg-line"><span>device</span>${escapeHtml(bits.join(' · '))}</div>`);
+            const selCls = (d.device_id === selectedDeviceId) ? ' selected' : '';
+            return `<div class="debug-card${selCls}${stale ? ' stale' : ''}" data-id="${escapeHtml(d.device_id)}">
+                <div class="dbg-head"><b>${escapeHtml(d.device_id)}</b> ${role}`
+                + ` <span class="dbg-muted">${escapeHtml(d.device_type)} ${d.rows}×${d.cols}</span></div>
+                ${rows.join('')}
+            </div>`;
+        }).join('');
+        cardsEl.querySelectorAll('.debug-card').forEach(el => {
+            el.onclick = () => { selectedDeviceId = el.dataset.id; renderDevices(); renderDebugPanel(); };
+        });
+    }
+    // Raw-frame inspector for the selected device (freeze pauses it for reading).
+    if (debugFreeze) return;
+    const dev = selectedDevice() || lastDevices[0];
+    const devEl = document.getElementById('debug-insp-dev');
+    const jsonEl = document.getElementById('debug-insp-json');
+    if (!jsonEl) return;
+    if (!dev) {
+        if (devEl) devEl.textContent = 'no device';
+        jsonEl.textContent = '(no device streaming)';
+        return;
+    }
+    if (devEl) devEl.textContent = dev.device_id;
+    // Summarize the bulky matrix so the JSON stays readable; keep the rest raw.
+    const view = Object.assign({}, dev);
+    if (Array.isArray(view.matrix)) {
+        const ms = matrixStats(view.matrix);
+        view.matrix = `[${view.matrix.length}×${(view.matrix[0] || []).length}] active=${ms.active} max=${ms.max}`;
+    }
+    jsonEl.textContent = JSON.stringify(view, null, 2);
+}
+
 // ---------- utils ----------
 
 function escapeHtml(s) {
@@ -1917,4 +2059,5 @@ setInterval(refreshModels, 10000);
 setInterval(refreshLogs, 2000);   // logs are the most "real-time" panel
 setInterval(refreshPastSessions, 15000);
 
+initDebugMode();
 connectWS();
