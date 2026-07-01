@@ -22,6 +22,34 @@ openmuscle receive                          # Default port 3141
 openmuscle receive --port 3141 --save-dir data/raw/flexgrid
 ```
 
+### `openmuscle web`
+
+Launch the browser-based Studio UI: a live FlexGrid heatmap, device/source
+discovery, recording + labeled sessions, training, and live prediction, with a
+WebXR companion at `/vr` for Quest hand-tracking capture.
+
+```bash
+openmuscle web                      # https://localhost:8000 (auto-loads a mkcert
+                                    #   TLS pair from ~/.openmuscle if present)
+openmuscle web --port 8000 --udp-port 3141
+openmuscle web --model-left L.pkl --model-right R.pkl   # per-hand live prediction
+```
+
+**Debug mode** (`--debug`): serves plain HTTP on all interfaces (no TLS) so the PC,
+phone, and Quest all connect with zero cert friction, and unlocks a verbose Debug
+panel (per-device stream health, per-channel matrix stats, IMU raw + orientation,
+forearm, a raw-frame inspector), both flexgrid heatmaps at once (side-by-side or
+stacked), and a live capture-quality verdict while recording. The server is LAN-open
+and unauthenticated in this mode: lab-bench / demo use only.
+
+```bash
+openmuscle web --debug              # http://<lan-ip>:8000, all devices, verbose UI
+```
+
+WebXR hand-tracking needs a secure context: either the auto-loaded HTTPS cert, or
+tether the Quest over USB with `adb reverse tcp:8000 tcp:8000` and open
+`http://localhost:8000/vr`.
+
 ### `openmuscle record`
 
 Record paired FlexGrid + LASK5 data to CSV with temporal matching.

@@ -20,6 +20,20 @@ openmuscle web --model X --hand 10.0.0.55:3145                 # custom hand por
 
 First-run on Windows: Defender will prompt for inbound UDP — click **Allow** on both Private and Public, or pre-add: `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3141" -Direction Inbound -Protocol UDP -LocalPort 3141 -Action Allow` (admin PowerShell).
 
+## Debug mode (`--debug`)
+
+`openmuscle web --debug` serves plain HTTP on all interfaces (drops any auto-loaded mkcert cert) so the PC, phone, and Quest all connect with zero cert friction, and unlocks the extra troubleshooting surface. The frontend reads `GET /api/mode` on load; when debug is on it shows a red "LAN-open + unauthenticated" ribbon plus:
+
+- **Debug panel** (per device): stream health (Hz, live/stale, packets, subscribe state), per-channel matrix stats (active/total, max, mean), IMU raw counts + the per-chip scale flag, forearm roll/palm-up for Quest devices, and a freeze-able raw-frame inspector (the selected device's live snapshot as JSON).
+- **Both flexgrid heatmaps at once**, side-by-side or stacked (a per-user toggle), so a two-hand session shows both forearms live.
+- **Live capture-quality verdict** (GOOD / DEGRADED / BAD) during recording, from match-rate + joint-drop count, so a bad take is caught in real time.
+
+The server is LAN-open and unauthenticated in this mode (`/api/reveal` is disabled), so it is for the lab bench / demos, not the internet. WebXR hand-tracking still needs a secure context, so plain-HTTP `/vr` is view-only unless you tether the Quest (`adb reverse tcp:8000 tcp:8000` → `http://localhost:8000/vr`).
+
+## Labeled-recording sessions
+
+Start a session (Stage 2) to make each recording self-describing: `session.json` snapshots the connected-device roster (id, role, matrix shape, Hz, firmware, IMU scale, battery) plus wearer, take number, arm, labeler source (LASK5 / VR / both), a video reference, and a `started_at_ms` sync marker on the hub clock (so a screen or headset recording pairs to the exact CSV rows). The New-session modal prefills wearer / arm / labeler from the last session and bumps the take number. Captures made in a session inherit its context in their `.meta.json`.
+
 ## What you see
 
 Five panels, all live:
