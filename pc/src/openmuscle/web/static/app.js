@@ -655,7 +655,12 @@ function renderActiveSession() {
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
         const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
         const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(s.arm)} arm</span>` : '<span class="empty">no arm set</span>';
-        const subj = s.subject ? ' · ' + escapeHtml(s.subject) : '';
+        const who = s.wearer || s.subject;
+        const whoBit = who ? ' · ' + escapeHtml(who) : '';
+        const takeBit = (typeof s.take === 'number') ? ` · take ${s.take}` : '';
+        const labelerBit = s.labeler_source ? ` · ${escapeHtml(s.labeler_source)}` : '';
+        const nDev = (s.context && Array.isArray(s.context.devices)) ? s.context.devices.length : 0;
+        const devBit = nDev ? ` · ${nDev} dev @ start` : '';
         const gestures = (s.gestures || []).length
             ? ' · planned: ' + escapeHtml((s.gestures || []).join(', '))
             : '';
@@ -664,7 +669,7 @@ function renderActiveSession() {
                 <div class="session-head">
                     <div>
                         <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                        <span class="session-meta-line">${armBit}${subj} · ${s.capture_count || 0} captures · ${formatUptime(dur)}${gestures}</span>
+                        <span class="session-meta-line">${armBit}${whoBit}${takeBit}${labelerBit} · ${s.capture_count || 0} captures · ${formatUptime(dur)}${devBit}${gestures}</span>
                     </div>
                     <div class="session-actions">
                         <button class="link" id="active-session-add-btn" title="Retroactively add past captures to this session">＋ Add</button>
@@ -943,9 +948,28 @@ pastSessionsToggle.onclick = () => {
 
 sessionStartBtn.onclick = () => openSessionModal();
 
-function openSessionModal() {
+async function openSessionModal() {
     sessionModal.classList.add('open');
     sessionModal.setAttribute('aria-hidden', 'false');
+    // Prefill wearer / arm / labeler from the most recent session and bump the
+    // take number, so a repeat session is one edit (Tory can't type well in-VR,
+    // and this halves the friction on the PC too). Only fills empty fields.
+    try {
+        const r = await fetch('/api/sessions');
+        if (r.ok) {
+            const last = (await r.json())[0];
+            if (last) {
+                const w = document.getElementById('sess-wearer');
+                if (w && !w.value) w.value = last.wearer || last.subject || '';
+                const a = document.getElementById('sess-arm');
+                if (a && !a.value && last.arm) a.value = last.arm;
+                const l = document.getElementById('sess-labeler');
+                if (l && !l.value && last.labeler_source) l.value = last.labeler_source;
+                const t = document.getElementById('sess-take');
+                if (t && !t.value && typeof last.take === 'number') t.value = last.take + 1;
+            }
+        }
+    } catch (e) { /* prefill is best-effort */ }
     document.getElementById('sess-name').focus();
 }
 function closeSessionModal() {
@@ -959,6 +983,7 @@ document.addEventListener('keydown', (e) => {
 
 sessionForm.onsubmit = async (e) => {
     e.preventDefault();
+    const takeRaw = parseInt(document.getElementById('sess-take').value, 10);
     const body = {
         name:     document.getElementById('sess-name').value.trim(),
         subject:  document.getElementById('sess-subject').value.trim(),
@@ -966,6 +991,10 @@ sessionForm.onsubmit = async (e) => {
         gestures: document.getElementById('sess-gestures').value.split(',').map(s=>s.trim()).filter(Boolean),
         tags:     document.getElementById('sess-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
         notes:    document.getElementById('sess-notes').value,
+        wearer:   document.getElementById('sess-wearer').value.trim(),
+        take:     Number.isFinite(takeRaw) ? takeRaw : null,
+        labeler_source: document.getElementById('sess-labeler').value || '',
+        video_ref: document.getElementById('sess-video').value.trim(),
     };
     try {
         const r = await fetch('/api/sessions', {

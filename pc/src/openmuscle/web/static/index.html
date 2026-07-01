@@ -395,12 +395,34 @@
                     </select>
                 </div>
                 <div class="form-row">
+                    <label for="sess-wearer">Wearer</label>
+                    <input id="sess-wearer" type="text" placeholder="who's wearing the band(s), e.g. Tory">
+                </div>
+                <div class="form-row">
+                    <label for="sess-take">Take #</label>
+                    <input id="sess-take" type="number" min="1" step="1" placeholder="auto (last + 1)">
+                </div>
+                <div class="form-row">
+                    <label for="sess-labeler">Labeler source</label>
+                    <select id="sess-labeler">
+                        <option value="">(decide at record)</option>
+                        <option value="vr">VR (Quest hand / forearm)</option>
+                        <option value="lask5">LASK5 finger-labeler</option>
+                        <option value="both">both (VR + LASK5)</option>
+                        <option value="gamepad">gamepad</option>
+                    </select>
+                </div>
+                <div class="form-row">
                     <label for="sess-subject">Subject</label>
                     <input id="sess-subject" type="text" placeholder="e.g. Tory / S001 / self">
                 </div>
                 <div class="form-row">
                     <label for="sess-gestures">Planned gestures</label>
                     <input id="sess-gestures" type="text" placeholder="comma-separated, e.g. open hand, fist, pinch, point, OK sign">
+                </div>
+                <div class="form-row">
+                    <label for="sess-video">Video ref</label>
+                    <input id="sess-video" type="text" placeholder="headset / screen video filename or note (optional)">
                 </div>
                 <div class="form-row">
                     <label for="sess-tags">Tags</label>
