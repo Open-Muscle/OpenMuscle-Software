@@ -1462,3 +1462,13 @@ body.debug .debug-only { display: block; }
     border: 1px solid var(--border); border-radius: 6px;
     white-space: pre-wrap; word-break: break-word;
 }
+
+/* Recording capture-quality verdict (board #0297: catch a bad take in real time) */
+.cap-verdict {
+    display: inline-block; font-weight: 700; font-size: 12px;
+    padding: 2px 8px; border-radius: 4px; margin-bottom: 4px; letter-spacing: .03em;
+}
+.cap-verdict.cap-good { background: rgba(44, 209, 106, 0.18); color: var(--green); }
+.cap-verdict.cap-warn { background: rgba(255, 164, 44, 0.18); color: var(--orange); }
+.cap-verdict.cap-bad  { background: rgba(255, 90, 107, 0.20); color: var(--red); }
+.cap-warn-line { color: var(--orange); font-size: 12px; margin-top: 2px; }

@@ -1045,13 +1045,30 @@ function renderRecording() {
                 .map(([id, role]) => `${escapeHtml(role)}:${escapeHtml(id)}`).join(', ') + '</b>'
             : `sensor: <b>${escapeHtml(r.sensor_device_id || '?')}</b>`;
 
+        // At-a-glance capture-quality verdict so a bad take is caught in real time
+        // (data-capture quality is goal #1, board #0297) instead of after the fact.
+        // Joints dropping mid-capture pad/truncate the label row -> a quality hit.
+        const widthMiss = r.label_width_mismatch ?? 0;
+        const seen = r.sensor_frames_seen ?? 0;
+        let verdict = 'GOOD', vCls = 'cap-good';
+        if (rate < 0.5 || (seen > 20 && (r.matched ?? 0) === 0)) {
+            verdict = 'BAD'; vCls = 'cap-bad';
+        } else if (rate < 0.9 || widthMiss > 0) {
+            verdict = 'DEGRADED'; vCls = 'cap-warn';
+        }
+        const widthLine = widthMiss > 0
+            ? `<div class="cap-warn-line">⚠ ${widthMiss} frame(s) had joints drop mid-capture (label width padded/truncated)</div>`
+            : '';
+
         recordStatus.innerHTML = `
+            <div class="cap-verdict ${vCls}">capture: ${verdict}</div>
             <div>${escapeHtml(r.filename)} · ${r.rows} paired rows · ${r.duration_s}s · win ${r.window_ms ?? 100}ms</div>
             <div>${sensorLine} &nbsp; label: <b>${escapeHtml(label)}</b></div>
-            <div>matched: ${r.matched ?? 0} / ${r.sensor_frames_seen ?? 0}
+            <div>matched: ${r.matched ?? 0} / ${seen}
                  (<span class="${rateCls}">${ratePct}%</span>)
                  · unpaired sensor: ${r.unpaired_sensor ?? 0}
                  · label pkts: ${r.label_packets_seen ?? 0}</div>
+            ${widthLine}
         `;
     } else {
         recordBtn.textContent = '● Start recording';
