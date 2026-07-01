@@ -74,7 +74,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                hand_target: Optional[tuple] = None,
                announce_port: int = 3140,
                model_left: Optional[str] = None,
-               model_right: Optional[str] = None) -> FastAPI:
+               model_right: Optional[str] = None,
+               debug: bool = False) -> FastAPI:
     state = AppState(
         udp_port=udp_port,
         captures_dir=captures_dir,
@@ -101,6 +102,10 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
 
     app = FastAPI(title="OpenMuscle Web UI", lifespan=lifespan)
     app.state.app_state = state
+    # Debug mode: plain-HTTP, all-interfaces, verbose dashboard. The frontend
+    # reads /api/mode once on load and unlocks the debug panels; a couple of
+    # local-only conveniences (the FS opener) are refused when LAN-exposed.
+    app.state.debug = debug
 
     # ----- static frontend -----
     # Disable browser caching so live edits to app.js / styles.css are picked up
@@ -191,6 +196,14 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/api/devices")
     async def list_devices():
         return JSONResponse(state._snapshot()["devices"])
+
+    @app.get("/api/mode")
+    async def get_mode():
+        """The frontend reads this once on load to unlock the debug dashboard.
+        debug=True means the server was started with `openmuscle web --debug`
+        (plain-HTTP + LAN-open); the UI then shows a warning ribbon and the
+        verbose panels (hardware health, raw-packet inspector, per-session eval)."""
+        return {"debug": bool(getattr(app.state, "debug", False))}
 
     # ----- REST: native V4 discovery -----
 
@@ -443,6 +456,12 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         """Open the captures folder (and optionally highlight a specific
         capture) in the OS file manager. Local-only convenience; the server
         is intended for localhost use."""
+        if getattr(app.state, "debug", False):
+            # --debug binds all interfaces on plain HTTP; opening a local file
+            # manager from a LAN-reachable endpoint is not something we expose.
+            raise HTTPException(
+                status_code=403,
+                detail="reveal is disabled in --debug mode (server is LAN-exposed)")
         if body.name:
             p = state.capture_path(body.name)
             if p is None:
@@ -761,7 +780,8 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           ssl_keyfile: Optional[str] = None,
           announce_port: int = 3140,
           model_left: Optional[str] = None,
-          model_right: Optional[str] = None):
+          model_right: Optional[str] = None,
+          debug: bool = False):
     """Run the web UI server (blocks).
 
     Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
@@ -778,6 +798,7 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         announce_port=announce_port,
         model_left=model_left,
         model_right=model_right,
+        debug=debug,
     )
     uvicorn.run(app, host=host, port=port, log_level="info",
                 ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)

@@ -98,8 +98,14 @@ def _lan_ip():
                    "on the headset (Settings -> Security -> Install a certificate).")
 @click.option("--ssl-keyfile", default=None, type=click.Path(exists=True, dir_okay=False),
               help="Path to TLS private key (PEM). Pair with --ssl-certfile.")
+@click.option("--debug", "debug", is_flag=True, default=False,
+              help="DEBUG MODE: serve plain HTTP on all interfaces (no TLS), so the "
+                   "PC, phone, and Quest can all connect with zero cert friction, and "
+                   "unlock the verbose debug dashboard (hardware health, raw packets, "
+                   "per-session eval). The server is LAN-open + unauthenticated in this "
+                   "mode -- lab bench / demo use only, not the internet.")
 def web(host, port, udp_port, announce_port, captures_dir, model_path, model_left,
-        model_right, hand, ssl_certfile, ssl_keyfile):
+        model_right, hand, ssl_certfile, ssl_keyfile, debug):
     """Launch the browser-based UI with live heatmap, recording, and captures."""
     from openmuscle.web.app import serve
     # Auto-load the mkcert TLS pair if it's configured, so plain `openmuscle web`
@@ -108,6 +114,14 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, model_lef
     # mkcert produces a cert AND key; we need both or neither.
     if bool(ssl_certfile) != bool(ssl_keyfile):
         raise click.BadParameter("--ssl-certfile and --ssl-keyfile must be used together")
+    if debug:
+        # Debug mode is deliberately plain-HTTP + all-interfaces so every device
+        # (PC, phone, Quest) connects with no cert friction. Drop any resolved TLS.
+        if ssl_certfile:
+            click.echo("  DEBUG: ignoring the TLS cert -- serving plain HTTP so all "
+                       "devices connect without the mkcert root CA.")
+        ssl_certfile = ssl_keyfile = None
+        tls_source = None
     scheme = "https" if ssl_certfile else "http"
     click.echo(f"OpenMuscle web UI: {scheme}://{host if host != '0.0.0.0' else 'localhost'}:{port}")
     click.echo(f"Listening for devices on UDP {udp_port}")
@@ -142,11 +156,19 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, model_lef
         else:
             hand_target = (hand, 3145)
         click.echo(f"Forwarding inference to robot hand at {hand_target[0]}:{hand_target[1]}")
+    if debug:
+        click.echo("")
+        click.echo("  ============================================================")
+        click.echo("  ==  DEBUG MODE: LAN-open + unauthenticated. Anyone on this  ")
+        click.echo(f"  ==  network can reach http://{_lan_ip()}:{port}/ . Lab/demo only. ")
+        click.echo("  ==  Verbose dashboard unlocked; file-manager reveal disabled.")
+        click.echo("  ============================================================")
+        click.echo("")
     serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
           model_path=model_path, model_left=model_left, model_right=model_right,
           hand_target=hand_target,
           ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
-          announce_port=announce_port)
+          announce_port=announce_port, debug=debug)
 
 
 @main.command()
