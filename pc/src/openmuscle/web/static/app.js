@@ -1123,14 +1123,21 @@ function renderRecording() {
         // Joints dropping mid-capture pad/truncate the label row -> a quality hit.
         const widthMiss = r.label_width_mismatch ?? 0;
         const seen = r.sensor_frames_seen ?? 0;
+        // band_flat (server-side): most cells never moved = band not engaged.
+        // The capture_1779731309 dud class -- looks like a normal file, trains
+        // nothing (board #0311.4).
+        const bandFlat = r.band_flat === true;
         let verdict = 'GOOD', vCls = 'cap-good';
-        if (rate < 0.5 || (seen > 20 && (r.matched ?? 0) === 0)) {
+        if (bandFlat || rate < 0.5 || (seen > 20 && (r.matched ?? 0) === 0)) {
             verdict = 'BAD'; vCls = 'cap-bad';
         } else if (rate < 0.9 || widthMiss > 0) {
             verdict = 'DEGRADED'; vCls = 'cap-warn';
         }
         const widthLine = widthMiss > 0
             ? `<div class="cap-warn-line">⚠ ${widthMiss} frame(s) had joints drop mid-capture (label width padded/truncated)</div>`
+            : '';
+        const flatLine = bandFlat
+            ? `<div class="cap-warn-line">⚠ band not engaged: ${r.flat_cells}/${r.cells_total} cells flat — is the band on the arm?</div>`
             : '';
 
         recordStatus.innerHTML = `
@@ -1141,7 +1148,7 @@ function renderRecording() {
                  (<span class="${rateCls}">${ratePct}%</span>)
                  · unpaired sensor: ${r.unpaired_sensor ?? 0}
                  · label pkts: ${r.label_packets_seen ?? 0}</div>
-            ${widthLine}
+            ${flatLine}${widthLine}
         `;
     } else {
         recordBtn.textContent = '● Start recording';

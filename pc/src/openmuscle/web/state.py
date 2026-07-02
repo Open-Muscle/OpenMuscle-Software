@@ -59,6 +59,7 @@ from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.discovery import DiscoveryManager
 from openmuscle.forearm import forearm_roll, joints_from_flat
 from openmuscle import hand_angles
+from openmuscle.quality import CellActivityTracker
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
@@ -233,6 +234,10 @@ class ActiveCapture:
     # canonical encoding is never the only copy (re-derivable if calibration
     # or piston order is revised later).
     with_canonical: bool = False
+    # Per-cell engagement over the take (board #0311.4: the flat-cell dud trap).
+    # Fed every written sensor row; the WS snapshot surfaces flat-cell counts so
+    # the live verdict can flag a not-engaged band DURING the recording.
+    activity: "CellActivityTracker" = field(default_factory=lambda: CellActivityTracker())
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -670,6 +675,8 @@ class AppState:
         rows = len(mat[0])
         cols = len(mat)
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
+        # Engagement tracking (flat-cell dud detection, #0311.4).
+        rec.activity.update(flat)
         # Schema v2: one long row per sensor frame, tagged with the source's
         # role + device_id and a hub-arrival epoch-ms timestamp. Features are
         # already row-major (above); labels are the matched label vector.
@@ -972,6 +979,11 @@ class AppState:
                 # tracking). Surfaced live so the in-VR header can warn the
                 # operator that joints are dropping mid-capture.
                 "label_width_mismatch": r.label_width_mismatch_count,
+                # Engagement (flat-cell dud detection, #0311.4): cells whose
+                # value range stayed under the noise floor for the whole take.
+                "flat_cells": r.activity.flat_cells(),
+                "cells_total": r.activity.n_cells,
+                "band_flat": r.activity.is_flat_take(),
             }
         return {
             "type": "tick",
