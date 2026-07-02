@@ -28,7 +28,13 @@ class InferenceEngine:
     not, it's pulled from the model's own `n_features_in_` attribute.
     """
 
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, expected_features: Optional[int] = None):
+        """Load a model. `expected_features` is the LOAD-TIME feature-count
+        guard (board #0311.e): when given (= the live band's cell count), a
+        model trained on a different sensor width is REFUSED with a clear
+        message instead of loading and then silently predicting nothing every
+        frame (the stale-64-feature-model trap: predict() returns None on
+        mismatch, so the UI just shows no ghost with no explanation)."""
         self.model_path = Path(model_path)
         if not self.model_path.exists():
             raise FileNotFoundError(f"Model not found: {model_path}")
@@ -51,6 +57,15 @@ class InferenceEngine:
         self.n_features: Optional[int] = getattr(self.model, "n_features_in_", None)
         if self.n_features is None:
             self.n_features = self.metadata.get("metrics", {}).get("n_features")
+
+        # Load-time guard: refuse a model that cannot possibly match the band.
+        if (expected_features is not None and self.n_features is not None
+                and self.n_features != expected_features):
+            raise ValueError(
+                "model {} expects {} features but the connected band has {} "
+                "cells -- this model was trained on a different sensor layout "
+                "(refusing to load; train a new model on current captures)".format(
+                    self.model_path.parent.name, self.n_features, expected_features))
 
         # Best-effort label count
         self.n_labels: int = self.metadata.get("metrics", {}).get("n_labels", 4)

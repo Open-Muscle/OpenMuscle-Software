@@ -140,13 +140,16 @@ def test_per_role_engines_route_each_band_to_its_own_model(tmp_path):
     assert "left=" in inf["model"] and "right=" in inf["model"]
 
 
-def test_set_model_role_loads_per_hand_slot(tmp_path):
+def test_set_model_role_loads_per_hand_slot(tmp_path, monkeypatch):
     # G4: a headset operator can load model_left / model_right at runtime (no CLI
     # --model-left/--model-right, no restart). set_model_role fills the per-hand
     # engine slot the router reads.
     import pytest
     from openmuscle.web.state import AppState
 
+    # Isolate the cwd: startup auto-restore (#0314.1) scans cwd-relative
+    # data/models, and a repo checkout has real role-tagged models in it.
+    monkeypatch.chdir(tmp_path)
     left_path, _ = _make_model(tmp_path, n_labels=3, subdir="L")
     right_path, _ = _make_model(tmp_path, n_labels=2, subdir="R")
     s = AppState(udp_port=53891, captures_dir=str(tmp_path), enable_discovery=False)

@@ -351,9 +351,17 @@ class AppState:
                 self.log_buffer.error(
                     "inference", "{}-hand model load failed at startup: {}".format(_role, e))
 
+        # RESTART-SAFETY (board #0314.1): the TRAIN BOTH models used to live only
+        # in memory and died with the server (bit Tory at the first compaction:
+        # a restart silently lost both hands' models). Auto-load the newest
+        # role-tagged model from the registry into any per-hand slot the CLI
+        # didn't fill, so a crash + restart comes back predicting.
+        self._autoload_role_models()
+
         # Runtime on/off for inference. Defaults to True iff ANY model (single
-        # or per-role) was passed at startup -- if you launched `openmuscle web`
-        # without a --model*, inference stays paused until you load + Resume.
+        # or per-role) was loaded at startup (CLI flag or auto-restore) -- if you
+        # launched `openmuscle web` bare with no models on disk, inference stays
+        # paused until you load + Resume.
         self.inference_enabled: bool = self._has_any_engine()
 
         # Forwarding socket to robot hand. Opened lazily.
@@ -2150,6 +2158,50 @@ class AppState:
             "captures": list(capture_names),
         }
 
+    def _autoload_role_models(self) -> None:
+        """Fill empty per-hand engine slots from the newest role-tagged models on
+        disk (train_model stamps metrics.role into each model's metadata.json).
+        Called once at startup, after the CLI --model-left/--model-right flags
+        (which win). Restart-safety = demo-safety (board #0314.1): a server
+        crash + restart comes back with both hands' models without retraining.
+        Untagged models (incl. the stale pre-role 64-feature ones) are never
+        auto-loaded; the newest-first scan means the last TRAIN BOTH wins."""
+        try:
+            from openmuscle.ml.registry import ModelRegistry
+            entries = ModelRegistry().list_models()
+        except Exception as e:
+            self.log_buffer.warn("inference", "model auto-restore scan failed: {}".format(e))
+            return
+        for entry in reversed(entries):          # newest first (timestamped dirs)
+            role = (entry.get("metrics") or {}).get("role")
+            if role not in ("left", "right") or self.engines.get(role) is not None:
+                continue
+            path = entry.get("path")
+            try:
+                self.engines[role] = InferenceEngine(path)
+                self.engine_status = "loaded"
+                self.log_buffer.info(
+                    "inference", "{}-hand model auto-restored: {} (newest on disk)".format(
+                        role, self.engines[role].name))
+            except Exception as e:
+                self.log_buffer.error(
+                    "inference", "{}-hand auto-restore failed for {}: {}".format(role, path, e))
+
+    def _expected_features_for(self, role: Optional[str] = None) -> Optional[int]:
+        """The live band cell count a model must match (rows*cols), for the
+        load-time feature guard. Prefers the band tagged `role`; falls back to
+        any streaming flexgrid; None when no band has been seen yet (then the
+        guard can't fire and the engine's per-frame check is the backstop)."""
+        fallback = None
+        for d in self.devices.values():
+            if d.device_type != "flexgrid" or not d.rows or not d.cols:
+                continue
+            if role and self._role_by_device.get(d.device_id) == role:
+                return d.rows * d.cols
+            if fallback is None:
+                fallback = d.rows * d.cols
+        return fallback
+
     def _latest_registered_model_path(self) -> Optional[str]:
         """Find the most recent model.pkl under data/models/."""
         try:
@@ -2183,7 +2235,10 @@ class AppState:
         from openmuscle.web.inference import InferenceEngine
         if self.engine is not None and str(self.engine.model_path) == str(model_path):
             return  # already loaded; don't touch the enabled flag
-        new_engine = InferenceEngine(model_path)
+        # Load-time feature guard (#0311.e): refuse a model whose feature count
+        # can't match the connected band (raises ValueError with a clear message).
+        new_engine = InferenceEngine(model_path,
+                                     expected_features=self._expected_features_for())
         self.engine = new_engine
         self.engine_status = "loaded"
         # Drop the cached prediction -- it's from the OLD model, not relevant.
@@ -2209,7 +2264,9 @@ class AppState:
         existing = self.engines.get(role)
         if existing is not None and str(existing.model_path) == str(model_path):
             return  # already loaded for this side
-        self.engines[role] = InferenceEngine(model_path)
+        # Load-time feature guard (#0311.e), against this role's band if seen.
+        self.engines[role] = InferenceEngine(
+            model_path, expected_features=self._expected_features_for(role))
         self.engine_status = "loaded"
         self._last_inference_values = None
         self._last_inference_ts = 0.0
