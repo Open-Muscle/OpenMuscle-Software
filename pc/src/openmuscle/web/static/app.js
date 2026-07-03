@@ -744,43 +744,60 @@ const capturesFilterLabel  = document.getElementById('captures-filter-label');
 
 let pastSessions = [];
 
+// Skip rebuilding the session card every WS tick: rebuilding ~5x/sec recreated
+// the End/Add buttons mid-click, so "End session" often didn't register (the
+// click landed between two rebuilds). Rebuild ONLY when meaningful state
+// changes; the live elapsed timer is refreshed in place. 'NONE' marks the
+// no-session card so it renders exactly once on entry.
+let _activeSessionSig = null;
+
 function renderActiveSession() {
     if (activeSession) {
         const s = activeSession;
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
-        const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
-        const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(s.arm)} arm</span>` : '<span class="empty">no arm set</span>';
-        const who = s.wearer || s.subject;
-        const whoBit = who ? ' · ' + escapeHtml(who) : '';
-        const takeBit = (typeof s.take === 'number') ? ` · take ${s.take}` : '';
-        const labelerBit = s.labeler_source ? ` · ${escapeHtml(s.labeler_source)}` : '';
         const nDev = (s.context && Array.isArray(s.context.devices)) ? s.context.devices.length : 0;
-        const devBit = nDev ? ` · ${nDev} dev @ start` : '';
-        const gestures = (s.gestures || []).length
-            ? ' · planned: ' + escapeHtml((s.gestures || []).join(', '))
-            : '';
-        activeSessionArea.innerHTML = `
-            <div class="session-card active">
-                <div class="session-head">
-                    <div>
-                        <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                        <span class="session-meta-line">${armBit}${whoBit}${takeBit}${labelerBit} · ${s.capture_count || 0} captures · ${formatUptime(dur)}${devBit}${gestures}</span>
+        const sig = JSON.stringify([s.id, s.name, s.arm, s.wearer, s.subject, s.take,
+            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(',')]);
+        if (sig !== _activeSessionSig) {
+            _activeSessionSig = sig;
+            const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
+            const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(s.arm)} arm</span>` : '<span class="empty">no arm set</span>';
+            const who = s.wearer || s.subject;
+            const whoBit = who ? ' · ' + escapeHtml(who) : '';
+            const takeBit = (typeof s.take === 'number') ? ` · take ${s.take}` : '';
+            const labelerBit = s.labeler_source ? ` · ${escapeHtml(s.labeler_source)}` : '';
+            const devBit = nDev ? ` · ${nDev} dev @ start` : '';
+            const gestures = (s.gestures || []).length
+                ? ' · planned: ' + escapeHtml((s.gestures || []).join(', '))
+                : '';
+            activeSessionArea.innerHTML = `
+                <div class="session-card active">
+                    <div class="session-head">
+                        <div>
+                            <span class="session-id">${escapeHtml(s.name || s.id)}</span>
+                            <span class="session-meta-line">${armBit}${whoBit}${takeBit}${labelerBit} · ${s.capture_count || 0} captures · <span id="session-dur">${formatUptime(dur)}</span>${devBit}${gestures}</span>
+                        </div>
+                        <div class="session-actions">
+                            <button class="link" id="active-session-add-btn" title="Retroactively add past captures to this session">＋ Add</button>
+                            <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
+                            <button class="link danger" id="session-end-btn">■ End session</button>
+                        </div>
                     </div>
-                    <div class="session-actions">
-                        <button class="link" id="active-session-add-btn" title="Retroactively add past captures to this session">＋ Add</button>
-                        <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
-                        <button class="link danger" id="session-end-btn">■ End session</button>
-                    </div>
-                </div>
-                ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
-            </div>`;
-        document.getElementById('session-end-btn').onclick = endSession;
-        const addBtn = document.getElementById('active-session-add-btn');
-        if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
-        sessionStartBtn.disabled = true;
-        sessionStartBtn.title = 'End the current session before starting a new one';
-        capturesFilterLabel.textContent = `· filtered to ${s.name || s.id}`;
-    } else {
+                    ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
+                </div>`;
+            document.getElementById('session-end-btn').onclick = endSession;
+            const addBtn = document.getElementById('active-session-add-btn');
+            if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
+            sessionStartBtn.disabled = true;
+            sessionStartBtn.title = 'End the current session before starting a new one';
+            capturesFilterLabel.textContent = `· filtered to ${s.name || s.id}`;
+        } else {
+            // Structure unchanged: refresh only the live timer, leave the buttons.
+            const d = document.getElementById('session-dur');
+            if (d) d.textContent = formatUptime(dur);
+        }
+    } else if (_activeSessionSig !== 'NONE') {
+        _activeSessionSig = 'NONE';
         activeSessionArea.innerHTML = '<div class="session-empty">No active session — recordings won\'t be grouped. Click "New session" to start one.</div>';
         sessionStartBtn.disabled = false;
         sessionStartBtn.title = '';
