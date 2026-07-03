@@ -80,7 +80,46 @@ function makeHandRig(color, opacity) {
     return { group, joints, bones, positions };
 }
 
-let realRig, predRig;
+// TWO-HAND SLOTS (Tory, Clark session: "I only see one virtual hand"): the
+// viewer used to hold a single real+pred rig pair, so two-hand mode (quest-left
+// + quest-right) only ever showed the first device. Each side now has its own
+// slot -- real + predicted rigs inside a parent group offset left/right of the
+// origin, with an L/R sprite so the sides stay identifiable while orbiting.
+const SLOT_OFFSET_X = 0.11;
+const slots = { left: null, right: null };
+
+function makeSideLabel(text) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'rgba(138, 146, 163, 0.9)';
+    ctx.font = 'bold 96px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, 64, 70);
+    const tex = new THREE.CanvasTexture(c);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex, transparent: true, depthTest: false }));
+    sprite.scale.set(0.04, 0.04, 1);
+    sprite.position.set(0, -0.11, 0);
+    return sprite;
+}
+
+function makeSlot(side) {
+    const parent = new THREE.Group();
+    parent.position.x = side === 'left' ? -SLOT_OFFSET_X : SLOT_OFFSET_X;
+    const realRig = makeHandRig(COLOR_REAL, 1.0);
+    const predRig = makeHandRig(COLOR_PRED, 0.55);
+    predRig.group.visible = false;
+    const label = makeSideLabel(side === 'left' ? 'L' : 'R');
+    label.visible = false;
+    parent.add(realRig.group, predRig.group, label);
+    scene.add(parent);
+    return {
+        parent, realRig, predRig, label,
+        outReal: Array.from({ length: N_JOINTS }, () => new THREE.Vector3()),
+        outPred: Array.from({ length: N_JOINTS }, () => new THREE.Vector3()),
+    };
+}
 
 // Scratch objects reused per update (no per-frame allocation).
 const _wristPos = new THREE.Vector3();
@@ -126,23 +165,33 @@ function layoutHand(flat, rig, outPositions) {
     return true;
 }
 
-const _realOut = Array.from({ length: N_JOINTS }, () => new THREE.Vector3());
-const _predOut = Array.from({ length: N_JOINTS }, () => new THREE.Vector3());
-
-// Auto-framing target + fit radius, recomputed from the real hand each update
-// so any hand size/pose fills the viewport (the hand extends up from the
-// wrist, so looking at the wrist alone wastes the lower half of the view).
+// Auto-framing target + fit radius, recomputed over EVERY visible hand (plus
+// its slot offset) so one hand fills the view and two hands both fit.
 const _focus = new THREE.Vector3();
 let _fitRadius = 0.1;
+const _fp = new THREE.Vector3();
 
-function computeFraming(pts) {
+function recomputeFraming() {
     _focus.set(0, 0, 0);
-    for (let i = 0; i < N_JOINTS; i++) _focus.add(pts[i]);
-    _focus.multiplyScalar(1 / N_JOINTS);
+    let count = 0;
+    for (const side of ['left', 'right']) {
+        const s = slots[side];
+        if (!s || !s.realRig.group.visible) continue;
+        for (let i = 0; i < N_JOINTS; i++) {
+            _focus.add(_fp.copy(s.outReal[i]).add(s.parent.position));
+            count++;
+        }
+    }
+    if (!count) return;
+    _focus.multiplyScalar(1 / count);
     let maxR = 0;
-    for (let i = 0; i < N_JOINTS; i++) {
-        const d = pts[i].distanceTo(_focus);
-        if (d > maxR) maxR = d;
+    for (const side of ['left', 'right']) {
+        const s = slots[side];
+        if (!s || !s.realRig.group.visible) continue;
+        for (let i = 0; i < N_JOINTS; i++) {
+            const d = _fp.copy(s.outReal[i]).add(s.parent.position).distanceTo(_focus);
+            if (d > maxR) maxR = d;
+        }
     }
     _fitRadius = maxR || 0.1;
 }
@@ -204,11 +253,8 @@ const OMHandViewer = {
         renderer.domElement.style.height = '100%';
         container.appendChild(renderer.domElement);
 
-        realRig = makeHandRig(COLOR_REAL, 1.0);
-        predRig = makeHandRig(COLOR_PRED, 0.55);
-        predRig.group.visible = false;
-        scene.add(realRig.group);
-        scene.add(predRig.group);
+        slots.left = makeSlot('left');
+        slots.right = makeSlot('right');
 
         // Drag to rotate (pauses auto-rotate while dragging).
         const el = renderer.domElement;
@@ -234,16 +280,29 @@ const OMHandViewer = {
         animate();
     },
 
-    // realFlat: live captured hand. predFlat: model prediction (or null/short
-    // for a non-quest model -> predicted hand hidden).
+    // Per-side update. side: 'left' | 'right'. realFlat: live captured hand
+    // (null/short hides that side). predFlat: model prediction for that side's
+    // band (null/short hides the ghost).
+    updateHand(side, realFlat, predFlat) {
+        if (!renderer) return;
+        const s = slots[side];
+        if (!s) return;
+        const hasReal = layoutHand(realFlat, s.realRig, s.outReal);
+        s.label.visible = hasReal;
+        if (hasReal && predFlat && predFlat.length >= N_JOINTS * FLOATS_PER_JOINT) {
+            layoutHand(predFlat, s.predRig, s.outPred);
+        } else {
+            s.predRig.group.visible = false;
+        }
+        recomputeFraming();
+    },
+
+    // Back-compat single-hand API (pre-two-slot callers): drives the right
+    // slot and clears the left.
     update(realFlat, predFlat) {
         if (!renderer) return;
-        if (layoutHand(realFlat, realRig, _realOut)) computeFraming(_realOut);
-        if (predFlat && predFlat.length >= N_JOINTS * FLOATS_PER_JOINT) {
-            layoutHand(predFlat, predRig, _predOut);
-        } else {
-            predRig.group.visible = false;
-        }
+        this.updateHand('left', null, null);
+        this.updateHand('right', realFlat, predFlat);
     },
 
     setVisible(v) {

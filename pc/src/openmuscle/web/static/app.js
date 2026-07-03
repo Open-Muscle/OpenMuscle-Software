@@ -119,7 +119,7 @@ function handleTick(msg) {
     // quest_hand 3D viewer: when a hand label source is streaming, swap the
     // LASK5 piston comparator for a live 3D hand (the pistons are zeros for
     // a hand source). No-op when no quest_hand device is present.
-    renderHandViewer(lastDevices.find(d => d.device_type === 'quest_hand'),
+    renderHandViewer(lastDevices.filter(d => d.device_type === 'quest_hand'),
                      msg.inference);
     // IMU orientation widget: drive from a device carrying the fast data.imu
     // (prefer the selected device; else the first with imu).
@@ -161,10 +161,10 @@ function renderImuViewer() {
 // a quest-trained model (>= 25 joints * 7 floats) is running. Toggles the
 // .hand-mode class on .comparator so CSS hides the LASK5 pistons in favor of
 // the viewer.
-function renderHandViewer(questDev, inference) {
+function renderHandViewer(questDevs, inference) {
     const comparator = document.querySelector('.comparator');
     const viewerReady = window.OMHandViewer && window.OMHandViewer.isReady;
-    if (!questDev) {
+    if (!questDevs || !questDevs.length) {
         if (comparator) comparator.classList.remove('hand-mode');
         if (viewerReady && window.OMHandViewer.isReady()) window.OMHandViewer.setVisible(false);
         return;
@@ -180,20 +180,42 @@ function renderHandViewer(questDev, inference) {
     if (comparator) comparator.classList.add('hand-mode');
     window.OMHandViewer.setVisible(true);
 
-    const realFlat = Array.isArray(questDev.values) ? questDev.values : null;
-    // Predicted hand: only when the live model emits a full hand vector.
-    let predFlat = null;
-    const pv = inference && inference.piston_values;
-    if (Array.isArray(pv) && pv.length >= 25 * 7) predFlat = pv;
-    window.OMHandViewer.update(realFlat, predFlat);
-
-    // Reuse the existing GT meta slot to label the hand source.
-    const gtMeta = document.getElementById('lask-meta');
-    if (gtMeta) {
-        const hz = (typeof questDev.hz === 'number') ? questDev.hz.toFixed(0) : '0';
-        const nJoints = realFlat ? Math.floor(realFlat.length / 7) : 0;
-        gtMeta.textContent = `Quest hand · ${nJoints} joints · ${hz} Hz`;
+    // BOTH hands (Tory, Clark session): route each quest device to its side's
+    // viewer slot. A hand that stopped updating (tracking lost / left the view)
+    // is hidden rather than frozen -- a stale skeleton reads as "still fine".
+    const byDev = (inference && inference.by_device) || {};
+    const metaBits = [];
+    for (const side of ['left', 'right']) {
+        const q = questDevs.find(d =>
+            String(d.device_id).toLowerCase().includes(side));
+        const fresh = q && (q.last_seen_age == null || q.last_seen_age < 2.0);
+        const realFlat = (fresh && Array.isArray(q.values)
+                          && q.values.length >= 25 * 7) ? q.values : null;
+        // Predicted ghost for this side = the prediction of the band TAGGED
+        // this side (separate-model-per-hand routing, same as the VR ghosts).
+        let predFlat = null;
+        const band = lastDevices.find(d =>
+            d.device_type === 'flexgrid' && d.role === side);
+        const pv = band && byDev[band.device_id];
+        if (Array.isArray(pv) && pv.length >= 25 * 7) predFlat = pv;
+        window.OMHandViewer.updateHand(side, realFlat, predFlat);
+        if (realFlat) {
+            metaBits.push(`${side[0].toUpperCase()} ${q.hz?.toFixed?.(0) || 0} Hz${predFlat ? ' +ghost' : ''}`);
+        }
     }
+    // Single-hand fallback: an unsided quest device (e.g. plain "quest-hand")
+    // drives the right slot with the shared-model prediction, as before.
+    if (!metaBits.length) {
+        const q = questDevs[0];
+        const pv = inference && inference.piston_values;
+        window.OMHandViewer.update(
+            Array.isArray(q.values) ? q.values : null,
+            (Array.isArray(pv) && pv.length >= 25 * 7) ? pv : null);
+        metaBits.push(`${q.hz?.toFixed?.(0) || 0} Hz`);
+    }
+
+    const gtMeta = document.getElementById('lask-meta');
+    if (gtMeta) gtMeta.textContent = `Quest hands · ${metaBits.join(' · ')}`;
 }
 
 // ---------- native V4 discovery (Sources rail) ----------
