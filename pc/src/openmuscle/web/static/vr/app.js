@@ -311,6 +311,9 @@ const debugState = { leftHand: false, rightHand: false, liveWs: false,
 // can frame-accurately pair the video to a CSV row when scrubbing later.
 let slateMesh, slateCanvas, slateCtx, slateTex;
 let slateShownUntil = 0;
+// Head-locked REC pill (created next to the slate in the scene setup).
+let recPillMesh, recPillCanvas, recPillCtx, recPillTex;
+let _recPillLastText = null;
 const SYNC_SLATE_MS = 2500;
 const SLATE_W = 0.60;
 const SLATE_H = 0.20;
@@ -803,6 +806,24 @@ function initScene() {
                                        depthWrite: false }));
     slateMesh.visible = false;
     scene.add(slateMesh);
+
+    // Head-locked REC pill: a small always-in-view "● REC m:ss" HUD shown while
+    // a recording is active, WHEREVER the wearer looks. The menu's REC/STOP
+    // button + header live in world space, so a wearer who isn't facing the
+    // panels (e.g. the headset person while the PC operator drives) had no
+    // steady indication a take was rolling (board #0314.8 / Tory live ask).
+    recPillCanvas = document.createElement('canvas');
+    recPillCanvas.width = 640; recPillCanvas.height = 160;
+    recPillCtx = recPillCanvas.getContext('2d');
+    recPillTex = makeUITexture(recPillCanvas);
+    recPillTex.colorSpace = THREE.SRGBColorSpace;
+    recPillMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.26, 0.065),
+        new THREE.MeshBasicMaterial({ map: recPillTex, transparent: true,
+                                      depthTest: false, depthWrite: false }));
+    recPillMesh.renderOrder = 999;      // HUD: never occluded by panels
+    recPillMesh.visible = false;
+    scene.add(recPillMesh);
 
     // Pinch progress ring (drawn on a small canvas, pinned to the captured hand's
     // wrist each frame; opacity scales with pinch hold time)
@@ -2799,6 +2820,85 @@ function showSyncSlate(filename, unixMs) {
     slateShownUntil = performance.now() + SYNC_SLATE_MS;
 }
 
+// Stop cue: when the recording ends (in-VR STOP or the PC operator's stop), a
+// brief green "SAVED" slate pops in front of the wearer so the headset person
+// KNOWS the take closed -- the counterpart of the sync slate at start.
+function showStopSlate(filename, durationS, rows) {
+    const ctx = slateCtx;
+    const W = slateCanvas.width, H = slateCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(8, 20, 12, 0.92)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, W - 10, H - 10);
+    ctx.fillStyle = '#22c55e';
+    ctx.font = 'bold 170px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('■ SAVED', W / 2, H * 0.30);
+    ctx.fillStyle = '#e7e9ee';
+    ctx.font = '64px ui-monospace, monospace';
+    ctx.fillText(String(filename || ''), W / 2, H * 0.62);
+    const secs = Math.max(0, Math.round(durationS || 0));
+    ctx.fillText(`${secs}s · ${rows || 0} rows`, W / 2, H * 0.85);
+    slateTex.needsUpdate = true;
+    // Pop in front of wherever the wearer is looking right now.
+    const head = renderer.xr.getCamera ? renderer.xr.getCamera() : camera;
+    _recFwd.set(0, 0, -1).applyQuaternion(head.quaternion);
+    slateMesh.position.copy(head.position).addScaledVector(_recFwd, 0.55);
+    slateMesh.lookAt(head.position);
+    slateMesh.visible = true;
+    slateShownUntil = performance.now() + SYNC_SLATE_MS;
+}
+
+// ---- head-locked REC pill ----
+
+const _recFwd = new THREE.Vector3();
+const _recUp = new THREE.Vector3();
+
+function drawRecPill(txt, dotOn) {
+    const ctx = recPillCtx;
+    const W = recPillCanvas.width, H = recPillCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(12, 14, 18, 0.78)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(0, 0, W, H, 60); else ctx.rect(0, 0, W, H);
+    ctx.fill();
+    // Blinking red dot (parity of the elapsed second)
+    ctx.fillStyle = dotOn ? '#ef4444' : 'rgba(239, 68, 68, 0.25)';
+    ctx.beginPath();
+    ctx.arc(H * 0.5, H * 0.5, H * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 88px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, H * 0.95, H * 0.54);
+    recPillTex.needsUpdate = true;
+}
+
+function updateRecPill() {
+    if (!recPillMesh) return;
+    if (!uiState.recording) {
+        recPillMesh.visible = false;
+        _recPillLastText = null;
+        return;
+    }
+    const secs = Math.max(0, Math.floor(uiState.recDurationS || 0));
+    const txt = `REC ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    if (txt !== _recPillLastText) {
+        drawRecPill(txt, secs % 2 === 0);
+        _recPillLastText = txt;
+    }
+    // Head-locked: upper-center of the view, following the head every frame.
+    const head = renderer.xr.getCamera ? renderer.xr.getCamera() : camera;
+    _recFwd.set(0, 0, -1).applyQuaternion(head.quaternion);
+    _recUp.set(0, 1, 0).applyQuaternion(head.quaternion);
+    recPillMesh.position.copy(head.position)
+        .addScaledVector(_recFwd, 0.75)
+        .addScaledVector(_recUp, 0.22);
+    recPillMesh.lookAt(head.position);
+    recPillMesh.visible = true;
+}
+
 function updateSlateVisibility() {
     if (slateMesh.visible && performance.now() > slateShownUntil) {
         slateMesh.visible = false;
@@ -3698,7 +3798,16 @@ function updateFromSnapshot(snap, timestampMs) {
             showSyncSlate(rec.filename, rec.started_at_ms || Date.now());
         }
         uiState.recording = true;
+        // Feed the head-locked REC pill + the stop cue (falling edge below).
+        uiState.recDurationS = rec.duration_s || 0;
+        uiState.recFilename = rec.filename;
+        uiState.recRows = rec.rows || 0;
     } else {
+        if (uiState.recording) {
+            // Falling edge: the take just ended (in-VR STOP or the PC operator
+            // hit stop) -- confirm it to the wearer with a SAVED slate.
+            showStopSlate(uiState.recFilename, uiState.recDurationS, uiState.recRows);
+        }
         const fgHz = fg ? `${fg.hz?.toFixed?.(0) || '0'} Hz` : 'no FlexGrid';
         const questDev = (snap.devices || []).find(d => d.device_type === 'quest_hand');
         const questHz = questDev ? `${questDev.hz?.toFixed?.(0) || '0'} Hz` : 'no Quest';
@@ -4042,6 +4151,7 @@ function onXRFrameImpl(timestamp, frame) {
     updateButtonVisual();
     updateFromSnapshot(latestSnapshot, timestamp);
     updateSlateVisibility();
+    updateRecPill();               // head-locked REC HUD while a take is rolling
     setRecordingCollapsedUI(uiState.recording);   // swap menu <-> STOP every frame
 
     // Debug overlay: refresh the link/visibility signals + redraw at ~4 Hz.

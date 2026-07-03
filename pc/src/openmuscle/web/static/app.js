@@ -1282,7 +1282,14 @@ function captureIsInActiveSession(c) {
     return false;
 }
 
+// SESSION VIEW (Tory, Clark session): when a session is active the table shows
+// ONLY that session's takes -- the lab tech shouldn't wade through history
+// mid-session. A toggle row reveals the rest on demand.
+let showAllCaptures = false;
+let _lastCapturesList = [];
+
 function renderCaptures(list) {
+    _lastCapturesList = list;
     // Prune selection set down to captures that still exist
     const existing = new Set(list.map(c => c.name));
     for (const n of [...selectedCaptures]) {
@@ -1295,20 +1302,30 @@ function renderCaptures(list) {
         return;
     }
 
-    // When a session is active, dim captures that aren't part of it
-    // rather than hiding them outright (less surprising; the operator
-    // can still see the full history but the "current session" rows
-    // pop visually).
-    const rows = list.map(c => {
+    // Session view: filter to the active session unless "show all" is on.
+    let working = list;
+    let hiddenCount = 0;
+    if (activeSession && !showAllCaptures) {
+        working = list.filter(c => captureIsInActiveSession(c));
+        hiddenCount = list.length - working.length;
+    }
+
+    const rows = working.map(c => {
         const date = new Date(c.mtime * 1000).toLocaleString();
         const kb = (c.size_bytes / 1024).toFixed(1);
         const checked = selectedCaptures.has(c.name) ? 'checked' : '';
         const metaCell = renderCaptureMetaSummary(c.meta);
         const outsideSession = !captureIsInActiveSession(c);
         const trClass = outsideSession ? ' class="outside-session"' : '';
+        // 1H/2H badge: was this take one band or a true two-hand capture?
+        // (backend list_captures counts left+right roles in the CSV.)
+        const hands = c.hands === 2
+            ? '<span class="hands-badge h2" title="two-hand capture (left + right bands)">2H</span>'
+            : (c.hands === 1
+                ? '<span class="hands-badge h1" title="single-band capture">1H</span>' : '');
         return `<tr${trClass} data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
-            <td>${escapeHtml(c.name)}</td>
+            <td>${hands} ${escapeHtml(c.name)}</td>
             <td>${metaCell}</td>
             <td>${kb} KB</td>
             <td>${escapeHtml(date)}</td>
@@ -1320,7 +1337,19 @@ function renderCaptures(list) {
             </td>
         </tr>`;
     }).join('');
-    capturesBody.innerHTML = rows;
+    const emptySession = (!working.length)
+        ? '<tr class="empty"><td colspan="6">No captures in this session yet — hit Record.</td></tr>' : '';
+    const toggleRow = (activeSession && (hiddenCount > 0 || showAllCaptures))
+        ? `<tr class="show-all-row"><td colspan="6"><button class="link" id="captures-show-all">${
+            showAllCaptures ? '▾ hide captures outside this session'
+                            : `▸ show ${hiddenCount} older capture${hiddenCount === 1 ? '' : 's'} (outside this session)`
+          }</button></td></tr>` : '';
+    capturesBody.innerHTML = emptySession + rows + toggleRow;
+    const showAllBtn = document.getElementById('captures-show-all');
+    if (showAllBtn) showAllBtn.onclick = () => {
+        showAllCaptures = !showAllCaptures;
+        renderCaptures(_lastCapturesList);
+    };
     capturesBody.querySelectorAll('button[data-del]').forEach(btn => {
         btn.onclick = async () => {
             const name = btn.dataset.del;
@@ -1754,12 +1783,12 @@ function renderInferenceControls(inf) {
     inferToggleBtn.disabled = !hasModel;
     inferToggleBtn.classList.toggle('running', enabled);
     inferToggleBtn.classList.toggle('paused', hasModel && !enabled);
-    if (!hasModel)      inferToggleBtn.textContent = '▶ Start';
-    else if (enabled)   inferToggleBtn.textContent = '⏸ Pause';
-    else                inferToggleBtn.textContent = '▶ Resume';
+    if (!hasModel)      inferToggleBtn.textContent = '▶ Predict (no model — train first)';
+    else if (enabled)   inferToggleBtn.textContent = '⏸ Pause prediction';
+    else                inferToggleBtn.textContent = '▶ Predict';
     inferToggleBtn.title = hasModel
-        ? (enabled ? 'Click to pause inference' : 'Click to resume inference')
-        : 'Load a model from the Models panel first';
+        ? (enabled ? 'Prediction is LIVE — click to pause' : 'Click to start predicting')
+        : 'No model loaded: check a capture below and hit ⚙ Train (Stage 3), or pick one in the Models panel';
 
     // --- hand target input ---
     const hand = (inf && inf.hand_target) || '';

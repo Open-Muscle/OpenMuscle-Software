@@ -1512,3 +1512,14 @@ body.debug .debug-only { display: block; }
 /* Band heatmap layout toggle (side by side default; stacked = one above other) */
 .heatmap-hero-head { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 .heatmap-grids.stacked { grid-template-columns: 1fr; }
+
+/* Session view: 1H/2H capture badges + the show-all toggle row */
+.hands-badge {
+    display: inline-block; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border);
+    vertical-align: middle; margin-right: 2px;
+}
+.hands-badge.h2 { color: var(--green); border-color: rgba(44,209,106,0.5); }
+.hands-badge.h1 { color: var(--orange); border-color: rgba(255,164,44,0.5); }
+.show-all-row td { text-align: center; padding: 6px; }
+.show-all-row .link { color: var(--fg-dim); font-size: 12px; }
