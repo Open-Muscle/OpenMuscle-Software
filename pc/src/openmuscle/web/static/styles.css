@@ -1523,3 +1523,56 @@ body.debug .debug-only { display: block; }
 .hands-badge.h1 { color: var(--orange); border-color: rgba(255,164,44,0.5); }
 .show-all-row td { text-align: center; padding: 6px; }
 .show-all-row .link { color: var(--fg-dim); font-size: 12px; }
+
+/* ===== Responsive: half-screen windows and below ===== */
+/* The full-width layout above 1100px is untouched; everything here lives
+   in media queries. Two tiers: <=1100px reflows Stage 1 and stacks Stage 3
+   (the tables need real width before anything else), <=860px goes fully
+   single-column for half-screen (~700-860px) windows. Tables scroll inside
+   their own column, never the page body. */
+
+@media (max-width: 1100px) {
+    /* Stage 1: the fixed 220px rail starves the heatmaps and comparator
+       (the demo-critical surfaces). Promote the rail to a full-width band
+       on top and split the row between the two hero panels. */
+    .live-grid { grid-template-columns: 1fr 1fr; }
+    .devices-rail {
+        grid-column: 1 / -1;
+        /* Short cap so the band never dominates the stage; it scrolls. */
+        max-height: 40vh;
+    }
+    /* Tile device / source cards across the wide band instead of one
+       skinny scrolling column. */
+    .devices-rail .devices-compact {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 6px;
+    }
+    /* Grid gap replaces the per-card stacking margin. */
+    #device-list .device,
+    .discovery-compact .src { margin-bottom: 0; }
+
+    /* Stage 3: side-by-side tables crush at this width (capture names
+       wrap under the checkboxes, the Models table clips). Stack captures
+       over models; the train bridge becomes a slim horizontal divider,
+       which keeps the captures / train / models reading order. */
+    .data-grid { grid-template-columns: 1fr; }
+    .train-bridge { flex-direction: row; padding: 6px 0; }
+    .train-bridge .train-status { margin-top: 0; }
+    /* Tables keep a readable minimum width and scroll inside their own
+       column when the window is narrower than that. */
+    .captures-col, .models-col { overflow-x: auto; }
+    #captures-table { min-width: 540px; }
+    #models-table   { min-width: 520px; }
+}
+
+@media (max-width: 860px) {
+    /* Half-screen and below: single column everywhere, and trim the page
+       gutters so a ~700px window spends its pixels on content. */
+    header.topbar { padding: 10px 14px; }
+    main.studio { padding: 14px; gap: 14px; }
+    .stage { padding: 12px 12px 14px; }
+
+    .live-grid { grid-template-columns: 1fr; }
+    .capture-strip { grid-template-columns: 1fr; }
+}
