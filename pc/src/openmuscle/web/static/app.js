@@ -94,8 +94,18 @@ function handleTick(msg) {
     activeSession = msg.active_session || null;
     if (prevSessionId !== (activeSession ? activeSession.id : null)) {
         // Session changed -> re-fetch captures (server-side meta seeding
-        // means the row list may show new session_id tags).
+        // means the row list may show new session_id tags) AND models (the
+        // Models panel scopes to the active session, like captures do).
         refreshCaptures();
+        refreshModels();
+    }
+    // Engine slots changed (train/activate/auto-restore) -> re-badge the
+    // Models panel now rather than waiting for the 10s poll, so "active"
+    // chips always reflect what the router is really running.
+    const amSig = JSON.stringify((inferenceState && inferenceState.active_models) || null);
+    if (amSig !== _lastActiveModelsSig) {
+        _lastActiveModelsSig = amSig;
+        refreshModels();
     }
     renderActiveSession();
     renderDevices();
@@ -1552,34 +1562,94 @@ checkAll.onchange = () => {
 
 // ---------- training ----------
 
+// PC TRAIN TRAP (board #0314-adjacent): a role-less /api/train on a two-hand
+// capture builds the 120-feature bilateral-pivot model, which the per-band
+// router can never run (separate-model-per-hand needs one 60-feature model
+// per hand). The load guard rightly refuses it, so training LOOKED fine
+// (r2 printed) while the ghosts kept running the OLD models. Mirror the VR
+// TRAIN BOTH instead: any two-hand capture in the selection trains left,
+// then right, each into its own per-hand engine slot.
+
+async function postTrain(body) {
+    const r = await fetch('/api/train', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await readError(r));
+    return r.json();
+}
+
+// Loading a model does NOT auto-resume inference; say which state we're in
+// instead of implying predictions are flowing while paused.
+function trainRunHint() {
+    return (inferenceState && inferenceState.enabled)
+        ? 'predicting' : 'click ▶ Resume to run';
+}
+
 trainBtn.onclick = async () => {
     if (selectedCaptures.size === 0) return;
     const captures = [...selectedCaptures];
     const label = captures.length === 1 ? captures[0] : `${captures.length} captures`;
+    // Two-hand detection: /api/captures rows carry `hands` (2 = both roles in
+    // the CSV). ANY two-hand capture in the mix means per-hand training.
+    const byName = new Map(_lastCapturesList.map(c => [c.name, c]));
+    const twoHand = captures.some(n => (byName.get(n) || {}).hands === 2);
 
     trainBtn.disabled = true;
     trainStatus.className = 'train-status busy';
-    trainStatus.textContent = `⏳ Training on ${label}...`;
 
     try {
-        const r = await fetch('/api/train', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ captures, activate: true }),
-        });
-        if (!r.ok) throw new Error(await readError(r));
-        const result = await r.json();
-        const m = result.metrics || {};
-        const r2 = (m.r2 ?? 0).toFixed(3);
-        const mse = (m.mse ?? 0).toFixed(4);
-        const nf  = m.n_features ?? '?';
-        const nl  = m.n_labels ?? '?';
-        const nt  = m.n_train ?? '?';
-        // `active` from the API now means "loaded into engine", NOT "running".
-        // Inference stays paused on a fresh load -- operator clicks ▶ to run.
-        const loaded = result.active ? ' [loaded · click ▶ Resume to run]' : '';
-        trainStatus.className = 'train-status ok';
-        trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse}${loaded}`;
+        if (twoHand) {
+            // Sequential on purpose: each RF fit is CPU-bound 20-60s; two at
+            // once would just contend and blur the progress line.
+            const results = {};
+            for (const role of ['left', 'right']) {
+                trainStatus.className = 'train-status busy';
+                trainStatus.textContent = `⏳ Training ${role.toUpperCase()} hand on ${label}... (${role === 'left' ? '1' : '2'}/2)`;
+                results[role] = await postTrain({ captures, role, activate: true });
+            }
+            const r2s = {
+                left:  ((results.left.metrics  || {}).r2 ?? 0).toFixed(3),
+                right: ((results.right.metrics || {}).r2 ?? 0).toFixed(3),
+            };
+            // Activation must be LOUD: active=false means the load guard (or
+            // a load error) refused the model and the ghosts are still on the
+            // old one. That silent gap cost two capture sessions.
+            const failed = ['left', 'right'].filter(role => !results[role].active);
+            if (failed.length) {
+                const why = failed.map(role =>
+                    `${role.toUpperCase()}: ${results[role].activate_error || 'not loaded'}`).join(' · ');
+                trainStatus.className = 'train-status error';
+                trainStatus.textContent = `⚠ Trained (L R²=${r2s.left}, R R²=${r2s.right}) but NOT loaded: ${why}`;
+            } else {
+                trainStatus.className = 'train-status ok';
+                trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}`;
+            }
+        } else {
+            // All-single-band selection: today's pooled/role-less call.
+            trainStatus.textContent = `⏳ Training on ${label}...`;
+            const result = await postTrain({ captures, activate: true });
+            const m = result.metrics || {};
+            const r2 = (m.r2 ?? 0).toFixed(3);
+            const mse = (m.mse ?? 0).toFixed(4);
+            const nf  = m.n_features ?? '?';
+            const nl  = m.n_labels ?? '?';
+            const nt  = m.n_train ?? '?';
+            if (!result.active) {
+                // Trained-but-not-loaded is a FAILURE for live use: say why.
+                trainStatus.className = 'train-status error';
+                trainStatus.textContent = `⚠ Trained (R²=${r2}) but NOT loaded: ${result.activate_error || result.warning || 'activation refused'}`;
+            } else if (result.warning) {
+                // e.g. role-less bilateral pivot loading with no live band
+                // connected: on disk and loaded, but it can't drive ghosts.
+                trainStatus.className = 'train-status error';
+                trainStatus.textContent = `⚠ Trained + loaded, but: ${result.warning}`;
+            } else {
+                trainStatus.className = 'train-status ok';
+                trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]`;
+            }
+        }
         await refreshModels();
     } catch (e) {
         trainStatus.className = 'train-status error';
@@ -1602,13 +1672,52 @@ async function refreshModels() {
     }
 }
 
+// SESSION VIEW for models (same rule as captures): with a session active the
+// panel shows ONLY models trained in it (train_from_captures stamps
+// session_id into each model's metadata.json), so 35 historical models can't
+// bury the two you just trained. A toggle row reveals the rest on demand.
+let showAllModels = false;
+let _lastModelsList = [];
+
+// Engine-slot signature from the WS snapshot (inference.active_models); a
+// change re-triggers refreshModels from handleTick so badges track reality.
+let _lastActiveModelsSig = null;
+
+// Rebuild gate (same convention as renderDiscovery/_discoverySig): the table
+// re-renders on a 10s poll plus every engine-slot tick, and rebuilding under
+// the cursor would eat a "use" click. Skip the DOM rebuild unless the
+// rendered data actually changed.
+let _modelsSig = null;
+
 function renderModels(list) {
-    modelsCount.textContent = `${list.length} model${list.length === 1 ? '' : 's'}`;
+    _lastModelsList = list;
+
+    let working = list;
+    let outsideCount = 0;
+    if (activeSession) {
+        const inSession = list.filter(m => m.session_id === activeSession.id);
+        outsideCount = list.length - inSession.length;
+        if (!showAllModels) working = inSession;
+    }
+
+    const sig = JSON.stringify([
+        activeSession ? activeSession.id : null, showAllModels, outsideCount,
+        working.map(m => [m.name, m.created, m.path, m.active,
+                          (m.active_roles || []).join(','),
+                          (m.metrics || {}).role || '', m.session_id || '']),
+    ]);
+    if (sig === _modelsSig) return;
+    _modelsSig = sig;
+
+    modelsCount.textContent = (activeSession && !showAllModels)
+        ? `${working.length} of ${list.length} model${list.length === 1 ? '' : 's'} (this session)`
+        : `${list.length} model${list.length === 1 ? '' : 's'}`;
     if (!list.length) {
         modelsBody.innerHTML = '<tr class="empty"><td colspan="6">No models trained yet.</td></tr>';
         return;
     }
-    modelsBody.innerHTML = list.map(m => {
+
+    const rows = working.map(m => {
         const metrics = m.metrics || {};
         const r2  = (metrics.r2 ?? null);
         const mse = (metrics.mse ?? null);
@@ -1617,26 +1726,60 @@ function renderModels(list) {
         const r2s  = (r2 !== null && !isNaN(r2)) ? Number(r2).toFixed(3) : '—';
         const mses = (mse !== null && !isNaN(mse)) ? Number(mse).toFixed(4) : '—';
         const created = m.created ?? '';
-        const activeBadge = m.active ? '<span class="badge-active">active</span>' : '';
+        // Every engine slot this model occupies (shared and/or left/right);
+        // legacy `active` fallback keeps old payloads rendering.
+        const slots = m.active_roles || (m.active ? ['shared'] : []);
+        const slotTags = slots.filter(s => s !== 'shared')
+            .map(s => ' · ' + s[0].toUpperCase()).join('');
+        const activeBadge = slots.length
+            ? `<span class="badge-active" title="loaded in: ${slots.join(', ')}">active${slotTags}</span>`
+            : '';
+        // Per-hand role badge (separate-model-per-hand). Reuses the capture
+        // list's 1H/2H badge styling: green = left, orange = right.
+        const role = (metrics.role === 'left' || metrics.role === 'right')
+            ? metrics.role : null;
+        const roleBadge = role
+            ? `<span class="hands-badge ${role === 'left' ? 'h2' : 'h1'}" title="single-arm model, trained on role=${role} rows">${role === 'left' ? 'L' : 'R'}</span>`
+            : '';
         const escName = escapeHtml(m.name || '');
         const escPath = escapeHtml(m.path || '');
+        // Role-tagged models must load into their OWN per-hand slot; sending
+        // them to the shared endpoint leaves the router on the old model.
+        const useBtn = slots.length ? '' :
+            `<button class="link" data-activate="${escPath}" data-role="${role || ''}">use</button>`;
         return `<tr>
-            <td>${escName} ${activeBadge}</td>
+            <td>${roleBadge} ${escName} ${activeBadge}</td>
             <td>${escapeHtml(created)}</td>
             <td>${r2s}</td>
             <td>${mses}</td>
             <td>${nf} × ${nl}</td>
-            <td class="actions">
-                ${m.active ? '' :
-                  `<button class="link" data-activate="${escPath}">use</button>`}
-            </td>
+            <td class="actions">${useBtn}</td>
         </tr>`;
     }).join('');
+
+    const emptySession = (!working.length)
+        ? '<tr class="empty"><td colspan="6">No models trained in this session yet · select captures and hit Train.</td></tr>' : '';
+    const toggleRow = (activeSession && (outsideCount > 0 || showAllModels))
+        ? `<tr class="show-all-row"><td colspan="6"><button class="link" id="models-show-all">${
+            showAllModels ? '▾ hide models outside this session'
+                          : `▸ show all ${list.length} models`
+          }</button></td></tr>` : '';
+    modelsBody.innerHTML = emptySession + rows + toggleRow;
+
+    const showAllBtn = document.getElementById('models-show-all');
+    if (showAllBtn) showAllBtn.onclick = () => {
+        showAllModels = !showAllModels;
+        renderModels(_lastModelsList);
+    };
+
     modelsBody.querySelectorAll('button[data-activate]').forEach(btn => {
         btn.onclick = async () => {
             const path = btn.dataset.activate;
+            const role = btn.dataset.role;
+            const endpoint = (role === 'left' || role === 'right')
+                ? `/api/inference/model/${role}` : '/api/inference/model';
             try {
-                const r = await fetch('/api/inference/model', {
+                const r = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path }),
@@ -1644,6 +1787,9 @@ function renderModels(list) {
                 if (!r.ok) throw new Error(await readError(r));
                 await refreshModels();
             } catch (e) {
+                // Surface the load guard's refusal (e.g. "expects 120
+                // features but the connected band has 60 cells") instead of
+                // failing silently like the train trap did.
                 alert(`Activate failed: ${e.message}`);
             }
         };

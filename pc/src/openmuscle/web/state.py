@@ -1051,6 +1051,17 @@ class AppState:
         hand_str = (f"{self.hand_target[0]}:{self.hand_target[1]}"
                     if self.hand_target else None)
 
+        # Which model dir occupies each engine slot (shared + per-hand). The
+        # Models panel badges rows against this, so "trained but not loaded"
+        # can no longer masquerade as active (the PC train trap's silent half).
+        active_models = {
+            "shared": self.engine.name if self.engine else None,
+            "left": (self.engines["left"].name
+                     if self.engines.get("left") else None),
+            "right": (self.engines["right"].name
+                      if self.engines.get("right") else None),
+        }
+
         if not self._has_any_engine():
             return {
                 "available": False,
@@ -1059,6 +1070,7 @@ class AppState:
                 "piston_values": None,
                 "status": self.engine_status,
                 "hand_target": hand_str,
+                "active_models": active_models,
             }
 
         model_label = self._model_label()
@@ -1070,6 +1082,7 @@ class AppState:
                 "piston_values": None,
                 "status": "paused",
                 "hand_target": hand_str,
+                "active_models": active_models,
             }
 
         # Mark as stale if no frame has come through recently (e.g. FlexGrid
@@ -1104,6 +1117,7 @@ class AppState:
             "by_device": by_device,
             "status": status,
             "hand_target": hand_str,
+            "active_models": active_models,
         }
 
     # ----- recording -----
@@ -1735,6 +1749,32 @@ class AppState:
             "sample_rates_hz": {d["device_id"]: d["hz"] for d in devices},
         }
 
+    def _model_wearer_mismatch(self, session_wearer) -> list:
+        """Roles (left/right) whose loaded model was trained on a DIFFERENT
+        wearer than `session_wearer`. Each engine's metadata.json rides in as
+        InferenceEngine.metadata; train_from_captures stamps `wearer` there.
+        Empty list when nothing mismatches or nothing is stamped."""
+        mismatched = []
+        wearer = str(session_wearer or "").strip().lower()
+        if not wearer:
+            return mismatched
+        for r in ("left", "right"):
+            eng = self.engines.get(r)
+            if eng is None:
+                continue
+            try:
+                model_wearer = str(
+                    (eng.metadata or {}).get("wearer") or "").strip().lower()
+            except Exception:
+                model_wearer = ""
+            if model_wearer and model_wearer != wearer:
+                mismatched.append(r)
+                self.log_buffer.warn("session",
+                    "{}-hand model was trained on wearer '{}' but this "
+                    "session's wearer is '{}'; retrain or pick a matching "
+                    "model".format(r, model_wearer, wearer))
+        return mismatched
+
     def start_session(self, name: str = "", subject: str = "", arm: Optional[str] = None,
                       gestures: Optional[list] = None, notes: str = "",
                       tags: Optional[list] = None, wearer: str = "",
@@ -1783,6 +1823,16 @@ class AppState:
             "captures": [],
             "capture_count": 0,
         }
+        # Cross-wearer model guard (the CLARK trap): a server restart once
+        # auto-restored the PREVIOUS wearer's models as newest-on-disk 27s
+        # before a new wearer's session, and cross-wearer inference measured
+        # ~47x worse (mean |err| 0.336 vs 0.0072). train_from_captures stamps
+        # `wearer` into model metadata, so compare each loaded per-hand engine
+        # against this session's wearer and shout NOW, while a retrain is
+        # cheap. Defensive: unstamped models (or no wearer on the session)
+        # produce no warning.
+        session["model_wearer_mismatch"] = self._model_wearer_mismatch(
+            session.get("wearer"))
         self._write_session(session)
         self.active_session = session
         self.log_buffer.info("session",
@@ -2138,7 +2188,56 @@ class AppState:
         # recent registry dir (timestamp suffix monotonic) to get its path.
         model_path = self._latest_registered_model_path()
 
+        # PC TRAIN TRAP (board #0314-adjacent): a role-less train on a two-hand
+        # capture pivots to the bilateral Left||Right matrix (120 features for
+        # two V4 bands). The per-band router needs one single-arm model per
+        # hand, so the load guard refuses that model against a live 60-cell
+        # band and the ghosts silently keep running the OLD models while the
+        # r2 printout looks like success. Allowed for CLI/offline analysis,
+        # but the payload + log must say so out loud. Detection: the pivot
+        # renames sensor columns to <feat>_L / <feat>_R (dataset.py).
+        warning = None
+        if role is None:
+            sensor_cols = metrics.get("sensor_columns") or []
+            if (any(c.endswith("_L") for c in sensor_cols)
+                    and any(c.endswith("_R") for c in sensor_cols)):
+                warning = (
+                    "bilateral pivot model ({} features): trained on the "
+                    "Left||Right concat, will not drive per-hand ghosts (the "
+                    "per-band router needs one single-arm model per hand). "
+                    "Use role=left/right instead; this pooled model is for "
+                    "CLI/offline analysis only.".format(
+                        metrics.get("n_features", 0)))
+                self.log_buffer.warn("training", warning)
+
+        # Session provenance stamp: merge session + source-capture fields into
+        # the fresh model dir's metadata.json so the Models panel can scope
+        # its list to the active session (35 historical models were burying
+        # Tory's two fresh ones). registry.list_models reads metadata.json
+        # wholesale, so /api/models carries these for free. Defensive: a
+        # stamp failure must never fail a finished training run.
+        if model_path:
+            try:
+                meta_path = Path(model_path).parent / "metadata.json"
+                with open(meta_path) as f:
+                    model_meta = json.load(f)
+                model_meta["captures"] = list(capture_names)
+                if self.active_session is not None:
+                    model_meta["session_id"] = self.active_session.get("id")
+                    model_meta["session_name"] = self.active_session.get("name")
+                    model_meta["wearer"] = self.active_session.get("wearer")
+                # train_model already stamps metrics.role; re-merge defensively
+                # so an older save path can't drop it (the auto-restore scan
+                # and the Models panel badges both read it from metrics).
+                model_meta.setdefault("metrics", {}).setdefault("role", role)
+                with open(meta_path, "w") as f:
+                    json.dump(model_meta, f, indent=2)
+            except Exception as e:
+                self.log_buffer.warn(
+                    "training", "model metadata stamp failed: {}".format(e))
+
         activated = False
+        activate_error = None
         if activate and model_path:
             try:
                 if role in ("left", "right"):
@@ -2148,7 +2247,11 @@ class AppState:
                 activated = True
             except Exception as e:
                 # Don't fail the whole training response if hot-swap fails;
-                # the file is on disk, the operator can still load it.
+                # the file is on disk, the operator can still load it. But DO
+                # carry the reason in the payload: a guard-refused model that
+                # reports only active=false reads as success in the UI, which
+                # is exactly how the train trap stayed invisible.
+                activate_error = str(e)
                 self.engine_status = "trained but activate failed: {}".format(e)
                 self.log_buffer.error("training", "load-after-train failed: {}".format(e))
 
@@ -2166,6 +2269,11 @@ class AppState:
             "model_path": model_path,
             "metrics": metrics,
             "active": activated,
+            # Why activation failed (None when loaded). The UI must show this
+            # loudly; "trained but not loaded" burned two capture sessions.
+            "activate_error": activate_error,
+            # Non-fatal payload warning (bilateral pivot on role=None).
+            "warning": warning,
             "role": role,
             "captures": list(capture_names),
         }
@@ -2328,14 +2436,30 @@ class AppState:
             self._hand_sock = None
 
     def list_models(self) -> list:
-        """List models in the registry, augmented with `active` flag."""
+        """List models in the registry, augmented with per-slot active flags.
+
+        `active` keeps its legacy meaning (loaded in the SHARED engine slot);
+        `active_roles` lists every slot the model occupies (shared/left/right)
+        so the UI can badge per-hand models too. Session provenance fields
+        (session_id, wearer, captures) ride along from metadata.json, which
+        train_from_captures stamps after each run.
+        """
         from openmuscle.ml.registry import ModelRegistry
         reg = ModelRegistry()
         out = []
-        active_path = str(self.engine.model_path) if self.engine else None
+        # Map registry path -> occupied engine slots (separate-model-per-hand).
+        slot_by_path: dict = {}
+        if self.engine is not None:
+            slot_by_path.setdefault(str(self.engine.model_path), []).append("shared")
+        for r in ("left", "right"):
+            eng = self.engines.get(r)
+            if eng is not None:
+                slot_by_path.setdefault(str(eng.model_path), []).append(r)
         for m in reg.list_models():
             entry = dict(m)
-            entry["active"] = (entry.get("path") == active_path)
+            slots = slot_by_path.get(entry.get("path"), [])
+            entry["active"] = "shared" in slots
+            entry["active_roles"] = slots
             out.append(entry)
         # Newest first in the UI
         out.reverse()
