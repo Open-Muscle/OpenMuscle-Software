@@ -658,6 +658,17 @@ main.studio {
 /* Junk takes (too few rows / too short) render dimmed when revealed */
 .junk-row td { opacity: .5; }
 
+/* Typeahead session picker (wave 2 of Tory's UI ask: type the start of a
+   session name, matches drop down). An <input list=...> reusing the select
+   styling; one instance per panel (captures + models), shared datalist. */
+.session-combo { width: 160px; }
+/* Free text that matches no session: the filter falls back to All so rows
+   never silently vanish; the tint tells the operator why. */
+.session-combo.filter-miss {
+    border-color: rgba(255, 164, 44, 0.6);
+    color: var(--orange);
+}
+
 /* ---- Inference REC+LIVE badge (shown only when recording and inference both running) ---- */
 
 .rec-live-badge {
@@ -1046,6 +1057,8 @@ button.primary.recording {
 #captures-table th.captures-check { width: 28px; }
 #captures-table td.captures-check { width: 28px; text-align: center; }
 
+/* Legacy "active" badge. Wave 2 replaced its usage with .model-slot-chip
+   (solid, per-slot); kept per the moved-never-deleted convention. */
 #models-table .badge-active {
     background: rgba(44, 209, 106, 0.15);
     color: var(--green);
@@ -1053,6 +1066,38 @@ button.primary.recording {
     border-radius: 999px;
     font-size: 11px;
     font-weight: 600;
+}
+
+/* Chosen-model highlight (wave 2, Tory: "make it clear and highlighted
+   which one(s) are chosen"). Rows loaded in an engine slot pin to the top
+   of the table with a green accent border + tint + solid slot chips, so the
+   running model(s) read at a glance under any filter combination. */
+#models-table tr.model-active-row td { background: rgba(44, 209, 106, 0.07); }
+#models-table tr.model-active-row td:first-child {
+    border-left: 3px solid var(--green);
+}
+.model-slot-chip {
+    display: inline-block;
+    background: var(--green);
+    color: #06210f;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+/* Thin divider between the pinned in-use rows above and the filtered list
+   below them. */
+#models-table tr.models-inuse-divider td {
+    padding: 2px 10px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    text-align: center;
+    color: var(--green);
+    background: rgba(44, 209, 106, 0.05);
+    border-bottom: 1px solid rgba(44, 209, 106, 0.35);
 }
 
 .train-status {
@@ -1592,6 +1637,9 @@ body.debug .debug-only { display: block; }
 }
 .hands-badge.h2 { color: var(--green); border-color: rgba(44,209,106,0.5); }
 .hands-badge.h1 { color: var(--orange); border-color: rgba(255,164,44,0.5); }
+/* Old models "show all N" toggle row. Wave 2 replaced the toggle with the
+   models filter bar (the session picker's "All sessions" covers it); rules
+   kept per the moved-never-deleted convention. */
 .show-all-row td { text-align: center; padding: 6px; }
 .show-all-row .link { color: var(--fg-dim); font-size: 12px; }
 

@@ -299,6 +299,13 @@
                 </div>
             </div>
 
+            <!-- Shared typeahead options for BOTH session pickers (captures +
+                 models). One datalist, two inputs; app.js rebuilds it
+                 sig-gated on the session list (wave 2 of Tory's UI ask:
+                 "type the start of a session name and have them show up in
+                 a drop down"). -->
+            <datalist id="session-datalist"></datalist>
+
             <div class="data-grid">
                 <!-- LEFT: captures -->
                 <div class="captures-col">
@@ -313,7 +320,13 @@
                          date / label-source / hands filters with AND; junk
                          takes hidden by default. app.js applyCaptureFilters(). -->
                     <div id="captures-filterbar" class="filter-bar">
-                        <select id="cap-filter-session" class="filter-select"></select>
+                        <!-- Typeahead session picker (was a <select>; same id
+                             kept so app.js/CSS churn stays minimal). Empty
+                             input = the default (Active when a session is
+                             live, All otherwise). -->
+                        <input id="cap-filter-session" class="filter-select session-combo"
+                               type="text" list="session-datalist" placeholder="All sessions"
+                               autocomplete="off" spellcheck="false">
                         <div class="chip-group" id="cap-filter-date">
                             <button class="filter-chip" data-days="1">today</button>
                             <button class="filter-chip" data-days="7">7d</button>
@@ -358,6 +371,27 @@
                     <div class="captures-header">
                         <h3>Models</h3>
                         <span id="models-count" class="sel-status"></span>
+                    </div>
+                    <!-- Models filter bar (wave 2 of Tory's UI ask: "models
+                         filterable as well"): session typeahead + role +
+                         wearer chips, AND-composed. Replaces the old binary
+                         session scope + "show all N models" toggle row; the
+                         picker's "All sessions" entry covers that job.
+                         app.js applyModelFilters(). -->
+                    <div id="models-filterbar" class="filter-bar">
+                        <input id="model-filter-session" class="filter-select session-combo"
+                               type="text" list="session-datalist" placeholder="All sessions"
+                               autocomplete="off" spellcheck="false">
+                        <div class="chip-group" id="model-filter-role">
+                            <button class="filter-chip" data-role="left" title="left-hand models (trained on role=left rows)">L</button>
+                            <button class="filter-chip" data-role="right" title="right-hand models (trained on role=right rows)">R</button>
+                            <button class="filter-chip" data-role="pooled" title="models without a per-hand role tag (bilateral / legacy)">pooled</button>
+                        </div>
+                        <!-- Wearer chips are data-driven: app.js fills this
+                             from the distinct wearers present in the model
+                             list, so it stays empty until models carry a
+                             wearer stamp. -->
+                        <div class="chip-group" id="model-filter-wearer"></div>
                     </div>
                     <table id="models-table">
                         <thead>

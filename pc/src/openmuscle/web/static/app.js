@@ -1008,11 +1008,12 @@ if (sessionChipNew) sessionChipNew.onclick = () => openSessionModal();
 let _activeSessionSig = null;
 
 function renderActiveSession() {
-    // Control-bar chip + captures-filter session plumbing ride the same
-    // per-tick call (both are cheap and sig/id-gated internally).
+    // Control-bar chip + session-picker plumbing (captures AND models share
+    // the typeahead datalist) ride the same per-tick call; all of it is
+    // sig/id-gated internally so ticks stay cheap.
     updateSessionChip();
-    syncCaptureFilterSession();
-    renderCaptureSessionOptions();
+    syncSessionFilterSnap();
+    renderSessionDatalist();
     if (activeSession) {
         const s = activeSession;
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
@@ -1073,6 +1074,9 @@ async function refreshPastSessions() {
         const activeId = activeSession ? activeSession.id : null;
         pastSessions = list.filter(s => s.id !== activeId);
         renderPastSessions();
+        // Keep the typeahead options fresh even between WS ticks (sig-gated,
+        // so this is a no-op unless the session list really changed).
+        renderSessionDatalist();
     } catch (e) { /* best-effort */ }
 }
 
@@ -1827,56 +1831,134 @@ function applyCaptureFilters(list) {
     });
 }
 
-// Session select: Active (when one exists) / All / unlinked / each past
-// session. Rebuilt only when the id list changes so an open dropdown
-// survives the 5Hz ticks driving this via renderActiveSession.
-let _capSessOptsSig = null;
+// ---------- shared session typeahead (captures + models pickers) ----------
+//
+// Wave 2 of Tory's UI ask: "type the start of a session name and have them
+// show up in a drop down". A plain <input> + one shared <datalist> gives
+// native prefix/substring matching with zero dependencies; both panels
+// (captures + models) wire their own input via wireSessionCombo below.
 
-function renderCaptureSessionOptions() {
-    if (!capFilterSession) return;
-    const sig = JSON.stringify([activeSession ? activeSession.id : null,
-                                pastSessions.map(s => s.id)]);
-    if (sig !== _capSessOptsSig) {
-        _capSessOptsSig = sig;
-        const opts = [];
-        if (activeSession) opts.push(['__active__', 'Active session']);
-        opts.push(['__all__', 'All sessions']);
-        opts.push(['__none__', 'No session (unlinked)']);
-        for (const s of pastSessions) {
-            const d = s.started_at ? new Date(s.started_at * 1000) : null;
-            const mmdd = d ? ` (${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')})` : '';
-            opts.push([s.id, `${s.name || s.id}${mmdd}`]);
-        }
-        capFilterSession.innerHTML = opts.map(([v, label]) =>
-            `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`).join('');
-    }
-    // A removed option (e.g. session deleted) falls back to All.
-    if (![...capFilterSession.options].some(o => o.value === capFilter.session)) {
-        capFilter.session = '__all__';
-    }
-    if (capFilterSession.value !== capFilter.session) {
-        capFilterSession.value = capFilter.session;
-    }
+const sessionDatalist = document.getElementById('session-datalist');
+
+// Display string -> canonical filter value ('__active__' | '__all__' |
+// '__none__' | session id). Rebuilt together with the datalist so the text
+// the user picked (or typed) maps back to an id by exact string match.
+let _sessionComboMap = new Map();
+const _sessionCombos = [];   // every wired combo, for bulk re-resolution
+
+function sessionDisplayString(s) {
+    const d = s.started_at ? new Date(s.started_at * 1000) : null;
+    const mmdd = d ? ` (${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')})` : '';
+    return `${s.name || s.id}${mmdd}`;
 }
 
-// Snap the session filter on session start/end (driven from the WS tick via
-// renderActiveSession): start -> Active session, end -> All sessions.
-let _capFilterSessionId;   // undefined = before first tick
+// Rebuilt only when the session list actually changes (ids AND names: a
+// rename must rebuild the options or typing the new name would miss), so an
+// open dropdown survives the 5Hz ticks driving this via renderActiveSession.
+let _sessionComboSig = null;
 
-function syncCaptureFilterSession() {
+function renderSessionDatalist() {
+    if (!sessionDatalist) return;
+    const sig = JSON.stringify([
+        activeSession ? [activeSession.id, activeSession.name] : null,
+        pastSessions.map(s => [s.id, s.name]),
+    ]);
+    if (sig === _sessionComboSig) return;
+    _sessionComboSig = sig;
+
+    const entries = [];   // [display, value]
+    if (activeSession) {
+        entries.push(['Active session', '__active__']);
+        // The active session is ALSO matchable by name, so typing works the
+        // same whether the session is live or already ended.
+        entries.push([sessionDisplayString(activeSession), activeSession.id]);
+    }
+    entries.push(['All sessions', '__all__']);
+    entries.push(['No session (unlinked)', '__none__']);
+    for (const s of pastSessions) entries.push([sessionDisplayString(s), s.id]);
+
+    _sessionComboMap = new Map(entries);
+    sessionDatalist.innerHTML = entries.map(([label]) =>
+        `<option value="${escapeHtml(label)}"></option>`).join('');
+
+    // Session list changed under a typed filter (rename/delete): re-resolve
+    // every combo so stale text degrades to "no filter" + .filter-miss
+    // instead of silently filtering on a dead id (replaces the old select's
+    // fall-back-to-All check).
+    _sessionCombos.forEach(c => c.resolve());
+}
+
+// One combobox = one input + the shared datalist. onChange fires with the
+// canonical value whenever the resolved filter changes; both panels pass
+// their sig-gated re-render so ticks/polls stay cheap and never rebuild an
+// input the user is typing in.
+function wireSessionCombo(input, onChange) {
+    const combo = {
+        value: '__all__',
+        resolve() {
+            const raw = input.value.trim();
+            let v; let miss = false;
+            if (!raw) {
+                // Empty input = the panel default: Active when a session is
+                // live, All otherwise (matches the old <select> defaults).
+                v = activeSession ? '__active__' : '__all__';
+            } else if (_sessionComboMap.has(raw)) {
+                v = _sessionComboMap.get(raw);
+            } else {
+                v = '__all__';   // unknown free text filters nothing
+                miss = true;
+            }
+            input.classList.toggle('filter-miss', miss);
+            input.title = miss ? 'No session matches this text; showing all' : '';
+            if (v !== combo.value) {
+                combo.value = v;
+                onChange(v);
+            }
+        },
+        // Session start/end snap: clear the text so the empty-input default
+        // takes over, and surface that default in the placeholder.
+        snap(v) {
+            input.value = '';
+            input.classList.remove('filter-miss');
+            input.title = '';
+            input.placeholder = activeSession ? 'Active session' : 'All sessions';
+            if (v !== combo.value) {
+                combo.value = v;
+                onChange(v);
+            }
+        },
+    };
+    // 'input' fires for both keystrokes and datalist picks, so the filter is
+    // live while typing; the blur/enter 'change' event adds nothing on top.
+    input.addEventListener('input', () => combo.resolve());
+    _sessionCombos.push(combo);
+    return combo;
+}
+
+const capSessionCombo = capFilterSession
+    ? wireSessionCombo(capFilterSession, v => {
+        capFilter.session = v;
+        renderCaptures(_lastCapturesList);
+    })
+    : null;
+
+// Snap BOTH session pickers on session start/end (driven from the WS tick
+// via renderActiveSession): start -> Active session, end -> All sessions.
+let _sessionSnapId;   // undefined = before first tick
+
+function syncSessionFilterSnap() {
     const sid = activeSession ? activeSession.id : null;
-    if (sid === _capFilterSessionId) return;
-    _capFilterSessionId = sid;
-    capFilter.session = sid ? '__active__' : '__all__';
-    // Immediate re-render with whatever list we have; handleTick's
-    // refreshCaptures (on session change) replaces it once fetched.
+    if (sid === _sessionSnapId) return;
+    _sessionSnapId = sid;
+    const v = sid ? '__active__' : '__all__';
+    if (capSessionCombo) capSessionCombo.snap(v);
+    if (modelSessionCombo) modelSessionCombo.snap(v);
+    // snap() re-renders via onChange when the value changed; re-render here
+    // too for the case where it did not (active id swapped in place, so
+    // '__active__' now means a different set of rows). Both are sig-gated.
     renderCaptures(_lastCapturesList);
+    renderModels(_lastModelsList);
 }
-
-if (capFilterSession) capFilterSession.onchange = () => {
-    capFilter.session = capFilterSession.value;
-    renderCaptures(_lastCapturesList);
-};
 // Date chips are exclusive (one on at a time)
 document.querySelectorAll('#cap-filter-date .filter-chip').forEach(btn => {
     btn.onclick = () => {
@@ -2286,11 +2368,103 @@ async function refreshModels() {
     }
 }
 
-// SESSION VIEW for models (same rule as captures): with a session active the
-// panel shows ONLY models trained in it (train_from_captures stamps
-// session_id into each model's metadata.json), so 35 historical models can't
-// bury the two you just trained. A toggle row reveals the rest on demand.
-let showAllModels = false;
+// ---------- models filter bar (wave 2: models filterable like captures) ----------
+//
+// Session typeahead + role chips (L / R / pooled) + wearer chips, composed
+// with AND (within a chip group an empty selection passes all, multiple
+// picks OR together), mirroring the captures bar. Replaces the old binary
+// session-scope + "show all N models" toggle: the picker's "All sessions"
+// entry covers that toggle's job, and "Active session" keeps the original
+// can't-bury-the-fresh-models default while a session runs.
+
+const modelFilter = {
+    session: '__all__',    // '__active__' | '__all__' | '__none__' | <session_id>
+    roles: new Set(),      // subset of {'left','right','pooled'}
+    wearers: new Set(),    // subset of wearers present in the model list
+};
+
+const modelFilterSession = document.getElementById('model-filter-session');
+
+const modelSessionCombo = modelFilterSession
+    ? wireSessionCombo(modelFilterSession, v => {
+        modelFilter.session = v;
+        renderModels(_lastModelsList);
+    })
+    : null;
+
+// Role of a model row: per-hand models carry metrics.role (left/right);
+// anything else (bilateral pivot / legacy) counts as 'pooled'.
+function modelRole(m) {
+    const r = (m.metrics || {}).role;
+    return (r === 'left' || r === 'right') ? r : 'pooled';
+}
+
+// Engine slots this model occupies (shared and/or left/right); legacy
+// `active` fallback keeps old payloads rendering.
+function modelSlots(m) {
+    return m.active_roles || (m.active ? ['shared'] : []);
+}
+
+function applyModelFilters(list) {
+    return list.filter(m => {
+        if (modelFilter.session === '__active__') {
+            if (!activeSession || m.session_id !== activeSession.id) return false;
+        } else if (modelFilter.session === '__none__') {
+            // Models trained before session stamping exist count as unlinked.
+            if (m.session_id) return false;
+        } else if (modelFilter.session !== '__all__') {
+            if (m.session_id !== modelFilter.session) return false;
+        }
+        if (modelFilter.roles.size && !modelFilter.roles.has(modelRole(m))) return false;
+        if (modelFilter.wearers.size && !modelFilter.wearers.has((m.wearer || '').trim())) return false;
+        return true;
+    });
+}
+
+// Role chips are static in the HTML; multi-select toggles like the captures
+// label/hands chips.
+document.querySelectorAll('#model-filter-role .filter-chip').forEach(btn => {
+    btn.onclick = () => {
+        const v = btn.dataset.role;
+        if (modelFilter.roles.has(v)) modelFilter.roles.delete(v);
+        else modelFilter.roles.add(v);
+        btn.classList.toggle('on', modelFilter.roles.has(v));
+        renderModels(_lastModelsList);
+    };
+});
+
+// Wearer chips come from the DATA (distinct m.wearer values stamped at train
+// time), so the group stays empty until at least one model carries a wearer
+// (skip chips with no data, per the plan). Rebuilt only when the distinct
+// set changes; the 'on' state lives in modelFilter.wearers so a rebuild
+// can't drop an active selection or eat a click mid-poll.
+let _modelWearerChipsSig = null;
+
+function renderModelWearerChips(list) {
+    const group = document.getElementById('model-filter-wearer');
+    if (!group) return;
+    const wearers = [...new Set(list.map(m => (m.wearer || '').trim()).filter(Boolean))].sort();
+    const sig = JSON.stringify(wearers);
+    if (sig === _modelWearerChipsSig) return;
+    _modelWearerChipsSig = sig;
+    // Prune selections for wearers that vanished from the list.
+    for (const w of [...modelFilter.wearers]) {
+        if (!wearers.includes(w)) modelFilter.wearers.delete(w);
+    }
+    group.innerHTML = wearers.map(w =>
+        `<button class="filter-chip${modelFilter.wearers.has(w) ? ' on' : ''}" data-wearer="${escapeHtml(w)}" title="only models trained while ${escapeHtml(w)} wore the band(s)">${escapeHtml(w)}</button>`
+    ).join('');
+    group.querySelectorAll('.filter-chip').forEach(btn => {
+        btn.onclick = () => {
+            const w = btn.dataset.wearer;
+            if (modelFilter.wearers.has(w)) modelFilter.wearers.delete(w);
+            else modelFilter.wearers.add(w);
+            btn.classList.toggle('on', modelFilter.wearers.has(w));
+            renderModels(_lastModelsList);
+        };
+    });
+}
+
 let _lastModelsList = [];
 
 // Engine-slot signature from the WS snapshot (inference.active_models); a
@@ -2303,88 +2477,99 @@ let _lastActiveModelsSig = null;
 // rendered data actually changed.
 let _modelsSig = null;
 
+// One <tr> for the models table. pinned=true rows are the CHOSEN models
+// (occupying an engine slot): strong highlight class + solid green slot
+// chips, so which model(s) are running is impossible to miss (Tory's exact
+// pain from wave 2).
+function modelRowHtml(m, pinned) {
+    const metrics = m.metrics || {};
+    const r2  = (metrics.r2 ?? null);
+    const mse = (metrics.mse ?? null);
+    const nf  = metrics.n_features ?? '?';
+    const nl  = metrics.n_labels ?? '?';
+    const r2s  = (r2 !== null && !isNaN(r2)) ? Number(r2).toFixed(3) : '—';
+    const mses = (mse !== null && !isNaN(mse)) ? Number(mse).toFixed(4) : '—';
+    const created = m.created ?? '';
+    const slots = modelSlots(m);
+    // Solid green chip per occupied slot (upgrade of the old small
+    // "active · L" text; recipe from .model-chip.on, solidified).
+    const slotChips = slots.map(s =>
+        `<span class="model-slot-chip" title="loaded in the ${s} engine slot">${
+            s === 'shared' ? 'active' : 'active · ' + s[0].toUpperCase()}</span>`).join(' ');
+    // Per-hand role badge (separate-model-per-hand). Reuses the capture
+    // list's 1H/2H badge styling: green = left, orange = right.
+    const role = (metrics.role === 'left' || metrics.role === 'right')
+        ? metrics.role : null;
+    const roleBadge = role
+        ? `<span class="hands-badge ${role === 'left' ? 'h2' : 'h1'}" title="single-arm model, trained on role=${role} rows">${role === 'left' ? 'L' : 'R'}</span>`
+        : '';
+    const escName = escapeHtml(m.name || '');
+    const escPath = escapeHtml(m.path || '');
+    // Role-tagged models must load into their OWN per-hand slot; sending
+    // them to the shared endpoint leaves the router on the old model.
+    const useBtn = slots.length ? '' :
+        `<button class="link" data-activate="${escPath}" data-role="${role || ''}">use</button>`;
+    const trClass = pinned ? ' class="model-active-row"' : '';
+    return `<tr${trClass}>
+        <td>${roleBadge} ${escName} ${slotChips}</td>
+        <td>${escapeHtml(created)}</td>
+        <td>${r2s}</td>
+        <td>${mses}</td>
+        <td>${nf} × ${nl}</td>
+        <td class="actions">${useBtn}</td>
+    </tr>`;
+}
+
 function renderModels(list) {
     _lastModelsList = list;
+    renderModelWearerChips(list);   // sig-gated on the distinct wearer set
 
-    let working = list;
-    let outsideCount = 0;
-    if (activeSession) {
-        const inSession = list.filter(m => m.session_id === activeSession.id);
-        outsideCount = list.length - inSession.length;
-        if (!showAllModels) working = inSession;
-    }
+    // CHOSEN-MODEL rule: rows occupying an engine slot always render pinned
+    // at the top, above an "in use" divider, REGARDLESS of the filters (a
+    // filter must never hide what the router is actually running). The
+    // filtered list below excludes them so nothing shows twice.
+    const pinned = list.filter(m => modelSlots(m).length > 0);
+    const filtered = applyModelFilters(list).filter(m => modelSlots(m).length === 0);
 
-    const sig = JSON.stringify([
-        activeSession ? activeSession.id : null, showAllModels, outsideCount,
-        working.map(m => [m.name, m.created, m.path, m.active,
+    const rowBits = m => [m.name, m.created, m.path, m.active,
                           (m.active_roles || []).join(','),
-                          (m.metrics || {}).role || '', m.session_id || '']),
+                          (m.metrics || {}).role || '', m.session_id || '',
+                          (m.wearer || '')];
+    const sig = JSON.stringify([
+        modelFilter.session, [...modelFilter.roles], [...modelFilter.wearers],
+        activeSession ? activeSession.id : null,
+        pinned.map(rowBits), filtered.map(rowBits),
     ]);
     if (sig === _modelsSig) return;
     _modelsSig = sig;
 
-    modelsCount.textContent = (activeSession && !showAllModels)
-        ? `${working.length} of ${list.length} model${list.length === 1 ? '' : 's'} (this session)`
-        : `${list.length} model${list.length === 1 ? '' : 's'}`;
+    const shown = pinned.length + filtered.length;
+    const defaultView = modelFilter.session === '__all__'
+        && !modelFilter.roles.size && !modelFilter.wearers.size;
+    const plural = list.length === 1 ? '' : 's';
+    modelsCount.textContent = defaultView
+        ? `${list.length} model${plural}`
+        : `${shown} of ${list.length} model${plural}${modelFilter.session === '__active__' ? ' (this session)' : ''}`;
+
     if (!list.length) {
         modelsBody.innerHTML = '<tr class="empty"><td colspan="6">No models trained yet.</td></tr>';
         return;
     }
 
-    const rows = working.map(m => {
-        const metrics = m.metrics || {};
-        const r2  = (metrics.r2 ?? null);
-        const mse = (metrics.mse ?? null);
-        const nf  = metrics.n_features ?? '?';
-        const nl  = metrics.n_labels ?? '?';
-        const r2s  = (r2 !== null && !isNaN(r2)) ? Number(r2).toFixed(3) : '—';
-        const mses = (mse !== null && !isNaN(mse)) ? Number(mse).toFixed(4) : '—';
-        const created = m.created ?? '';
-        // Every engine slot this model occupies (shared and/or left/right);
-        // legacy `active` fallback keeps old payloads rendering.
-        const slots = m.active_roles || (m.active ? ['shared'] : []);
-        const slotTags = slots.filter(s => s !== 'shared')
-            .map(s => ' · ' + s[0].toUpperCase()).join('');
-        const activeBadge = slots.length
-            ? `<span class="badge-active" title="loaded in: ${slots.join(', ')}">active${slotTags}</span>`
-            : '';
-        // Per-hand role badge (separate-model-per-hand). Reuses the capture
-        // list's 1H/2H badge styling: green = left, orange = right.
-        const role = (metrics.role === 'left' || metrics.role === 'right')
-            ? metrics.role : null;
-        const roleBadge = role
-            ? `<span class="hands-badge ${role === 'left' ? 'h2' : 'h1'}" title="single-arm model, trained on role=${role} rows">${role === 'left' ? 'L' : 'R'}</span>`
-            : '';
-        const escName = escapeHtml(m.name || '');
-        const escPath = escapeHtml(m.path || '');
-        // Role-tagged models must load into their OWN per-hand slot; sending
-        // them to the shared endpoint leaves the router on the old model.
-        const useBtn = slots.length ? '' :
-            `<button class="link" data-activate="${escPath}" data-role="${role || ''}">use</button>`;
-        return `<tr>
-            <td>${roleBadge} ${escName} ${activeBadge}</td>
-            <td>${escapeHtml(created)}</td>
-            <td>${r2s}</td>
-            <td>${mses}</td>
-            <td>${nf} × ${nl}</td>
-            <td class="actions">${useBtn}</td>
-        </tr>`;
-    }).join('');
-
-    const emptySession = (!working.length)
-        ? '<tr class="empty"><td colspan="6">No models trained in this session yet · select captures and hit Train.</td></tr>' : '';
-    const toggleRow = (activeSession && (outsideCount > 0 || showAllModels))
-        ? `<tr class="show-all-row"><td colspan="6"><button class="link" id="models-show-all">${
-            showAllModels ? '▾ hide models outside this session'
-                          : `▸ show all ${list.length} models`
-          }</button></td></tr>` : '';
-    modelsBody.innerHTML = emptySession + rows + toggleRow;
-
-    const showAllBtn = document.getElementById('models-show-all');
-    if (showAllBtn) showAllBtn.onclick = () => {
-        showAllModels = !showAllModels;
-        renderModels(_lastModelsList);
-    };
+    const pinnedRows = pinned.map(m => modelRowHtml(m, true)).join('');
+    const divider = pinned.length
+        ? '<tr class="models-inuse-divider"><td colspan="6">in use</td></tr>' : '';
+    const bodyRows = filtered.map(m => modelRowHtml(m, false)).join('');
+    // Empty-filter message only when the filters actually hid something
+    // (all models being pinned in-use is not a filter problem).
+    let emptyRow = '';
+    if (!filtered.length && list.length > pinned.length) {
+        emptyRow = (modelFilter.session === '__active__'
+                    && !modelFilter.roles.size && !modelFilter.wearers.size)
+            ? '<tr class="empty"><td colspan="6">No models trained in this session yet · select captures and hit Train.</td></tr>'
+            : '<tr class="empty"><td colspan="6">No models match the current filters.</td></tr>';
+    }
+    modelsBody.innerHTML = pinnedRows + divider + emptyRow + bodyRows;
 
     modelsBody.querySelectorAll('button[data-activate]').forEach(btn => {
         btn.onclick = async () => {
