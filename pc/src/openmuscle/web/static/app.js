@@ -2,7 +2,8 @@
 // Single-page vanilla JS. No bundler, no framework.
 
 const wsStatus    = document.getElementById('ws-status');
-const deviceList  = document.getElementById('device-list');
+// #device-list is gone (Tory: the standalone Devices column was redundant);
+// band cards next to each heatmap + label status lines replaced it.
 const recordBtn   = document.getElementById('record-btn');
 // The dedicated multiband/bilateral buttons are gone (one Record button whose
 // mode is derived from what's streaming); the consts stay so the existing
@@ -123,14 +124,17 @@ function handleTick(msg) {
         refreshModels();
     }
     renderActiveSession();
-    renderDevices();
-    renderDiscovery(msg.discovery || []);
+    // Draw a pressure grid for EVERY streaming flexgrid (both hands at once in a
+    // two-hand session), not just the selected one (board #0304). drawHeatmaps
+    // builds the band-row scaffold FIRST so renderBandCards can fill the card
+    // to the left of each heatmap (Tory's redesign: no standalone Devices
+    // column; device info lives with the visualization).
+    drawHeatmaps();
+    renderBandCards(msg.discovery || []);
+    renderAvailableSources(msg.discovery || []);
     renderRecordPickers();
     renderRecording();
     renderRecordPlan();
-    // Draw a pressure grid for EVERY streaming flexgrid (both hands at once in a
-    // two-hand session), not just the selected one (board #0304).
-    drawHeatmaps();
     // LASK5: render whichever LASK device is currently streaming.
     // (We don't require it to be the "selected" device — operators usually
     // want to see the FlexGrid heatmap and the LASK pistons at the same time.)
@@ -147,6 +151,9 @@ function handleTick(msg) {
     // a hand source). No-op when no quest_hand device is present.
     renderHandViewer(lastDevices.filter(d => d.device_type === 'quest_hand'),
                      msg.inference);
+    // Label-device status lines under each visualization (quest / lask5 /
+    // gamepad), replacing their old Devices-column entries.
+    renderLabelStatusLines(lask);
     // IMU orientation widget: drive from a device carrying the fast data.imu
     // (prefer the selected device; else the first with imu).
     renderImuViewer();
@@ -167,6 +174,18 @@ function renderImuViewer() {
         if (window.OMImuViewer.isReady()) window.OMImuViewer.setVisible(false);
         return;
     }
+    // Re-home the single widget under the band card of the flexgrid it is
+    // showing (Tory's redesign: device info lives WITH the visualization).
+    // appendChild MOVES the node, keeping the WebGL canvas alive; we only
+    // touch the DOM when the target slot actually changes. Fallback: no band
+    // row yet (imu frames before the first matrix frame) parks it in the dock
+    // at the bottom of the heatmap hero.
+    let slot = null;
+    document.querySelectorAll('#heatmap-grids .band-row').forEach(row => {
+        if (row.dataset.id === dev.device_id) slot = row.querySelector('.imu-slot');
+    });
+    if (!slot) slot = document.getElementById('imu-dock');
+    if (slot && wrap.parentElement !== slot) slot.appendChild(wrap);
     if (!window.OMImuViewer.isReady()) {
         const el = document.getElementById('imu-viewer-canvas');
         if (el) window.OMImuViewer.init(el);
@@ -250,84 +269,61 @@ function renderHandViewer(questDevs, inference) {
     if (gtMeta) gtMeta.textContent = `Quest hands · ${metaBits.join(' · ')}`;
 }
 
-// ---------- native V4 discovery (Sources rail) ----------
+// ---------- label-device status lines ----------
+//
+// Tory's redesign: label devices lost their Devices-column entries; their
+// info now sits UNDER their own visualization instead. Quest hands under the
+// hand-viewer legend, LASK5 under the piston cluster, gamepad beside
+// #gamepad-panel (that panel's internals belong to gamepad.js; ours is a
+// sibling). Plain text, so the per-tick write-on-change gate is enough.
+
+function setStatusLine(id, text) {
+    const el = document.getElementById(id);
+    if (!el || el._txt === text) return;   // skip DOM writes when unchanged
+    el._txt = text;
+    el.textContent = text;                 // empty text collapses via CSS :empty
+}
+
+function renderLabelStatusLines(lask) {
+    const quests = lastDevices.filter(d => d.device_type === 'quest_hand');
+    setStatusLine('hand-status-line', quests
+        .map(q => `${q.device_id} ${(q.hz ?? 0).toFixed(0)} Hz`).join(' | '));
+
+    let laskTxt = '';
+    if (lask) {
+        // Same ?? 0 guard as the quest line above: one field missing on one
+        // tick must not kill the whole render loop.
+        const bits = [lask.device_id, `${(lask.hz ?? 0).toFixed(0)} Hz`];
+        const s = lask.status || {};
+        if (typeof s.vbat === 'number') bits.push(`${s.vbat.toFixed(1)}V`);
+        laskTxt = bits.join(' | ');
+    }
+    setStatusLine('lask-status-line', laskTxt);
+
+    const pad = lastDevices.find(d => d.device_type === 'gamepad');
+    setStatusLine('gamepad-status-line',
+        pad ? `${pad.device_id} | ${(pad.hz ?? 0).toFixed(0)} Hz` : '');
+}
+
+// ---------- native V4 discovery: band cards + available sources ----------
+//
+// Tory's redesign: the standalone Devices column was redundant, so device
+// info now lives WITH each visualization. Streaming flexgrids get a card to
+// the LEFT of their own heatmap (renderBandCards fills the row scaffold that
+// drawHeatmaps builds); discovered sources with no heatmap yet stay as
+// compact "available" cards below the band rows (renderAvailableSources).
+// Both preserve the old renderDiscovery signature-gating: rebuilding ~5x/sec
+// destroyed the role <select> mid-interaction (that bug class burned us
+// twice), so the DOM only rebuilds when meaningful state changes and the
+// fast values refresh in place.
 
 let _discoveryProbeWired = false;
 
-let _discoverySig = null;   // last-rendered Sources state; skip rebuilds when unchanged
-
-function renderDiscovery(discovery) {
-    const list = document.getElementById('discovery-list');
-    const count = document.getElementById('discovery-count');
-    if (!list) return;
-    if (!_discoveryProbeWired) wireDiscoveryProbe();
-
-    const subs = discovery.filter(d => d.subscribed).length;
-    if (count) count.textContent = discovery.length
-        ? `${subs}/${discovery.length} subscribed` : '';
-
-    // Rebuild the list ONLY when its meaningful state changes, not every WS tick.
-    // Rebuilding ~5x/sec destroyed the role <select> mid-interaction, so it
-    // "glitched" and could not be used (Tory). `age` is excluded from the
-    // signature (it ticks every frame) and refreshed in place instead, so an open
-    // dropdown / focused control is never blown away.
-    const sig = JSON.stringify(discovery.map(d => [
-        d.device_id, d.role || '', !!d.subscribed, d.sub_error || '',
-        d.device_type, d.ip, d.cmd_port, d.source,
-    ]));
-    if (sig === _discoverySig) {
-        const byId = {};
-        discovery.forEach(d => { byId[d.device_id] = d; });
-        list.querySelectorAll('li.src').forEach(li => {
-            const d = byId[li.dataset.id];
-            const ageEl = li.querySelector('.age');
-            if (d && ageEl) ageEl.textContent = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
-        });
-        return;
-    }
-    _discoverySig = sig;
-
-    if (!discovery.length) {
-        list.innerHTML = '<li class="empty">No V4 sources discovered yet…</li>';
-        return;
-    }
-    list.innerHTML = discovery.map(d => {
-        // State badge: subscribed (green) / error (red) / known (grey).
-        let stateCls = 'known', stateTxt = 'known';
-        if (d.subscribed) { stateCls = 'subscribed'; stateTxt = 'subscribed'; }
-        else if (d.sub_error) { stateCls = 'err'; stateTxt = 'error'; }
-        const btnTxt = d.subscribed ? 'Unsubscribe' : 'Subscribe';
-        const btnAct = d.subscribed ? 'unsubscribe' : 'subscribe';
-        const age = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
-        const errLine = d.sub_error
-            ? `<div class="src-err" title="${escapeHtml(d.sub_error)}">${escapeHtml(d.sub_error)}</div>`
-            : '';
-        return `
-            <li class="src ${stateCls}" data-id="${escapeHtml(d.device_id)}">
-                <div class="src-top">
-                    <span class="src-id">${escapeHtml(d.device_id)}</span>
-                    <span class="src-state ${stateCls}">${stateTxt}</span>
-                </div>
-                <div class="src-meta">
-                    <span class="type">${escapeHtml(d.device_type)}</span>
-                    <span class="addr">${escapeHtml(d.ip)}:${d.cmd_port}</span>
-                    <span class="via">via ${escapeHtml(d.source)}</span>
-                    <span class="age">${age}</span>
-                </div>
-                ${errLine}
-                <label class="src-role">role
-                    <select class="src-role-sel" data-id="${escapeHtml(d.device_id)}">
-                        <option value=""${d.role ? '' : ' selected'}>untagged</option>
-                        <option value="left"${d.role === 'left' ? ' selected' : ''}>left</option>
-                        <option value="right"${d.role === 'right' ? ' selected' : ''}>right</option>
-                        <option value="labeler"${d.role === 'labeler' ? ' selected' : ''}>labeler</option>
-                    </select>
-                </label>
-                <button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(d.device_id)}">${btnTxt}</button>
-            </li>`;
-    }).join('');
-
-    list.querySelectorAll('.src-role-sel').forEach(sel => {
+// Shared control wiring: role <select> + subscribe/unsubscribe buttons carry
+// the exact semantics of the old Sources rail (POST /api/discovery/role and
+// /api/discovery/subscribe|unsubscribe; the next WS tick re-renders truth).
+function wireRoleSelects(root) {
+    root.querySelectorAll('.src-role-sel').forEach(sel => {
         sel.onchange = async () => {
             const id = sel.dataset.id;
             const role = sel.value;
@@ -348,8 +344,10 @@ function renderDiscovery(discovery) {
             }
         };
     });
+}
 
-    list.querySelectorAll('.src-btn').forEach(btn => {
+function wireSubButtons(root) {
+    root.querySelectorAll('.src-btn').forEach(btn => {
         btn.onclick = async (e) => {
             e.stopPropagation();
             const id = btn.dataset.id;
@@ -372,6 +370,194 @@ function renderDiscovery(discovery) {
             // Next WS tick re-renders the true state; no manual refresh needed.
         };
     });
+}
+
+// Shared role <select> markup (band card + available card).
+function roleSelectHtml(d) {
+    return `<label class="src-role">role
+        <select class="src-role-sel" data-id="${escapeHtml(d.device_id)}">
+            <option value=""${d.role ? '' : ' selected'}>untagged</option>
+            <option value="left"${d.role === 'left' ? ' selected' : ''}>left</option>
+            <option value="right"${d.role === 'right' ? ' selected' : ''}>right</option>
+            <option value="labeler"${d.role === 'labeler' ? ' selected' : ''}>labeler</option>
+        </select>
+    </label>`;
+}
+
+// ---- band cards: the flexgrid square to the LEFT of its own heatmap ----
+
+let _bandCardsSig = null;   // structural state; fast values refresh in place
+
+function renderBandCards(discovery) {
+    const grids = document.getElementById('heatmap-grids');
+    if (!grids) return;
+    const rows = [...grids.querySelectorAll('.band-row')];
+    if (!rows.length) { _bandCardsSig = null; return; }
+    const discById = {};
+    discovery.forEach(d => { discById[d.device_id] = d; });
+    const devById = {};
+    lastDevices.forEach(d => { devById[d.device_id] = d; });
+
+    // Structural signature: the controls rebuild ONLY when subscribe / role /
+    // error / selection state changes, so an open role dropdown survives
+    // ticks (same sacred gate as the old renderDiscovery).
+    const sig = JSON.stringify(rows.map(row => {
+        const disc = discById[row.dataset.id];
+        return [row.dataset.id, row.dataset.id === selectedDeviceId,
+                disc ? [disc.role || '', !!disc.subscribed, disc.sub_error || ''] : null];
+    }));
+    if (sig !== _bandCardsSig) {
+        _bandCardsSig = sig;
+        rows.forEach(row => {
+            const id = row.dataset.id;
+            const disc = discById[id];
+            const card = row.querySelector('.band-card');
+            if (!card) return;
+            // State badge mirrors the old Sources rail. A band streaming
+            // without a discovery entry (legacy push firmware) reads
+            // "streaming" and gets no subscribe/role controls, because the
+            // role + subscribe APIs are keyed to discovery entries.
+            let stateCls = 'known', stateTxt = 'streaming';
+            let controls = '';
+            let errLine = '';
+            if (disc) {
+                if (disc.subscribed) { stateCls = 'subscribed'; stateTxt = 'subscribed'; }
+                else if (disc.sub_error) { stateCls = 'err'; stateTxt = 'error'; }
+                else { stateTxt = 'known'; }
+                if (disc.sub_error) {
+                    errLine = `<div class="src-err" title="${escapeHtml(disc.sub_error)}">${escapeHtml(disc.sub_error)}</div>`;
+                }
+                const btnAct = disc.subscribed ? 'unsubscribe' : 'subscribe';
+                const btnTxt = disc.subscribed ? 'Unsubscribe' : 'Subscribe';
+                controls = roleSelectHtml(disc)
+                    + `<button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(id)}">${btnTxt}</button>`;
+            }
+            card.classList.toggle('subscribed', !!(disc && disc.subscribed));
+            card.classList.toggle('err', !!(disc && disc.sub_error && !disc.subscribed));
+            card.classList.toggle('selected', id === selectedDeviceId);
+            // .band-meta / .band-stats stay control-free: they refresh per
+            // tick below without risking an eaten click.
+            card.innerHTML = `
+                <div class="src-top">
+                    <span class="src-id">${escapeHtml(id)}</span>
+                    <span class="src-state ${stateCls}">${stateTxt}</span>
+                </div>
+                ${errLine}
+                <div class="band-meta"></div>
+                <div class="band-stats"></div>
+                ${controls}`;
+            // Clicking the card selects the band (drives the Orientation
+            // widget + debug inspector); controls keep their own clicks.
+            card.onclick = (e) => {
+                if (e.target.closest('select, button, label')) return;
+                selectedDeviceId = id;
+                rows.forEach(r => {
+                    const c = r.querySelector('.band-card');
+                    if (c) c.classList.toggle('selected', r.dataset.id === selectedDeviceId);
+                });
+            };
+        });
+        wireRoleSelects(grids);
+        wireSubButtons(grids);
+    }
+
+    // Fast values (hz / battery / rssi / age) refresh in place every tick;
+    // writing only on change keeps the 5Hz tick cheap.
+    rows.forEach(row => {
+        const d = devById[row.dataset.id];
+        const meta = row.querySelector('.band-meta');
+        const stats = row.querySelector('.band-stats');
+        if (!d || !meta || !stats) return;
+        const stale = d.last_seen_age > 2.0;
+        const metaHtml = `<span class="shape">${d.rows}×${d.cols}</span>`
+            + ` <span class="hz">${d.hz.toFixed(1)} Hz</span>`
+            + ` <span class="age${stale ? ' stale' : ''}">${stale ? `${d.last_seen_age.toFixed(1)}s` : 'live'}</span>`;
+        if (meta._html !== metaHtml) { meta._html = metaHtml; meta.innerHTML = metaHtml; }
+        const statsHtml = renderDeviceStatus(d);
+        if (stats._html !== statsHtml) { stats._html = statsHtml; stats.innerHTML = statsHtml; }
+    });
+}
+
+// ---- available sources: discovered but not streaming a heatmap yet ----
+
+let _discoverySig = null;   // last-rendered state; skip rebuilds when unchanged
+
+function renderAvailableSources(discovery) {
+    const list = document.getElementById('discovery-list');
+    const count = document.getElementById('discovery-count');
+    if (!list) return;
+    if (!_discoveryProbeWired) wireDiscoveryProbe();
+
+    const subs = discovery.filter(d => d.subscribed).length;
+    if (count) count.textContent = discovery.length
+        ? `${subs}/${discovery.length} sources subscribed` : '';
+
+    // Sources with a band row above already show their controls there; only
+    // the rest (unsubscribed, or subscribed-but-silent) render here.
+    const bandIds = new Set(
+        [...document.querySelectorAll('#heatmap-grids .band-row')].map(r => r.dataset.id));
+    const avail = discovery.filter(d => !bandIds.has(d.device_id));
+
+    // Rebuild the list ONLY when its meaningful state changes, not every WS tick.
+    // Rebuilding ~5x/sec destroyed the role <select> mid-interaction, so it
+    // "glitched" and could not be used (Tory). `age` is excluded from the
+    // signature (it ticks every frame) and refreshed in place instead, so an open
+    // dropdown / focused control is never blown away.
+    const sig = JSON.stringify(avail.map(d => [
+        d.device_id, d.role || '', !!d.subscribed, d.sub_error || '',
+        d.device_type, d.ip, d.cmd_port, d.source,
+    ]));
+    if (sig === _discoverySig) {
+        const byId = {};
+        avail.forEach(d => { byId[d.device_id] = d; });
+        list.querySelectorAll('li.src').forEach(li => {
+            const d = byId[li.dataset.id];
+            const ageEl = li.querySelector('.age');
+            if (d && ageEl) ageEl.textContent = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
+        });
+        return;
+    }
+    _discoverySig = sig;
+
+    if (!avail.length) {
+        // Everything discovered graduated to a band row (or nothing is
+        // discovered at all); an empty list collapses via CSS :empty.
+        list.innerHTML = discovery.length
+            ? '' : '<li class="empty">No V4 sources discovered yet…</li>';
+        return;
+    }
+    list.innerHTML = avail.map(d => {
+        // State badge: subscribed (green, awaiting frames) / error (red) /
+        // known (grey).
+        let stateCls = 'known', stateTxt = 'known';
+        if (d.subscribed) { stateCls = 'subscribed'; stateTxt = 'subscribed'; }
+        else if (d.sub_error) { stateCls = 'err'; stateTxt = 'error'; }
+        const btnTxt = d.subscribed ? 'Unsubscribe' : 'Subscribe';
+        const btnAct = d.subscribed ? 'unsubscribe' : 'subscribe';
+        const age = (d.age_s != null) ? `${d.age_s.toFixed(0)}s ago` : '';
+        const errLine = d.sub_error
+            ? `<div class="src-err" title="${escapeHtml(d.sub_error)}">${escapeHtml(d.sub_error)}</div>`
+            : '';
+        return `
+            <li class="src ${stateCls}" data-id="${escapeHtml(d.device_id)}">
+                <div class="src-top">
+                    <span class="src-id">${escapeHtml(d.device_id)}</span>
+                    <span class="src-state ${stateCls}">${stateTxt}</span>
+                </div>
+                <div class="src-meta">
+                    <span class="type">${escapeHtml(d.device_type)}</span>
+                    <span class="addr">${escapeHtml(d.ip)}:${d.cmd_port}</span>
+                    <span class="via">via ${escapeHtml(d.source)}</span>
+                    <span class="age">${age}</span>
+                </div>
+                ${errLine}
+                ${roleSelectHtml(d)}
+                <button class="src-btn" data-act="${btnAct}" data-id="${escapeHtml(d.device_id)}">${btnTxt}</button>
+            </li>`;
+    }).join('');
+
+    wireRoleSelects(list);
+    wireSubButtons(list);
 }
 
 function wireDiscoveryProbe() {
@@ -447,7 +633,23 @@ function setProbeMsg(text, isError) {
     el.classList.toggle('err', !!isError);
 }
 
-// ---------- device list ----------
+// "+ add source" collapsible: the probe-by-IP form + subnet scan moved out
+// of the old Devices rail, collapsed by default (same caret pattern as the
+// record-advanced toggle).
+{
+    const toggle = document.getElementById('add-source-toggle');
+    const body = document.getElementById('add-source-body');
+    if (toggle && body) {
+        toggle.onclick = () => {
+            const hidden = body.classList.toggle('hidden');
+            toggle.textContent = (hidden ? '▸' : '▾') + ' add source';
+        };
+    }
+}
+
+// ---------- device selection + status helpers ----------
+// (renderDevices and its #device-list are gone; band cards next to each
+// heatmap + label status lines under the comparator visuals replaced them.)
 
 function selectedDevice() {
     if (!lastDevices.length) return null;
@@ -460,39 +662,9 @@ function selectedDevice() {
     return lastDevices[0];
 }
 
-function renderDevices() {
-    if (!lastDevices.length) {
-        deviceList.innerHTML = '<li class="empty">Waiting for a device to send a packet…</li>';
-        return;
-    }
-    const html = lastDevices.map(d => {
-        const isSel = (d.device_id === selectedDeviceId);
-        const stale = d.last_seen_age > 2.0;
-        const statusLine = renderDeviceStatus(d);
-        return `
-            <li class="device ${isSel ? 'selected' : ''} ${stale ? 'stale' : ''}"
-                data-id="${d.device_id}">
-                <div class="device-id">${escapeHtml(d.device_id)}</div>
-                <div class="device-meta">
-                    <span class="type">${escapeHtml(d.device_type)}</span>
-                    <span class="shape">${d.rows}×${d.cols}</span>
-                    <span class="hz">${d.hz.toFixed(1)} Hz</span>
-                    <span class="age">${stale ? `${d.last_seen_age.toFixed(1)}s` : 'live'}</span>
-                </div>
-                ${statusLine}
-            </li>`;
-    }).join('');
-    deviceList.innerHTML = html;
-    deviceList.querySelectorAll('li.device').forEach(el => {
-        el.onclick = () => {
-            selectedDeviceId = el.dataset.id;
-            renderDevices();
-        };
-    });
-}
-
-// Battery + uptime + rssi line under the device meta row. Returns '' when
-// the device never reported a meta field (legacy firmware).
+// Battery + uptime + rssi line, now rendered inside each band card's
+// .band-stats (renderBandCards). Returns '' when the device never reported
+// a meta field (legacy firmware).
 function renderDeviceStatus(d) {
     // status (slow ~1Hz meta) may be absent while imu (fast data.imu) is present,
     // so default s to {} and let each status part guard itself.
@@ -540,13 +712,9 @@ function renderDeviceStatus(d) {
         parts.push(`<span class="reboots">⟳ ${d.reboot_count} reboot${d.reboot_count === 1 ? '' : 's'}, last ${age}${why}</span>`);
     }
 
-    // IMU readout (fast data.imu path, ~18-20Hz): per-axis gyro + accel raw
-    // counts. Matches phone's readout; the 3D orientation widget builds on this.
-    if (d.imu && Array.isArray(d.imu.gyro) && Array.isArray(d.imu.accel)) {
-        const g = d.imu.gyro, a = d.imu.accel;
-        parts.push(`<span class="imu" title="data.imu (raw counts): gyro then accel">`
-            + `🧭 g ${g[0]},${g[1]},${g[2]} · a ${a[0]},${a[1]},${a[2]}</span>`);
-    }
+    // No raw IMU counts here anymore: the Orientation widget under the band
+    // card shows the fused pose, and the debug panel keeps the raw numbers.
+    // The counts blew out the narrow card and rewrote its DOM ~20x/sec.
 
     if (!parts.length) return '';
     return `<div class="device-status">${parts.join(' ')}</div>`;
@@ -568,8 +736,12 @@ const HEATMAP_NOISE_GATE = 8;       // below this, treat as "untouched"
 const HEATMAP_VMAX_DEFAULT = 2000;  // ADC value that maps to peak color
 let heatmapVmax = HEATMAP_VMAX_DEFAULT;
 
-// Render one pressure grid per streaming flexgrid, side by side, in a STABLE
-// order (left, then right, then others) so the two hands never swap positions.
+// Render one BAND ROW per streaming flexgrid, in a STABLE order (left, then
+// right, then others) so the two hands never swap positions. Each row is
+// [band card | its heatmap] (Tory's redesign: the flexgrid square sits to
+// the left of its heatmap, in line); renderBandCards fills the card, this
+// draws the canvas. The per-device canvases are REUSED across ticks exactly
+// as before; only the wrapping row scaffold changed.
 function drawHeatmaps() {
     const grids = document.getElementById('heatmap-grids');
     if (!grids) return;
@@ -579,7 +751,12 @@ function drawHeatmaps() {
         .sort((a, b) => roleOrder(a.role) - roleOrder(b.role)
                         || String(a.device_id).localeCompare(String(b.device_id)));
     if (!flex.length) {
-        if (grids._ids !== '') { grids.innerHTML = '<div class="heatmap-empty">Waiting for a flexgrid…</div>'; grids._ids = ''; }
+        if (grids._ids !== '') {
+            parkImuViewer();   // innerHTML wipe would destroy the IMU canvas
+            grids.innerHTML = '<div class="heatmap-empty">Waiting for a flexgrid…</div>';
+            grids._ids = '';
+            _bandCardsSig = null;
+        }
         return;
     }
     // Shared vmax across ALL bands so the two hands compare on one scale (sticky
@@ -587,18 +764,43 @@ function drawHeatmaps() {
     let observedMax = 0;
     for (const d of flex) for (const col of d.matrix) for (const v of col) if (v > observedMax) observedMax = v;
     if (observedMax > heatmapVmax) heatmapVmax = Math.min(4096, Math.floor(observedMax * 1.2));
-    // Rebuild the canvas scaffold only when the set of bands changes (avoids
-    // canvas thrash + flicker every tick).
+    // Rebuild the row scaffold only when the set of bands changes (avoids
+    // canvas thrash + flicker every tick). The .imu-slot under the card is
+    // where renderImuViewer re-homes the single Orientation widget.
     const ids = flex.map(d => d.device_id).join(',');
     if (grids._ids !== ids) {
-        grids.innerHTML = flex.map(() =>
-            '<div class="heatmap-cell"><div class="heatmap-cell-label"></div><canvas></canvas></div>').join('');
+        parkImuViewer();   // moving beats rebuilding: keeps the IMU canvas alive
+        grids.innerHTML = flex.map(d => `
+            <div class="band-row" data-id="${escapeHtml(d.device_id)}">
+                <div class="band-side">
+                    <div class="band-card"></div>
+                    <div class="imu-slot"></div>
+                </div>
+                <div class="heatmap-cell">
+                    <div class="heatmap-cell-label"></div>
+                    <canvas></canvas>
+                </div>
+            </div>`).join('');
         grids._ids = ids;
+        _bandCardsSig = null;   // fresh scaffold: cards must re-render
     }
     flex.forEach((d, i) => {
-        const cell = grids.children[i];
-        if (cell) drawHeatmapInto(d, cell.querySelector('canvas'), cell.querySelector('.heatmap-cell-label'));
+        const row = grids.children[i];
+        // Scope to .heatmap-cell: the band card's .imu-slot can hold the
+        // Orientation widget's WebGL canvas, and a bare querySelector('canvas')
+        // would grab THAT one (getContext('2d') on it returns null).
+        if (row) drawHeatmapInto(d, row.querySelector('.heatmap-cell canvas'),
+                                 row.querySelector('.heatmap-cell-label'));
     });
+}
+
+// Park the single IMU widget in its dock before an innerHTML wipe of the
+// band rows; renderImuViewer re-homes it under the right card next tick.
+// (appendChild MOVES the node, so the WebGL context survives.)
+function parkImuViewer() {
+    const dock = document.getElementById('imu-dock');
+    const viewer = document.getElementById('imu-viewer');
+    if (dock && viewer && viewer.parentElement !== dock) dock.appendChild(viewer);
 }
 
 function drawHeatmapInto(dev, canvasEl, labelEl) {
@@ -2743,7 +2945,9 @@ function renderDebugPanel() {
             </div>`;
         }).join('');
         cardsEl.querySelectorAll('.debug-card').forEach(el => {
-            el.onclick = () => { selectedDeviceId = el.dataset.id; renderDevices(); renderDebugPanel(); };
+            // _bandCardsSig reset moves the band-card highlight next tick
+            // (renderDevices is gone; the cards live beside the heatmaps now).
+            el.onclick = () => { selectedDeviceId = el.dataset.id; _bandCardsSig = null; renderDebugPanel(); };
         });
     }
     // Raw-frame inspector for the selected device (freeze pauses it for reading).

@@ -14,7 +14,7 @@
     <script type="module" src="/static/hand-viewer.js?v=7"></script>
     <!-- Gamepad labeler: reads a USB controller (navigator.getGamepads) and
          streams frames to /ws/gamepad. Plain script (no module). -->
-    <script defer src="/static/gamepad.js?v=1"></script>
+    <script defer src="/static/gamepad.js?v=2"></script>
     <script type="module" src="/static/imu-viewer.js?v=1"></script>
 </head>
 <body>
@@ -81,8 +81,9 @@
 
         <!-- ============================================================
              STAGE 1 — LIVE (hero)
-             Heatmap + GT-vs-Predicted comparator + joystick.
-             Devices collapse into a thin rail on the left.
+             Heatmap band rows + GT-vs-Predicted comparator + joystick.
+             The standalone Devices column is gone (Tory: redundant); each
+             band's card sits to the LEFT of its own heatmap instead.
              ============================================================ -->
         <section id="stage-live" class="stage stage-live">
             <header class="stage-head">
@@ -91,53 +92,59 @@
             </header>
 
             <div class="live-grid">
-                <!-- Devices rail (left, collapsible by clicking the header) -->
-                <aside class="devices-rail">
-                    <h3 class="rail-head">Devices</h3>
-                    <ul id="device-list" class="devices-compact">
-                        <li class="empty">Waiting for a device to send a packet…</li>
-                    </ul>
-
-                    <!-- Native V4 discovery: sources found via announce beacon /
-                         cache / manual probe, with per-source subscribe toggle.
-                         Driven by app.js renderDiscovery() from the WS snapshot's
-                         `discovery` array. Replaces running bridge_subscriber.py. -->
-                    <h3 class="rail-head rail-head-sources">Sources <span id="discovery-count" class="rail-count"></span></h3>
-                    <ul id="discovery-list" class="devices-compact discovery-compact">
-                        <li class="empty">No V4 sources discovered yet…</li>
-                    </ul>
-                    <form id="discovery-probe-form" class="discovery-probe">
-                        <input id="discovery-probe-ip" type="text"
-                               placeholder="add by IP (e.g. 10.0.0.23)" />
-                        <button type="submit" title="Probe this address for a V4 source">＋</button>
-                    </form>
-                    <button id="discovery-scan-btn" class="discovery-scan-btn"
-                            title="Probe the local subnet for V4 sources not currently beaconing (held by another hub)">
-                        Scan subnet
-                    </button>
-                    <div id="discovery-probe-msg" class="discovery-probe-msg"></div>
-
-                    <!-- IMU band-orientation widget (fast data.imu). Shows the
-                         selected flexgrid's live pose; driven by app.js
-                         renderImuViewer() from device.imu. Hidden until a device
-                         with imu is selected. -->
-                    <h3 class="rail-head rail-head-imu">Orientation <span id="imu-axes" class="rail-count"></span></h3>
-                    <div id="imu-viewer" class="imu-viewer">
-                        <div id="imu-viewer-canvas" class="imu-viewer-canvas"></div>
-                        <div class="imu-legend"><span class="imu-band">band</span> <span class="imu-grav">gravity</span> <span class="imu-hint">accel-tilt</span></div>
-                    </div>
-                </aside>
-
-                <!-- Heatmap (center, the hero). One pressure grid PER subscribed
-                     flexgrid so both forearms show at once in a two-hand session
-                     (board #0304); app.js drawHeatmaps() fills this. -->
+                <!-- Heatmap area (left, the hero). One BAND ROW per streaming
+                     flexgrid: [band card | its heatmap], so device info lives
+                     WITH the visualization (Tory's redesign). app.js
+                     drawHeatmaps() builds the row scaffold; renderBandCards()
+                     fills the cards from the WS snapshot's `discovery` array. -->
                 <div class="heatmap-hero">
                     <div class="heatmap-hero-head">
+                        <span id="discovery-count" class="rail-count"></span>
                         <button id="heatmap-layout-toggle" class="link"
-                                title="Switch the band heatmaps between side-by-side and stacked (one above the other)">▤ Stack</button>
+                                title="Switch the band rows between side-by-side and stacked (one above the other)">▤ Stack</button>
                     </div>
                     <div id="heatmap-grids" class="heatmap-grids">
                         <div class="heatmap-empty">Waiting for a flexgrid…</div>
+                    </div>
+
+                    <!-- Discovered-but-not-streaming V4 sources (no heatmap yet):
+                         compact cards matching the band-card column width, with
+                         Subscribe + role controls. app.js renderAvailableSources()
+                         fills this; a source graduates to a band row above once
+                         its matrix frames arrive. -->
+                    <ul id="discovery-list" class="devices-compact discovery-compact available-sources">
+                        <li class="empty">No V4 sources discovered yet…</li>
+                    </ul>
+
+                    <!-- Probe-by-IP + subnet scan, collapsed by default (same
+                         caret pattern as record-advanced). Moved from the old
+                         Devices rail; ids unchanged. -->
+                    <button id="add-source-toggle" class="link add-source-toggle">▸ add source</button>
+                    <div id="add-source-body" class="add-source-body hidden">
+                        <form id="discovery-probe-form" class="discovery-probe">
+                            <input id="discovery-probe-ip" type="text"
+                                   placeholder="add by IP (e.g. 10.0.0.23)" />
+                            <button type="submit" title="Probe this address for a V4 source">＋</button>
+                        </form>
+                        <button id="discovery-scan-btn" class="discovery-scan-btn"
+                                title="Probe the local subnet for V4 sources not currently beaconing (held by another hub)">
+                            Scan subnet
+                        </button>
+                        <div id="discovery-probe-msg" class="discovery-probe-msg"></div>
+                    </div>
+
+                    <!-- IMU band-orientation widget (fast data.imu), single
+                         instance. app.js renderImuViewer() MOVES #imu-viewer
+                         under the band card of the flexgrid it is showing; this
+                         dock is the parking spot before rows exist and while
+                         the row scaffold rebuilds (moving the node keeps the
+                         WebGL canvas alive; an innerHTML rebuild would not). -->
+                    <div id="imu-dock" class="imu-dock">
+                        <div id="imu-viewer" class="imu-viewer">
+                            <div class="imu-head">Orientation <span id="imu-axes" class="rail-count"></span></div>
+                            <div id="imu-viewer-canvas" class="imu-viewer-canvas"></div>
+                            <div class="imu-legend"><span class="imu-band">band</span> <span class="imu-grav">gravity</span> <span class="imu-hint">accel-tilt</span></div>
+                        </div>
                     </div>
                 </div>
 
@@ -196,6 +203,11 @@
                                 <div class="delta-row" data-i="3">Δ<span class="delta-val">--</span></div>
                             </div>
                         </div>
+                        <!-- LASK5 status line: device info lives WITH the
+                             visualization (Tory's redesign). app.js
+                             renderLabelStatusLines() fills it; hidden when
+                             empty via CSS :empty. -->
+                        <div id="lask-status-line" class="device-status-line"></div>
                     </div>
 
                     <!-- quest_hand 3D viewer. Shown when a quest_hand label
@@ -209,6 +221,11 @@
                             <span class="hv-pred">● predicted</span>
                             <span class="hv-hint">drag rotate | wheel zoom</span>
                         </div>
+                        <!-- Quest hand status line, under the legend: e.g.
+                             "quest-left 24 Hz | quest-right 25 Hz" (Tory's
+                             redesign: device info lives WITH the visualization).
+                             app.js renderLabelStatusLines() fills it. -->
+                        <div id="hand-status-line" class="device-status-line"></div>
                     </div>
 
                     <!-- Gamepad labeler panel. Shown when a USB controller is
@@ -216,6 +233,11 @@
                          .comparator). Live axes bars + button grid = the inputs
                          being captured as labels. -->
                     <div id="gamepad-panel" class="gamepad-panel"></div>
+                    <!-- Gamepad status line: SIBLING of #gamepad-panel on
+                         purpose; the panel's internals belong to gamepad.js.
+                         app.js renderLabelStatusLines() fills it from the
+                         server-side gamepad device (e.g. "gamepad-0 | 50 Hz"). -->
+                    <div id="gamepad-status-line" class="device-status-line"></div>
 
                     <!-- Joystick stays as a small inset; LASK5 sends the
                          operator's joystick state for free, useful as a

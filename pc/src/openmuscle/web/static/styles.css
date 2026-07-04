@@ -238,34 +238,16 @@ main.studio {
 
 /* Stage 1: LIVE */
 
+/* Two columns now (Tory's redesign): the standalone Devices rail is gone;
+   its 220px folded into the heatmap area, which hosts the band rows
+   ([card | heatmap]) plus available sources. Comparator untouched. */
 .live-grid {
     display: grid;
-    grid-template-columns: 220px 1fr 1fr;
+    grid-template-columns: 4fr 3fr;
     gap: 16px;
     align-items: start;
 }
 
-.devices-rail {
-    background: var(--bg-soft);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px 12px;
-    /* Grow to fit the Devices + Sources + Orientation stack instead of a cramped
-       fixed box. A generous cap keeps a huge fleet scrollable, but at a normal
-       16:9 window a couple of bands show cleanly with no scrollbars; overflow-x
-       hidden kills the horizontal scrollbar (board #0304). */
-    max-height: 75vh;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-.devices-rail .rail-head {
-    margin: 0 0 8px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.7px;
-    color: var(--fg-dim);
-    font-weight: 600;
-}
 .devices-compact { list-style: none; margin: 0; padding: 0; }
 
 .heatmap-hero {
@@ -696,52 +678,10 @@ main.studio {
     50%      { box-shadow: 0 0 0 5px rgba(255, 90, 107, 0); }
 }
 
-/* ---- devices ---- */
-
-#device-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-}
-
-#device-list .empty {
-    color: var(--fg-faint);
-    font-style: italic;
-    padding: 8px 0;
-}
-
-#device-list .device {
-    padding: 10px 12px;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    cursor: pointer;
-    margin-bottom: 6px;
-    background: var(--bg-soft);
-    transition: border-color 0.15s ease;
-}
-
-#device-list .device:hover { border-color: var(--border); }
-#device-list .device.selected { border-color: var(--accent); }
-#device-list .device.stale .hz { color: var(--orange); }
-#device-list .device.stale .age { color: var(--red); }
-
-.device-id {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 13px;
-    margin-bottom: 4px;
-    color: var(--fg);
-}
-
-.device-meta {
-    display: flex;
-    gap: 10px;
-    font-size: 11px;
-    color: var(--fg-dim);
-}
-
-.device-meta .type  { text-transform: uppercase; letter-spacing: 0.5px; }
-.device-meta .hz    { color: var(--green); font-weight: 600; }
-.device-meta .age   { color: var(--green); }
+/* ---- device status (inside band cards) ----
+   The old #device-list styles are gone with the Devices column (Tory:
+   redundant); .device-status now renders inside each band card's
+   .band-stats via renderDeviceStatus(). */
 
 .device-status {
     margin-top: 5px;
@@ -1356,8 +1296,9 @@ footer {
 }
 .comparator.has-hands:not(.has-lask) .lask-cluster { display: none; }
 .comparator.has-hands .hand-viewer { display: flex; }
-/* Two hands need width: widen the comparator column while hands stream */
-.live-grid.hand-mode { grid-template-columns: 220px 1fr 1.4fr; }
+/* Two hands need width: widen the comparator column while hands stream
+   (even split of the two-column grid; the old 220px rail is gone) */
+.live-grid.hand-mode { grid-template-columns: 1fr 1fr; }
 
 .hand-viewer-canvas {
     width: 100%;
@@ -1380,12 +1321,20 @@ footer {
 .hand-viewer-legend .hv-pred { color: #fbbf24; }
 .hand-viewer-legend .hv-hint { margin-left: auto; opacity: 0.7; font-style: italic; }
 
-/* ---- native V4 discovery: Sources rail ----
-   Discovered sources (announce beacon / cache / manual probe) with a per-source
-   subscribe toggle. Rendered by app.js renderDiscovery() from the WS snapshot's
-   `discovery` array. */
-.rail-head-sources { margin-top: 16px; display: flex; align-items: baseline; gap: 8px; }
+/* ---- native V4 discovery: available-source cards ----
+   Discovered sources with no heatmap yet (announce beacon / cache / manual
+   probe), each with a subscribe toggle + role select. Rendered by app.js
+   renderAvailableSources() below the band rows; a source graduates to a
+   band row once its matrix frames arrive. */
 .rail-count { font-size: 11px; font-weight: 400; color: var(--fg-faint, #8b96a8); }
+
+.available-sources { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* Cards match the band-card column width so they read as the same rail */
+.available-sources .src { width: 180px; margin-bottom: 0; }
+.available-sources:empty { display: none; }
+.available-sources .empty {
+    color: var(--fg-faint); font-style: italic; font-size: 12px; padding: 4px 0;
+}
 
 .discovery-compact .src {
     border: 1px solid var(--border, #23262d);
@@ -1459,16 +1408,16 @@ footer {
 }
 .src.subscribed .src-role-sel { border-color: rgba(52, 211, 153, 0.35); }
 
-/* IMU readout in the device status line (fast data.imu gyro/accel counts).
-   Gets its own full-width line under the battery/uptime/rssi row and wraps, so
-   the gyro+accel counts never bleed past the narrow Devices rail (board #0304). */
-.device-status .imu {
-    color: #60a5fa; font-variant-numeric: tabular-nums;
-    flex-basis: 100%; white-space: normal; overflow-wrap: anywhere;
+/* ---- IMU band-orientation widget ----
+   Single instance; app.js renderImuViewer() moves it into the .imu-slot
+   under the band card of the flexgrid it is showing, and parks it in
+   #imu-dock while no band row exists (Tory's redesign). */
+.imu-dock { margin-top: 10px; }
+.imu-head {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px;
+    color: var(--fg-dim); font-weight: 600;
+    display: flex; align-items: baseline; gap: 8px;
 }
-
-/* ---- IMU band-orientation widget (Sources rail) ---- */
-.rail-head-imu { margin-top: 16px; }
 .imu-viewer { display: none; flex-direction: column; gap: 6px; }
 .imu-viewer-canvas {
     width: 100%; height: 180px; border-radius: 8px; touch-action: none;
@@ -1556,13 +1505,43 @@ body.debug .debug-only { display: block; }
 .cap-verdict.cap-bad  { background: rgba(255, 90, 107, 0.20); color: var(--red); }
 .cap-warn-line { color: var(--orange); font-size: 12px; margin-top: 2px; }
 
-/* Multi-band LIVE heatmaps: one pressure grid per subscribed flexgrid, side by
-   side, so both forearms show at once in a two-hand session (board #0304). */
+/* Multi-band LIVE band rows: one [band card | heatmap] row per streaming
+   flexgrid (Tory's redesign: the flexgrid square sits to the LEFT of its own
+   heatmap, in line). Two-hand sessions tile the rows side by side (board
+   #0304); the Stack toggle puts one row above the other. */
 .heatmap-grids {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
     gap: 12px;
 }
+.band-row {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    min-width: 0;
+}
+.band-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.band-card {
+    border: 1px solid var(--border);
+    border-left: 3px solid #6b7280;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--panel, #14171d);
+    font-size: 12px;
+    cursor: pointer;             /* click selects the band (Orientation/debug) */
+}
+.band-card.subscribed { border-left-color: #34d399; }
+.band-card.err        { border-left-color: #f87171; }
+.band-card.selected   { border-color: var(--accent); }
+.band-meta {
+    display: flex; flex-wrap: wrap; gap: 6px 10px;
+    font-size: 11px; color: var(--fg-dim); margin-top: 4px;
+}
+.band-meta .hz { color: var(--green); font-weight: 600; }
+.band-meta .age { color: var(--green); }
+.band-meta .age.stale { color: var(--red); }
+.imu-slot:empty { display: none; }
 .heatmap-cell { min-width: 0; }
 .heatmap-cell-label {
     font-size: 11px; color: var(--fg-dim); margin-bottom: 4px;
@@ -1582,9 +1561,28 @@ body.debug .debug-only { display: block; }
 .hm-labeler { color: var(--green); }
 .heatmap-empty { color: var(--fg-dim); font-size: 13px; padding: 24px; text-align: center; }
 
-/* Band heatmap layout toggle (side by side default; stacked = one above other) */
-.heatmap-hero-head { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+/* Band-row layout toggle (side by side default; stacked = one above other).
+   The head also hosts the re-homed #discovery-count on the left. */
+.heatmap-hero-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+}
 .heatmap-grids.stacked { grid-template-columns: 1fr; }
+
+/* "+ add source" collapsible (probe by IP + subnet scan), collapsed by
+   default like record-advanced. */
+.add-source-toggle { margin-top: 10px; font-size: 12px; color: var(--fg-dim); }
+.add-source-body { max-width: 380px; }
+.add-source-body.hidden { display: none; }
+
+/* Label-device status lines under their visualizations (quest under the
+   hand-viewer legend, lask5 under the piston cluster, gamepad beside
+   #gamepad-panel). Filled by app.js renderLabelStatusLines(). */
+.device-status-line {
+    font-size: 11px; color: var(--fg-dim); margin-top: 2px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.device-status-line:empty { display: none; }
 
 /* Session view: 1H/2H capture badges + the show-all toggle row */
 .hands-badge {
@@ -1610,25 +1608,16 @@ body.debug .debug-only { display: block; }
     #control-bar { padding: 8px 14px; }
     .cb-status { display: none; }
 
-    /* Stage 1: the fixed 220px rail starves the heatmaps and comparator
-       (the demo-critical surfaces). Promote the rail to a full-width band
-       on top and split the row between the two hero panels. */
-    .live-grid { grid-template-columns: 1fr 1fr; }
-    .devices-rail {
-        grid-column: 1 / -1;
-        /* Short cap so the band never dominates the stage; it scrolls. */
-        max-height: 40vh;
-    }
-    /* Tile device / source cards across the wide band instead of one
-       skinny scrolling column. */
-    .devices-rail .devices-compact {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-        gap: 6px;
-    }
-    /* Grid gap replaces the per-card stacking margin. */
-    #device-list .device,
-    .discovery-compact .src { margin-bottom: 0; }
+    /* Stage 1: split the row evenly between the two hero panels (the
+       .hand-mode selector is repeated so its higher base specificity can't
+       pin the wide-layout columns here). */
+    .live-grid, .live-grid.hand-mode { grid-template-columns: 1fr 1fr; }
+    /* Band card stacks ABOVE its heatmap: a side-by-side card would starve
+       the heatmap (the demo-critical surface) at half-screen widths. */
+    .band-row { grid-template-columns: 1fr; }
+    .heatmap-grids { grid-template-columns: 1fr; }
+    /* Keep the Orientation widget card-sized when the rows go full width */
+    .band-row .imu-slot, .imu-dock { max-width: 420px; }
 
     /* Stage 3: side-by-side tables crush at this width (capture names
        wrap under the checkboxes, the Models table clips). Stack captures
@@ -1656,7 +1645,7 @@ body.debug .debug-only { display: block; }
     .cb-group, .cb-group + .cb-group { border-left: none; padding-left: 0; flex-wrap: wrap; }
     .hand-viewer-canvas { height: 260px; }
 
-    .live-grid { grid-template-columns: 1fr; }
+    .live-grid, .live-grid.hand-mode { grid-template-columns: 1fr; }
 }
 
 /* ===== Gamepad labeler panel =====
