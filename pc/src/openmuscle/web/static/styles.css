@@ -1658,3 +1658,51 @@ body.debug .debug-only { display: block; }
 
     .live-grid { grid-template-columns: 1fr; }
 }
+
+/* ===== Gamepad labeler panel =====
+   Live view of a USB controller being captured as a label source (gamepad.js
+   toggles .has-gamepad on .comparator and .active on the panel). Axes render
+   as bipolar bars growing from center; buttons as a lit grid. */
+#gamepad-panel { display: none; }
+.comparator.has-gamepad #gamepad-panel { display: block; }
+.gamepad-panel {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+.gp-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 8px; gap: 10px;
+}
+.gp-name { font-weight: 600; font-size: 12px; color: var(--fg); }
+.gp-shape { font-size: 11px; color: var(--fg-dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gp-axes { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.gp-axis { display: flex; align-items: center; gap: 8px; }
+.gp-axis-name { width: 22px; font-size: 10px; color: var(--fg-dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gp-axis-track {
+    position: relative; flex: 1; height: 10px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+    overflow: hidden;
+}
+/* Center tick so a resting stick reads as zero, not empty. */
+.gp-axis-track::before {
+    content: ''; position: absolute; left: 50%; top: 0; bottom: 0;
+    width: 1px; background: var(--border);
+}
+.gp-axis-fill {
+    position: absolute; top: 0; bottom: 0; left: 50%; width: 0;
+    background: var(--accent);
+}
+.gp-axis-fill.neg { background: var(--orange); }
+.gp-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.gp-btn {
+    width: 22px; height: 22px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: var(--fg-dim);
+    background: var(--bg); border: 1px solid var(--border);
+    opacity: 0.25;
+}
+.gp-btn.on { background: var(--green); color: #06210f; border-color: var(--green); }

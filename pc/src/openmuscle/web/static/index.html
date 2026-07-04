@@ -12,6 +12,9 @@
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
     </script>
     <script type="module" src="/static/hand-viewer.js?v=7"></script>
+    <!-- Gamepad labeler: reads a USB controller (navigator.getGamepads) and
+         streams frames to /ws/gamepad. Plain script (no module). -->
+    <script defer src="/static/gamepad.js?v=1"></script>
     <script type="module" src="/static/imu-viewer.js?v=1"></script>
 </head>
 <body>
@@ -47,7 +50,7 @@
                     <!-- Pluggable label-device seam: a new labeler is one new
                          option value + one new branch in deriveRecordPlan(). -->
                     <option value="keyboard" disabled>Keyboard (coming soon)</option>
-                    <option value="gamepad" disabled>Controller (coming soon)</option>
+                    <option value="gamepad">Controller (gamepad)</option>
                 </select>
             </label>
             <input id="capture-name" type="text" placeholder="capture name (optional)">
@@ -207,6 +210,12 @@
                             <span class="hv-hint">drag rotate | wheel zoom</span>
                         </div>
                     </div>
+
+                    <!-- Gamepad labeler panel. Shown when a USB controller is
+                         read by the browser (gamepad.js toggles .has-gamepad on
+                         .comparator). Live axes bars + button grid = the inputs
+                         being captured as labels. -->
+                    <div id="gamepad-panel" class="gamepad-panel"></div>
 
                     <!-- Joystick stays as a small inset; LASK5 sends the
                          operator's joystick state for free, useful as a

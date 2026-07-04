@@ -191,6 +191,37 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 "quest", f"socket error from {client}: "
                          f"{type(e).__name__}: {e}")
 
+    # Inbound WS from a USB game controller read by the dashboard browser
+    # (navigator.getGamepads). Same idea as /ws/quest: the browser can't speak
+    # UDP, so it pushes axis/button frames as JSON and ingest_gamepad_packet
+    # synthesizes a device_type="gamepad" packet routed through _handle_packet.
+    # The controller then looks like any other label device to the recorder,
+    # matcher, snapshot, and meta-sidecar code.
+    @app.websocket("/ws/gamepad")
+    async def ws_gamepad(websocket: WebSocket):
+        await websocket.accept()
+        client = (f"{websocket.client.host}:{websocket.client.port}"
+                  if websocket.client else "unknown")
+        state.log_buffer.info("gamepad", f"connected: {client}")
+        frame_count = 0
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                try:
+                    state.ingest_gamepad_packet(payload)
+                    frame_count += 1
+                except Exception as e:
+                    state.log_buffer.warn(
+                        "gamepad", f"ingest failed at frame {frame_count}: "
+                                   f"{type(e).__name__}: {e}")
+        except WebSocketDisconnect:
+            state.log_buffer.info(
+                "gamepad", f"disconnected: {client} after {frame_count} frames")
+        except Exception as e:
+            state.log_buffer.error(
+                "gamepad", f"socket error from {client}: "
+                           f"{type(e).__name__}: {e}")
+
     # ----- REST: devices -----
 
     @app.get("/api/devices")

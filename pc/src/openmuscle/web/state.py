@@ -550,6 +550,61 @@ class AppState:
         )
         self._handle_packet(pkt)
 
+    def ingest_gamepad_packet(self, payload: dict) -> None:
+        """Synthesize an OpenMusclePacket from a browser Gamepad-API frame and
+        route it through the standard packet path, exactly like the Quest.
+
+        A USB game controller is read by the dashboard browser (navigator.
+        getGamepads) and pushed over /ws/gamepad. From the recorder's view it is
+        just another label-producing device: we flatten the pad state into
+        `data.values` (the field the recorder pulls from) and hand it to
+        `_handle_packet`, so the matcher, JSONL sidecars, snapshot, and CSV
+        writer treat it identically to LASK5 or the Quest. No forearm/canonical
+        derivation applies (that path is gated on device_type == "quest_hand").
+
+        Expected payload shape (one frame):
+
+            {
+                "device_id": "gamepad-0",     # optional, stable per controller
+                "ts":        12345,           # browser-local ms (optional)
+                "id":        "Xbox 360 ...",  # controller name (optional)
+                "axes":    [-0.01, 0.5, ...], # -1..1 sticks + triggers
+                "buttons": [0.0, 1.0, ...]    # per-button value 0..1 (analog triggers included)
+            }
+
+        The label vector is axes followed by buttons: values = axes + buttons.
+        Its length is fixed per controller, so label_0..label_{N-1} stay a stable
+        matrix (a mid-capture controller swap would change width, same edge case
+        the label-width lock already guards for the Quest). The structured axes/
+        buttons split is kept under data.gamepad for the sidecar.
+
+        Empty payloads (no axes and no buttons) are dropped so a disconnected
+        pad does not write zero rows that would mislead the model.
+        """
+        axes = payload.get("axes") or []
+        buttons = payload.get("buttons") or []
+        if not axes and not buttons:
+            return
+        flat = [float(v) for v in axes] + [float(v) for v in buttons]
+
+        pkt = OpenMusclePacket(
+            version=CURRENT_VERSION,
+            device_type="gamepad",
+            device_id=payload.get("device_id") or "gamepad-0",
+            timestamp_ms=int(payload.get("ts") or 0),
+            data={
+                "values": flat,
+                "gamepad": {
+                    "id": payload.get("id") or "",
+                    "axes": [float(v) for v in axes],
+                    "buttons": [float(v) for v in buttons],
+                },
+            },
+            metadata=payload.get("meta") or {},
+            receive_time=time.time(),
+        )
+        self._handle_packet(pkt)
+
     # Flush JSONL sidecars every N frames to bound crash-loss to ~3 s of
     # data while keeping syscalls ~50× cheaper than line-buffered writes.
     # At 33 Hz sensor + 25 Hz label rates, 100 ≈ 3 s.
@@ -1133,7 +1188,9 @@ class AppState:
     # the operator doesn't pick one explicitly. Quest first because it's
     # the richer ground-truth source -- if both are connected during a
     # comparison session, we want the wider label vector by default.
-    AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5")
+    # gamepad is auto-pickable but lowest priority: a lone controller is found
+    # by the multiband path, while a quest/lask5 present alongside still wins.
+    AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5", "gamepad")
 
     def _auto_pick_label(self) -> Optional[str]:
         """First connected label-producing device, by type preference."""
@@ -1149,6 +1206,9 @@ class AppState:
     DEFAULT_WINDOW_MS_BY_TYPE = {
         "lask5": 100,
         "quest_hand": 175,
+        # Gamepad shares the browser -> WS path with the Quest but streams at a
+        # steady ~50Hz with low jitter, so a middle window pairs cleanly.
+        "gamepad": 120,
     }
     DEFAULT_WINDOW_MS_FALLBACK = 100
 

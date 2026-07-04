@@ -1385,6 +1385,32 @@ function deriveRecordPlan() {
         };
     }
 
+    if (source === 'gamepad') {
+        // The dashboard browser streams the controller to /ws/gamepad, so it
+        // shows up here as a device_type="gamepad" label device (gamepad.js).
+        const pad = lastDevices.find(d => d.device_type === 'gamepad' && deviceFresh(d));
+        if (!pad) return blocked('no controller: plug in a USB gamepad and press a button');
+        if (bandL && bandR) {
+            // multiband auto-picks the label device; gamepad is in the server's
+            // AUTO_LABEL_TYPE_PREFERENCE so a lone controller is found.
+            return {
+                ready: true, mode: '2band-gamepad',
+                endpoint: '/api/recording/multiband',
+                body: { filename: null },
+                summary: `2 bands | labels: gamepad ${pad.device_id} | ${winText(120)}`,
+            };
+        }
+        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
+        // Pin the gamepad as the label so auto-pick can't prefer a stray quest/lask.
+        const body = { filename: null, label_device_id: pad.device_id };
+        if (soloBand.role) { body.sensor_device_id = soloBand.device_id; body.role = soloBand.role; }
+        return {
+            ready: true, mode: '1h-gamepad',
+            endpoint: '/api/recording', body,
+            summary: `1H | ${soloBand.device_id}${soloBand.role ? ` (${soloBand.role})` : ''} | labels: gamepad ${pad.device_id} | ${winText(120)}`,
+        };
+    }
+
     // source === 'none': sensor-only (label_device_id "" disables pairing)
     if (bandL && bandR) {
         if (!(deviceFresh(bandL) && deviceFresh(bandR))) {
@@ -1435,7 +1461,7 @@ function renderRecordPlan() {
 // Labels pick persists across reloads; default vr (the headset flow).
 if (labelSourceSelect) {
     const saved = localStorage.getItem(STORE_LABEL_SOURCE);
-    if (saved && ['vr', 'lask5', 'none'].includes(saved)) labelSourceSelect.value = saved;
+    if (saved && ['vr', 'lask5', 'none', 'gamepad'].includes(saved)) labelSourceSelect.value = saved;
     labelSourceSelect.addEventListener('change', () => {
         localStorage.setItem(STORE_LABEL_SOURCE, labelSourceSelect.value);
     });
