@@ -26,25 +26,53 @@
             <h1>OpenMuscle <span class="subtitle">Studio</span></h1>
         </div>
 
-        <!-- Pipeline status strip: glance-tells "this is a pipeline tool".
-             Each pill is click-to-scroll to its stage. Updated every WS tick
-             by renderPipelinePills() in app.js. -->
-        <nav class="pipeline-strip" aria-label="pipeline status">
-            <a href="#stage-live"    class="pipe-pill" id="pipe-sensor">SENSOR  <span class="pipe-val">--</span></a>
-            <span class="pipe-arrow">→</span>
-            <a href="#stage-live"    class="pipe-pill" id="pipe-label">LABEL   <span class="pipe-val">--</span></a>
-            <span class="pipe-arrow">→</span>
-            <a href="#stage-capture" class="pipe-pill" id="pipe-capture">CAPTURE <span class="pipe-val">idle</span></a>
-            <span class="pipe-arrow">→</span>
-            <a href="#stage-models"  class="pipe-pill" id="pipe-model">MODEL   <span class="pipe-val">none</span></a>
-            <span class="pipe-arrow">→</span>
-            <a href="#stage-output"  class="pipe-pill" id="pipe-hand">HAND    <span class="pipe-val">off</span></a>
-        </nav>
-
         <div class="topbar-right">
             <span id="ws-status" class="badge offline">disconnected</span>
         </div>
     </header>
+
+    <!-- Sticky control bar: the whole record -> train -> predict loop lives up
+         here so Record, Predict and session context stay reachable while
+         scrolled anywhere (Tory's UI-overhaul ask: one Record button whose mode
+         is derived from what's streaming, plus always-visible Predict).
+         app.js renderRecordPlan() drives the plan line + button state per tick. -->
+    <div id="control-bar">
+        <div class="cb-group cb-record">
+            <button id="record-btn" class="primary">● Record</button>
+            <label class="rec-pick"><span>Labels</span>
+                <select id="label-source-select">
+                    <option value="vr">VR hands (Quest)</option>
+                    <option value="lask5">LASK5 pistons</option>
+                    <option value="none">none (sensor only)</option>
+                    <!-- Pluggable label-device seam: a new labeler is one new
+                         option value + one new branch in deriveRecordPlan(). -->
+                    <option value="keyboard" disabled>Keyboard (coming soon)</option>
+                    <option value="gamepad" disabled>Controller (coming soon)</option>
+                </select>
+            </label>
+            <input id="capture-name" type="text" placeholder="capture name (optional)">
+            <button id="record-advanced-toggle" class="link">▸ advanced</button>
+        </div>
+        <div class="cb-group cb-predict">
+            <button id="infer-toggle" disabled>▶ Predict</button>
+            <div id="predict-models" class="model-chips"></div>
+        </div>
+        <div class="cb-group cb-session">
+            <span id="session-chip" class="session-chip off">no session</span>
+            <button id="session-chip-new" class="link">＋ session</button>
+        </div>
+        <div class="cb-group cb-status">
+            <a href="#stage-live" class="pipe-pill" id="pipe-sensor">SENSOR <span class="pipe-val">--</span></a>
+            <a href="#stage-live" class="pipe-pill" id="pipe-label">LABEL <span class="pipe-val">--</span></a>
+        </div>
+        <div id="record-plan" class="record-plan"></div>
+        <div id="record-advanced" class="record-advanced hidden">
+            <label class="rec-pick"><span>Sensor</span><select id="sensor-select"></select></label>
+            <label class="rec-pick"><span>Label dev</span><select id="label-select"></select></label>
+            <label class="rec-pick"><span>Window ms</span><input id="record-window" type="number" min="20" max="1000" placeholder="auto"></label>
+        </div>
+        <div id="record-status" class="rec-status"></div>
+    </div>
 
     <main class="studio">
 
@@ -56,7 +84,7 @@
         <section id="stage-live" class="stage stage-live">
             <header class="stage-head">
                 <h2 class="stage-title"><span class="stage-num">1</span> Live</h2>
-                <span class="stage-sub">what the band feels · what the model thinks</span>
+                <span class="stage-sub">what the band feels, what the model thinks: record, train, predict</span>
             </header>
 
             <div class="live-grid">
@@ -110,10 +138,13 @@
                     </div>
                 </div>
 
-                <!-- GT-vs-Predicted comparator (right). Keeps the two existing
-                     piston containers (#lask-bars + #inference-bars) intact so
-                     renderLask/renderInference don't change; adds a residual Δ
-                     column between them computed by renderResiduals(). -->
+                <!-- GT-vs-Predicted comparator (right). Per-finger groups pair
+                     the ground-truth piston with the model's prediction and put
+                     the residual Δ beneath, so each finger reads as one unit.
+                     app.js toggles .has-hands / .has-lask on .comparator: hand
+                     panels for quest streams, flexion bars for LASK5, BOTH when
+                     both sources stream at once (VR session with LASK5 plugged
+                     in). The Predict toggle moved to the sticky control bar. -->
                 <div class="comparator">
                     <div class="comparator-head">
                         <h3>Ground truth <span class="vs">vs</span> Predicted</h3>
@@ -123,43 +154,57 @@
                         </div>
                     </div>
 
-                    <div class="comparator-row">
-                        <!-- LEFT: ground-truth piston bars (rendered by renderLask) -->
-                        <div id="lask-bars" class="piston-bars">
-                            <div class="piston" data-i="0"><div class="piston-label">P1</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                            <div class="piston" data-i="1"><div class="piston-label">P2</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                            <div class="piston" data-i="2"><div class="piston-label">P3</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                            <div class="piston" data-i="3"><div class="piston-label">P4</div><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
-                        </div>
-
-                        <!-- CENTER: live residual Δ per piston (pred - gt) -->
-                        <div id="comparator-deltas" class="comparator-deltas">
-                            <div class="delta-row" data-i="0">Δ<span class="delta-val">--</span></div>
-                            <div class="delta-row" data-i="1">Δ<span class="delta-val">--</span></div>
-                            <div class="delta-row" data-i="2">Δ<span class="delta-val">--</span></div>
-                            <div class="delta-row" data-i="3">Δ<span class="delta-val">--</span></div>
-                        </div>
-
-                        <!-- RIGHT: predicted piston bars (rendered by renderInference) -->
-                        <div id="inference-bars" class="piston-bars dimmed">
-                            <div class="piston" data-i="0"><div class="piston-label">P1̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-                            <div class="piston" data-i="1"><div class="piston-label">P2̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-                            <div class="piston" data-i="2"><div class="piston-label">P3̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
-                            <div class="piston" data-i="3"><div class="piston-label">P4̂</div><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                    <!-- LASK5 flexion cluster. A second cluster
+                         (data-side="left") slots in beside this one when
+                         two-hand LASK5 arrives; the head badge unhides then. -->
+                    <div class="lask-cluster" data-side="right">
+                        <div class="cluster-head hidden">R</div>
+                        <div id="comparator-fingers" class="finger-groups">
+                            <div class="finger-group" data-i="0">
+                                <div class="finger-label">P1</div>
+                                <div class="finger-bars">
+                                    <div class="piston gt" data-i="0"><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                                    <div class="piston pred" data-i="0"><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                                </div>
+                                <div class="delta-row" data-i="0">Δ<span class="delta-val">--</span></div>
+                            </div>
+                            <div class="finger-group" data-i="1">
+                                <div class="finger-label">P2</div>
+                                <div class="finger-bars">
+                                    <div class="piston gt" data-i="1"><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                                    <div class="piston pred" data-i="1"><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                                </div>
+                                <div class="delta-row" data-i="1">Δ<span class="delta-val">--</span></div>
+                            </div>
+                            <div class="finger-group" data-i="2">
+                                <div class="finger-label">P3</div>
+                                <div class="finger-bars">
+                                    <div class="piston gt" data-i="2"><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                                    <div class="piston pred" data-i="2"><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                                </div>
+                                <div class="delta-row" data-i="2">Δ<span class="delta-val">--</span></div>
+                            </div>
+                            <div class="finger-group" data-i="3">
+                                <div class="finger-label">P4</div>
+                                <div class="finger-bars">
+                                    <div class="piston gt" data-i="3"><div class="piston-track"><div class="piston-fill"></div></div><div class="piston-val">--</div></div>
+                                    <div class="piston pred" data-i="3"><div class="piston-track"><div class="piston-fill predicted"></div></div><div class="piston-val">--</div></div>
+                                </div>
+                                <div class="delta-row" data-i="3">Δ<span class="delta-val">--</span></div>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- quest_hand 3D viewer. Replaces the piston comparator-row
-                         above when a quest_hand label source is streaming (app.js
-                         toggles .hand-mode on .comparator). REAL captured hand
-                         (green) + PREDICTED model hand (amber) in wrist-local
-                         space. Drag to rotate; double-click to resume auto-spin. -->
+                    <!-- quest_hand 3D viewer. Shown when a quest_hand label
+                         source is streaming (app.js toggles .has-hands on
+                         .comparator). REAL captured hand (green) + PREDICTED
+                         model hand (amber) in wrist-local space. -->
                     <div id="hand-viewer" class="hand-viewer">
                         <div id="hand-viewer-canvas" class="hand-viewer-canvas"></div>
                         <div class="hand-viewer-legend">
                             <span class="hv-real">● real</span>
                             <span class="hv-pred">● predicted</span>
-                            <span class="hv-hint">drag to rotate</span>
+                            <span class="hv-hint">drag rotate | wheel zoom</span>
                         </div>
                     </div>
 
@@ -169,13 +214,6 @@
                     <div id="lask-joystick" class="joystick-inset">
                         <canvas id="joystick-canvas" width="64" height="64"></canvas>
                         <span id="joystick-vals" class="joy-vals">--, --</span>
-                    </div>
-
-                    <!-- Inference run/pause toggle lives here because it
-                         literally controls the right-half bars above. -->
-                    <div class="comparator-controls">
-                        <button id="infer-toggle" disabled>▶ Start</button>
-                        <span class="comparator-hint">predictions to a robot hand: see Stage 4</span>
                     </div>
                 </div>
             </div>
@@ -208,70 +246,58 @@
         </section>
 
         <!-- ============================================================
-             STAGE 2 — CAPTURE
-             Active session + record controls in one strip.
-             Past sessions collapsible below.
+             STAGE 2: DATA
+             Session card on top, then captures | train | models, then past
+             sessions. Merge of the old Capture + Data&Models stages; the
+             record controls themselves moved to the sticky control bar.
              ============================================================ -->
-        <section id="stage-capture" class="stage stage-capture">
+        <section id="stage-data" class="stage stage-data">
             <header class="stage-head">
-                <h2 class="stage-title"><span class="stage-num">2</span> Capture</h2>
-                <span class="stage-sub">session + record · paired sensor/label rows go to disk</span>
-            </header>
-
-            <div class="capture-strip">
-                <!-- Session block (left) -->
-                <div class="capture-session">
-                    <div class="capture-session-head">
-                        <span class="capture-section-label">Session</span>
-                        <button id="session-start-btn" class="link">＋ New session</button>
-                    </div>
-                    <div id="active-session-area">
-                        <div class="session-empty">No active session — recordings won't be grouped. Click "New session" to start one.</div>
-                    </div>
-                </div>
-
-                <!-- Record block (right) -->
-                <div class="capture-record">
-                    <div class="capture-session-head">
-                        <span class="capture-section-label">Record</span>
-                    </div>
-                    <div class="record-controls">
-                        <label class="rec-pick"><span>Sensor</span><select id="sensor-select"></select></label>
-                        <label class="rec-pick"><span>Label</span><select id="label-select"></select></label>
-                        <input id="capture-name" type="text" placeholder="capture filename (optional)">
-                        <button id="record-btn" class="primary">● Start recording</button>
-                        <button id="record-multiband-btn" title="Record every flexgrid tagged left/right in the Sources panel, plus the labeler">● Record multi-band</button>
-                        <button id="record-bilateral-btn" title="Two-hand capture: both bands (tagged left/right) matched to the two Quest hands (quest-left/quest-right from the VR app opened with ?arm=both)">● Record two-hand</button>
-                    </div>
-                    <div id="record-status" class="rec-status"></div>
-                </div>
-            </div>
-
-            <!-- Past sessions: still collapsible per existing behaviour -->
-            <button id="past-sessions-toggle" class="past-sessions-toggle">▸ Past sessions</button>
-            <div id="past-sessions-list" class="hidden"></div>
-        </section>
-
-        <!-- ============================================================
-             STAGE 3 — DATA & MODELS
-             Captures table | Train arrow | Models table.
-             Future: honest-metric columns + adaptive card (PR #3).
-             ============================================================ -->
-        <section id="stage-models" class="stage stage-data">
-            <header class="stage-head">
-                <h2 class="stage-title"><span class="stage-num">3</span> Data &amp; Models</h2>
+                <h2 class="stage-title"><span class="stage-num">2</span> Data &amp; Models</h2>
                 <span class="stage-sub">captures become models · audit honestly · iterate</span>
             </header>
+
+            <!-- Session block (full width) -->
+            <div class="capture-session">
+                <div class="capture-session-head">
+                    <span class="capture-section-label">Session</span>
+                    <button id="session-start-btn" class="link">＋ New session</button>
+                </div>
+                <div id="active-session-area">
+                    <div class="session-empty">No active session — recordings won't be grouped. Click "New session" to start one.</div>
+                </div>
+            </div>
 
             <div class="data-grid">
                 <!-- LEFT: captures -->
                 <div class="captures-col">
                     <div class="captures-header">
-                        <h3>Captures <span id="captures-filter-label" class="captures-filter"></span></h3>
+                        <h3>Captures</h3>
                         <div class="captures-actions">
                             <span id="captures-sel-status" class="sel-status">0 selected</span>
                             <button id="captures-open-folder" class="link" title="Open the captures folder in your file manager">📂 Open folder</button>
                         </div>
+                    </div>
+                    <!-- Filter bar (Tory's UI-overhaul ask): compose session /
+                         date / label-source / hands filters with AND; junk
+                         takes hidden by default. app.js applyCaptureFilters(). -->
+                    <div id="captures-filterbar" class="filter-bar">
+                        <select id="cap-filter-session" class="filter-select"></select>
+                        <div class="chip-group" id="cap-filter-date">
+                            <button class="filter-chip" data-days="1">today</button>
+                            <button class="filter-chip" data-days="7">7d</button>
+                            <button class="filter-chip on" data-days="">all</button>
+                        </div>
+                        <div class="chip-group" id="cap-filter-label">
+                            <button class="filter-chip" data-label="quest">VR</button>
+                            <button class="filter-chip" data-label="lask5">LASK5</button>
+                        </div>
+                        <div class="chip-group" id="cap-filter-hands">
+                            <button class="filter-chip" data-hands="1">1H</button>
+                            <button class="filter-chip" data-hands="2">2H</button>
+                        </div>
+                        <label class="filter-junk"><input type="checkbox" id="cap-filter-junk"> show junk
+                            <span id="cap-junk-count" class="sel-status"></span></label>
                     </div>
                     <table id="captures-table">
                         <thead>
@@ -319,26 +345,10 @@
                     </table>
                 </div>
             </div>
-        </section>
 
-        <!-- ============================================================
-             STAGE 4 — OUTPUT
-             Where do the predictions go? Hand UDP target controls.
-             The predicted bars themselves live in Stage 1's comparator.
-             ============================================================ -->
-        <section id="stage-output" class="stage stage-output">
-            <header class="stage-head">
-                <h2 class="stage-title"><span class="stage-num">4</span> Output</h2>
-                <span class="stage-sub">where the predictions are sent</span>
-            </header>
-            <div class="output-strip">
-                <label class="rec-pick">
-                    <span>→ Hand</span>
-                    <input id="infer-hand" type="text" placeholder="10.0.0.17:3145" spellcheck="false">
-                </label>
-                <button id="infer-hand-apply">Apply</button>
-                <span id="infer-hand-state" class="sel-status">no hand target</span>
-            </div>
+            <!-- Past sessions: still collapsible per existing behaviour -->
+            <button id="past-sessions-toggle" class="past-sessions-toggle">▸ Past sessions</button>
+            <div id="past-sessions-list" class="hidden"></div>
         </section>
 
         <!-- ============================================================
@@ -366,6 +376,20 @@
                     </div>
                     <div id="log-list" class="log-list">
                         <div class="log-empty">No log entries yet.</div>
+                    </div>
+                </section>
+                <!-- Output routing: where predictions are sent (robot-hand UDP
+                     target). Moved from the old Stage 4 strip; ids + handlers
+                     unchanged (apply / auto-restore logic in app.js). -->
+                <section class="diag-panel">
+                    <h4>Output routing</h4>
+                    <div class="output-routing">
+                        <label class="rec-pick">
+                            <span>→ Hand</span>
+                            <input id="infer-hand" type="text" placeholder="10.0.0.17:3145" spellcheck="false">
+                        </label>
+                        <button id="infer-hand-apply">Apply</button>
+                        <span id="infer-hand-state" class="sel-status">no hand target</span>
                     </div>
                 </section>
                 <!-- future: per-device telemetry detail panel; heatmap tuning sliders -->
@@ -397,6 +421,7 @@
                         <option value="">(unspecified)</option>
                         <option value="left">left</option>
                         <option value="right">right</option>
+                        <option value="both">both</option>
                     </select>
                 </div>
                 <div class="form-row">

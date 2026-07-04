@@ -4,6 +4,9 @@
 const wsStatus    = document.getElementById('ws-status');
 const deviceList  = document.getElementById('device-list');
 const recordBtn   = document.getElementById('record-btn');
+// The dedicated multiband/bilateral buttons are gone (one Record button whose
+// mode is derived from what's streaming); the consts stay so the existing
+// `if (recordMultibandBtn)` guards keep no-oping.
 const recordMultibandBtn = document.getElementById('record-multiband-btn');
 const recordBilateralBtn = document.getElementById('record-bilateral-btn');
 const recordStatus= document.getElementById('record-status');
@@ -18,6 +21,17 @@ const checkAll    = document.getElementById('captures-check-all');
 const modelsBody  = document.getElementById('models-body');
 const modelsCount = document.getElementById('models-count');
 const openFolderBtn = document.getElementById('captures-open-folder');
+// Sticky control bar (Tory's UI-overhaul: one Record button + derived plan,
+// always-visible Predict, compact session chip)
+const controlBar          = document.getElementById('control-bar');
+const labelSourceSelect   = document.getElementById('label-source-select');
+const recordPlanEl        = document.getElementById('record-plan');
+const recordAdvancedEl    = document.getElementById('record-advanced');
+const recordAdvancedToggle= document.getElementById('record-advanced-toggle');
+const recordWindowInput   = document.getElementById('record-window');
+const sessionChip         = document.getElementById('session-chip');
+const sessionChipNew      = document.getElementById('session-chip-new');
+const predictModels       = document.getElementById('predict-models');
 
 // Ask the server to open the captures folder in the OS file manager.
 // If `name` is given, highlight that capture file inside the folder.
@@ -42,6 +56,7 @@ if (openFolderBtn) {
 const STORE_SENSOR = 'om.sensor_device_id';
 const STORE_LABEL  = 'om.label_device_id';
 const STORE_HAND   = 'om.hand_target';      // last successfully-applied "host:port" — auto-restored on next launch
+const STORE_LABEL_SOURCE = 'om.label_source';   // vr | lask5 | none (Record plan input)
 
 // Set of capture filenames currently checked in the table
 const selectedCaptures = new Set();
@@ -112,6 +127,7 @@ function handleTick(msg) {
     renderDiscovery(msg.discovery || []);
     renderRecordPickers();
     renderRecording();
+    renderRecordPlan();
     // Draw a pressure grid for EVERY streaming flexgrid (both hands at once in a
     // two-hand session), not just the selected one (board #0304).
     drawHeatmaps();
@@ -168,14 +184,16 @@ function renderImuViewer() {
 // Drives the Three.js hand viewer (window.OMHandViewer, loaded as a module).
 // Shows the REAL captured hand from the live quest_hand device's flat joint
 // `values`, plus the model's PREDICTED hand from inference.piston_values when
-// a quest-trained model (>= 25 joints * 7 floats) is running. Toggles the
-// .hand-mode class on .comparator so CSS hides the LASK5 pistons in favor of
-// the viewer.
+// a quest-trained model (>= 25 joints * 7 floats) is running. Toggles
+// .has-hands on .comparator (CSS shows the viewer; the LASK5 pistons hide
+// only when no LASK5 is streaming, see renderLask's .has-lask).
 function renderHandViewer(questDevs, inference) {
     const comparator = document.querySelector('.comparator');
+    const liveGrid = document.querySelector('.live-grid');
     const viewerReady = window.OMHandViewer && window.OMHandViewer.isReady;
     if (!questDevs || !questDevs.length) {
-        if (comparator) comparator.classList.remove('hand-mode');
+        if (comparator) comparator.classList.remove('has-hands');
+        if (liveGrid) liveGrid.classList.remove('hand-mode');
         if (viewerReady && window.OMHandViewer.isReady()) window.OMHandViewer.setVisible(false);
         return;
     }
@@ -187,7 +205,11 @@ function renderHandViewer(questDevs, inference) {
     }
     if (!(window.OMHandViewer && window.OMHandViewer.isReady())) return;
 
-    if (comparator) comparator.classList.add('hand-mode');
+    // .has-hands coexists with .has-lask (renderLask): both panels show when
+    // both sources stream. The grid mirror widens the comparator column so
+    // two 3D hands get real width.
+    if (comparator) comparator.classList.add('has-hands');
+    if (liveGrid) liveGrid.classList.add('hand-mode');
     window.OMHandViewer.setVisible(true);
 
     // BOTH hands (Tory, Clark session): route each quest device to its side's
@@ -750,9 +772,31 @@ const pastSessionsToggle   = document.getElementById('past-sessions-toggle');
 const pastSessionsList     = document.getElementById('past-sessions-list');
 const sessionModal         = document.getElementById('session-modal');
 const sessionForm          = document.getElementById('session-form');
-const capturesFilterLabel  = document.getElementById('captures-filter-label');
 
 let pastSessions = [];
+
+// Compact session chip in the control bar: session context stays visible next
+// to Record even when the full session card (Data stage) is scrolled away.
+function updateSessionChip() {
+    if (!sessionChip) return;
+    if (activeSession) {
+        const s = activeSession;
+        const dur = s.started_at ? Math.floor(Date.now() / 1000 - s.started_at) : 0;
+        sessionChip.className = 'session-chip on';
+        sessionChip.textContent = `● ${s.name || s.id} | ${s.capture_count || 0} cap | ${formatUptime(dur)}`;
+        sessionChip.title = 'Active session · click to jump to the Data stage';
+    } else {
+        sessionChip.className = 'session-chip off';
+        sessionChip.textContent = 'no session (captures ungrouped)';
+        sessionChip.title = 'Captures will not be grouped · start a session';
+    }
+    if (sessionChipNew) sessionChipNew.style.display = activeSession ? 'none' : '';
+}
+if (sessionChip) sessionChip.onclick = () => {
+    const el = document.getElementById('stage-data');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+};
+if (sessionChipNew) sessionChipNew.onclick = () => openSessionModal();
 
 // Skip rebuilding the session card every WS tick: rebuilding ~5x/sec recreated
 // the End/Add buttons mid-click, so "End session" often didn't register (the
@@ -762,6 +806,11 @@ let pastSessions = [];
 let _activeSessionSig = null;
 
 function renderActiveSession() {
+    // Control-bar chip + captures-filter session plumbing ride the same
+    // per-tick call (both are cheap and sig/id-gated internally).
+    updateSessionChip();
+    syncCaptureFilterSession();
+    renderCaptureSessionOptions();
     if (activeSession) {
         const s = activeSession;
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
@@ -800,7 +849,6 @@ function renderActiveSession() {
             if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
             sessionStartBtn.disabled = true;
             sessionStartBtn.title = 'End the current session before starting a new one';
-            capturesFilterLabel.textContent = `· filtered to ${s.name || s.id}`;
         } else {
             // Structure unchanged: refresh only the live timer, leave the buttons.
             const d = document.getElementById('session-dur');
@@ -811,7 +859,6 @@ function renderActiveSession() {
         activeSessionArea.innerHTML = '<div class="session-empty">No active session — recordings won\'t be grouped. Click "New session" to start one.</div>';
         sessionStartBtn.disabled = false;
         sessionStartBtn.title = '';
-        capturesFilterLabel.textContent = '';
     }
 }
 
@@ -1148,7 +1195,7 @@ async function endSession() {
 
 function renderRecording() {
     if (recordingState) {
-        recordBtn.textContent = '■ Stop recording';
+        recordBtn.textContent = '■ Stop';
         recordBtn.classList.add('recording');
         if (recordMultibandBtn) recordMultibandBtn.disabled = true;
 
@@ -1200,10 +1247,12 @@ function renderRecording() {
             ${flatLine}${widthLine}
         `;
     } else {
-        recordBtn.textContent = '● Start recording';
+        recordBtn.textContent = '● Record';
         recordBtn.classList.remove('recording');
         if (recordMultibandBtn) recordMultibandBtn.disabled = false;
-        recordStatus.textContent = '';
+        // Keep the post-stop result card (verdict + next-take actions) up
+        // until the operator acts on it; the next start clears the flag.
+        if (!_postStopCard) recordStatus.textContent = '';
     }
 }
 
@@ -1231,80 +1280,259 @@ async function readError(r) {
     return JSON.stringify(body) || `HTTP ${r.status}`;
 }
 
+// ---------- record plan: one Record button, derived mode ----------
+//
+// The three record buttons (single / multi-band / two-hand) collapsed into ONE
+// Record button (Tory's UI-overhaul ask). The mode is derived per tick from
+// the Labels pick + which devices are streaming; #record-plan previews the
+// derived call so the operator sees exactly what one click will do. Adding a
+// future label device (keyboard/controller) = one <option> + one branch here.
+
+const DEVICE_FRESH_S = 2.0;   // same staleness threshold as the device list
+
+function deviceFresh(d) {
+    return d.last_seen_age == null || d.last_seen_age < DEVICE_FRESH_S;
+}
+
+function deriveRecordPlan() {
+    const winRaw = recordWindowInput ? parseInt(recordWindowInput.value, 10) : NaN;
+    const winMs = Number.isFinite(winRaw) ? winRaw : null;
+    // Server defaults when the advanced window box is empty: lask5=100,
+    // quest_hand=175 (DEFAULT_WINDOW_MS_BY_TYPE in state.py).
+    const winText = def => `win ${winMs ?? def}ms`;
+    const blocked = reason => ({ ready: false, mode: 'blocked', reason });
+
+    // Advanced override: an explicit device pick forces the legacy
+    // single-source path (today's exact behavior).
+    const sensorVal = sensorSelect.value;
+    const labelVal  = labelSelect.value;
+    if (sensorVal || labelVal) {
+        const body = { filename: null };
+        if (sensorVal) body.sensor_device_id = sensorVal;
+        if (labelVal === '__none__') body.label_device_id = '';
+        else if (labelVal)           body.label_device_id = labelVal;
+        return {
+            ready: true, mode: 'advanced', endpoint: '/api/recording', body,
+            summary: `advanced | sensor ${sensorVal || 'auto'} | label ${
+                labelVal === '__none__' ? 'none' : (labelVal || 'auto')} | ${winText(100)}`,
+        };
+    }
+
+    const flex   = lastDevices.filter(d => d.device_type === 'flexgrid');
+    const bandL  = flex.find(d => d.role === 'left');
+    const bandR  = flex.find(d => d.role === 'right');
+    const tagged = flex.filter(d => d.role === 'left' || d.role === 'right');
+    // Single-band candidate: the one tagged band, or the only flexgrid seen.
+    const soloBand = tagged.length === 1 ? tagged[0]
+        : (tagged.length === 0 && flex.length === 1 ? flex[0] : null);
+    const quests = lastDevices.filter(d => d.device_type === 'quest_hand');
+    // Same side test as renderHandViewer (quest-left / quest-right ids).
+    const questSide = side => quests.find(d =>
+        String(d.device_id).toLowerCase().includes(side));
+    const lask = lastDevices.find(d => d.device_type === 'lask5' && deviceFresh(d));
+    const source = (labelSourceSelect && labelSourceSelect.value) || 'vr';
+
+    if (!flex.length) return blocked('no band streaming');
+
+    if (source === 'vr') {
+        if (bandL && bandR) {
+            const missing = ['left', 'right'].filter(s => {
+                const q = questSide(s);
+                return !(q && deviceFresh(q));
+            });
+            if (missing.length) return blocked(
+                `2 bands tagged, but VR ${missing.join('+')} hand not streaming: open /vr with ?arm=both`);
+            return {
+                ready: true, mode: '2h-vr',
+                endpoint: '/api/recording/bilateral',
+                body: { filename: null },
+                summary: `2H | L ${bandL.device_id} + R ${bandR.device_id} | labels: VR both hands | ${winText(175)}`,
+            };
+        }
+        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
+        if (!quests.some(deviceFresh)) return blocked('VR hand not streaming: open /vr on the Quest');
+        const role = soloBand.role || 'left';
+        return {
+            ready: true, mode: '1h-vr',
+            endpoint: '/api/recording',
+            // label_device_id omitted: server auto-pick prefers quest_hand
+            body: { filename: null, sensor_device_id: soloBand.device_id, role },
+            summary: `1H | ${soloBand.device_id} (${role}) | labels: VR ${role} hand | ${winText(175)}`,
+        };
+    }
+
+    if (source === 'lask5') {
+        if (!lask) return blocked('no LASK5 streaming');
+        if (bandL && bandR) {
+            return {
+                ready: true, mode: '2band-lask',
+                endpoint: '/api/recording/multiband',
+                body: { filename: null },
+                summary: `2 bands | labels: LASK5 ${lask.device_id} | ${winText(100)}`,
+            };
+        }
+        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
+        // Omit both device ids for a lone untagged band = server auto-pick.
+        const body = { filename: null };
+        if (soloBand.role) {
+            body.sensor_device_id = soloBand.device_id;
+            body.role = soloBand.role;
+        }
+        return {
+            ready: true, mode: '1h-lask',
+            endpoint: '/api/recording', body,
+            summary: `1H | ${soloBand.device_id}${soloBand.role ? ` (${soloBand.role})` : ''} | labels: LASK5 ${lask.device_id} | ${winText(100)}`,
+        };
+    }
+
+    // source === 'none': sensor-only (label_device_id "" disables pairing)
+    if (bandL && bandR) {
+        if (!(deviceFresh(bandL) && deviceFresh(bandR))) {
+            return blocked('band(s) stale: check both bands are streaming');
+        }
+        return {
+            ready: true, mode: 'sensor-2band',
+            endpoint: '/api/recording',
+            body: { filename: null, label_device_id: '', sensor_device_id: bandL.device_id,
+                    role: 'left', extra_sensors: [{ device_id: bandR.device_id, role: 'right' }] },
+            summary: `2 bands | L ${bandL.device_id} + R ${bandR.device_id} | labels: none (sensor only) | ${winText(100)}`,
+        };
+    }
+    if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
+    if (!deviceFresh(soloBand)) return blocked('band stale: is it streaming?');
+    const role = soloBand.role || 'left';
+    return {
+        ready: true, mode: 'sensor-only',
+        endpoint: '/api/recording',
+        body: { filename: null, label_device_id: '', sensor_device_id: soloBand.device_id, role },
+        summary: `1 band | ${soloBand.device_id} (${role}) | labels: none (sensor only) | ${winText(100)}`,
+    };
+}
+
+// Plan preview line + Record-button arming. Runs every WS tick but touches
+// the DOM only when the rendered content changes (open dropdowns must survive
+// ticks -- same rule as _discoverySig).
+let _recordPlanSig = null;
+
+function renderRecordPlan() {
+    const recording = !!recordingState;
+    const plan = recording ? null : deriveRecordPlan();
+    if (controlBar) controlBar.classList.toggle('recording', recording);
+    if (labelSourceSelect) labelSourceSelect.disabled = recording;
+    if (recordWindowInput) recordWindowInput.disabled = recording;
+    recordBtn.disabled = !recording && !(plan && plan.ready);
+    const sig = JSON.stringify(plan
+        ? [plan.mode, plan.ready, plan.summary, plan.reason, recording]
+        : ['recording', recording]);
+    if (sig === _recordPlanSig) return;
+    _recordPlanSig = sig;
+    if (!recordPlanEl) return;
+    if (!plan) { recordPlanEl.textContent = ''; return; }
+    recordPlanEl.classList.toggle('blocked', !plan.ready);
+    recordPlanEl.textContent = plan.ready ? plan.summary : (plan.reason || '');
+}
+
+// Labels pick persists across reloads; default vr (the headset flow).
+if (labelSourceSelect) {
+    const saved = localStorage.getItem(STORE_LABEL_SOURCE);
+    if (saved && ['vr', 'lask5', 'none'].includes(saved)) labelSourceSelect.value = saved;
+    labelSourceSelect.addEventListener('change', () => {
+        localStorage.setItem(STORE_LABEL_SOURCE, labelSourceSelect.value);
+    });
+}
+
+if (recordAdvancedToggle && recordAdvancedEl) {
+    recordAdvancedToggle.onclick = () => {
+        const hidden = recordAdvancedEl.classList.toggle('hidden');
+        recordAdvancedToggle.textContent = (hidden ? '▸' : '▾') + ' advanced';
+    };
+}
+
+// Post-stop result card: keeps the finished take's stats + next actions in
+// the sticky bar until the operator moves on. renderRecording leaves the
+// status line alone while this flag is set; the next start clears it.
+let _postStopCard = false;
+
+function showPostStopCard(result, lastRec) {
+    // Same verdict thresholds as the live block in renderRecording, fed from
+    // the stop result (band_flat only lives in the last live tick snapshot).
+    const rate = result.match_rate ?? 0;
+    const widthMiss = result.label_width_mismatch ?? 0;
+    const seen = result.sensor_frames_seen ?? 0;
+    const bandFlat = !!(lastRec && lastRec.band_flat);
+    let verdict = 'GOOD', vCls = 'cap-good';
+    if (bandFlat || rate < 0.5 || (seen > 20 && (result.matched ?? 0) === 0)) {
+        verdict = 'BAD'; vCls = 'cap-bad';
+    } else if (rate < 0.9 || widthMiss > 0) {
+        verdict = 'DEGRADED'; vCls = 'cap-warn';
+    }
+    const flatLine = bandFlat
+        ? `<div class="cap-warn-line">⚠ band not engaged: ${lastRec.flat_cells}/${lastRec.cells_total} cells flat (was the band on the arm?)</div>`
+        : '';
+    const sessionBit = activeSession
+        ? ` · linked to ${escapeHtml(activeSession.name || activeSession.id)}`
+        : ' · no session (ungrouped)';
+    recordStatus.innerHTML = `
+        <div class="cap-verdict ${vCls}">saved: ${verdict}</div>
+        <div>${escapeHtml(result.filename || '?')} · ${result.rows ?? 0} rows · ${result.duration_s ?? 0}s
+             · match ${(rate * 100).toFixed(1)}%${sessionBit}</div>
+        ${flatLine}
+        <div class="rec-next-actions">
+            <button class="link" id="rec-next-take">● Record next take</button>
+            <button class="link" id="rec-go-train">⚙ Go train</button>
+        </div>`;
+    _postStopCard = true;
+    const nextBtn = document.getElementById('rec-next-take');
+    if (nextBtn) nextBtn.onclick = () => {
+        // Re-arm with a suggested take name; the next click on Record starts.
+        const base = activeSession ? (activeSession.name || activeSession.id) : 'take';
+        const n = (activeSession ? (activeSession.capture_count || 0) : 0) + 1;
+        captureName.value = `${base}-take${n}`;
+        _postStopCard = false;
+        recordStatus.textContent = '';
+        captureName.focus();
+    };
+    const goTrain = document.getElementById('rec-go-train');
+    if (goTrain) goTrain.onclick = () => {
+        // Pre-check the fresh capture so Train is one click away.
+        if (result.filename) {
+            selectedCaptures.add(result.filename);
+            updateSelectionStatus();
+        }
+        const el = document.getElementById('stage-data');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+    };
+}
+
 recordBtn.onclick = async () => {
     try {
         if (recordingState) {
+            const lastRec = recordingState;   // last live snapshot (carries band_flat)
             const r = await fetch('/api/recording', { method: 'DELETE' });
             if (!r.ok) throw new Error(await readError(r));
+            const result = await r.json().catch(() => null);
+            if (result) showPostStopCard(result, lastRec);
             await refreshCaptures();
         } else {
-            // Map picker values to the API contract:
-            //   ''         -> omit (let server auto-pick)
-            //   '__none__' -> '' (explicit empty -> server disables pairing)
-            //   '<id>'     -> '<id>' (explicit device pick)
-            const sensorVal = sensorSelect.value;
-            const labelVal  = labelSelect.value;
-            const body = { filename: captureName.value.trim() || null };
-            if (sensorVal === '__none__') {
-                throw new Error('Sensor source can\'t be "none" -- need a flexgrid to record');
-            }
-            if (sensorVal) body.sensor_device_id = sensorVal;
-            if (labelVal === '__none__') body.label_device_id = '';
-            else if (labelVal)           body.label_device_id = labelVal;
-
-            const r = await fetch('/api/recording', {
+            const plan = deriveRecordPlan();
+            if (!plan.ready) return;
+            const body = Object.assign({}, plan.body);
+            body.filename = captureName.value.trim() || null;
+            const win = recordWindowInput ? parseInt(recordWindowInput.value, 10) : NaN;
+            if (Number.isFinite(win)) body.window_ms = win;
+            const r = await fetch(plan.endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
             if (!r.ok) throw new Error(await readError(r));
             captureName.value = '';
+            _postStopCard = false;   // live verdict block owns the status line now
         }
     } catch (e) {
         alert(`Error: ${e.message}`);
     }
 };
-
-// Multi-band: record every flexgrid tagged left/right in the Sources panel
-// plus the labeler. Start-only; use the main Stop button to stop.
-if (recordMultibandBtn) {
-    recordMultibandBtn.onclick = async () => {
-        if (recordingState) return;
-        try {
-            const body = { filename: captureName.value.trim() || null };
-            const r = await fetch('/api/recording/multiband', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            if (!r.ok) throw new Error(await readError(r));
-            captureName.value = '';
-        } catch (e) {
-            alert(`Error: ${e.message}`);
-        }
-    };
-}
-
-// Two-hand (bilateral): record both bands (tagged left/right) matched to the two
-// Quest hand streams (quest-left/quest-right from the VR app's ?arm=both). Each
-// band's rows carry its OWN hand's label. Start-only; use Stop to end.
-if (recordBilateralBtn) {
-    recordBilateralBtn.onclick = async () => {
-        if (recordingState) return;
-        try {
-            const body = { filename: captureName.value.trim() || null };
-            const r = await fetch('/api/recording/bilateral', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            if (!r.ok) throw new Error(await readError(r));
-            captureName.value = '';
-        } catch (e) {
-            alert(`Error: ${e.message}`);
-        }
-    };
-}
 
 // ---------- captures list ----------
 
@@ -1318,24 +1546,147 @@ async function refreshCaptures() {
     }
 }
 
-function captureIsInActiveSession(c) {
-    if (!activeSession) return true;            // no filter
-    const meta = c.meta;
-    if (!meta) return false;
-    // The active session_id lives in meta.auto.session_id, which the
-    // list_captures summary doesn't expose by default; tags carry a
-    // `session:<id>` tag we seed at recording time -- check both for
-    // robustness.
-    if ((meta.tags || []).some(t => t === 'session:' + activeSession.id)) return true;
-    if (meta.session_id === activeSession.id) return true;       // future-proof
+// ---------- captures filter bar ----------
+//
+// Session / date / label-source / hands filters compose with AND; within a
+// chip group an empty selection passes all, multiple picks OR together. Junk
+// takes (too short to train on) hide by default. Replaces the old binary
+// "active session vs show all" view (Tory's UI-overhaul ask: filters).
+
+const capFilter = {
+    session: '__all__',       // '__active__' | '__all__' | '__none__' | <session_id>
+    days: null,               // null | 1 | 7
+    labels: new Set(),        // subset of {'quest','lask5'}
+    hands: new Set(),         // subset of {1,2}
+    showJunk: false,
+};
+
+const capFilterSession = document.getElementById('cap-filter-session');
+const capFilterJunk    = document.getElementById('cap-filter-junk');
+const capJunkCount     = document.getElementById('cap-junk-count');
+
+// Recording-time epoch ms for date logic + display. Falls back to file mtime
+// for legacy captures; created_ms is preferred because this checkout syncs
+// via OneDrive, which can rewrite mtimes.
+function captureTimeMs(c) {
+    return (c.created_ms != null) ? c.created_ms : c.mtime * 1000;
+}
+
+// Junk = not enough paired rows / seconds to train on. rows/duration_s are
+// the new backend fields; size is the fallback for pre-field captures.
+function captureIsJunk(c) {
+    if (c.rows != null && c.rows < 200) return true;
+    if (c.duration_s != null && c.duration_s < 10) return true;
+    if (c.rows == null && c.size_bytes < 51200) return true;
     return false;
 }
 
-// SESSION VIEW (Tory, Clark session): when a session is active the table shows
-// ONLY that session's takes -- the lab tech shouldn't wade through history
-// mid-session. A toggle row reveals the rest on demand.
-let showAllCaptures = false;
+function applyCaptureFilters(list) {
+    return list.filter(c => {
+        if (capFilter.session === '__active__') {
+            if (!activeSession || c.session_id !== activeSession.id) return false;
+        } else if (capFilter.session === '__none__') {
+            if (c.session_id) return false;
+        } else if (capFilter.session !== '__all__') {
+            if (c.session_id !== capFilter.session) return false;
+        }
+        if (capFilter.days != null
+            && captureTimeMs(c) < Date.now() - capFilter.days * 86400e3) return false;
+        // null label_source passes only when no label chip is on
+        if (capFilter.labels.size && !capFilter.labels.has(c.label_source)) return false;
+        if (capFilter.hands.size && !capFilter.hands.has(c.hands)) return false;
+        return true;
+    });
+}
+
+// Session select: Active (when one exists) / All / unlinked / each past
+// session. Rebuilt only when the id list changes so an open dropdown
+// survives the 5Hz ticks driving this via renderActiveSession.
+let _capSessOptsSig = null;
+
+function renderCaptureSessionOptions() {
+    if (!capFilterSession) return;
+    const sig = JSON.stringify([activeSession ? activeSession.id : null,
+                                pastSessions.map(s => s.id)]);
+    if (sig !== _capSessOptsSig) {
+        _capSessOptsSig = sig;
+        const opts = [];
+        if (activeSession) opts.push(['__active__', 'Active session']);
+        opts.push(['__all__', 'All sessions']);
+        opts.push(['__none__', 'No session (unlinked)']);
+        for (const s of pastSessions) {
+            const d = s.started_at ? new Date(s.started_at * 1000) : null;
+            const mmdd = d ? ` (${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')})` : '';
+            opts.push([s.id, `${s.name || s.id}${mmdd}`]);
+        }
+        capFilterSession.innerHTML = opts.map(([v, label]) =>
+            `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`).join('');
+    }
+    // A removed option (e.g. session deleted) falls back to All.
+    if (![...capFilterSession.options].some(o => o.value === capFilter.session)) {
+        capFilter.session = '__all__';
+    }
+    if (capFilterSession.value !== capFilter.session) {
+        capFilterSession.value = capFilter.session;
+    }
+}
+
+// Snap the session filter on session start/end (driven from the WS tick via
+// renderActiveSession): start -> Active session, end -> All sessions.
+let _capFilterSessionId;   // undefined = before first tick
+
+function syncCaptureFilterSession() {
+    const sid = activeSession ? activeSession.id : null;
+    if (sid === _capFilterSessionId) return;
+    _capFilterSessionId = sid;
+    capFilter.session = sid ? '__active__' : '__all__';
+    // Immediate re-render with whatever list we have; handleTick's
+    // refreshCaptures (on session change) replaces it once fetched.
+    renderCaptures(_lastCapturesList);
+}
+
+if (capFilterSession) capFilterSession.onchange = () => {
+    capFilter.session = capFilterSession.value;
+    renderCaptures(_lastCapturesList);
+};
+// Date chips are exclusive (one on at a time)
+document.querySelectorAll('#cap-filter-date .filter-chip').forEach(btn => {
+    btn.onclick = () => {
+        capFilter.days = btn.dataset.days ? parseInt(btn.dataset.days, 10) : null;
+        document.querySelectorAll('#cap-filter-date .filter-chip').forEach(b =>
+            b.classList.toggle('on', b === btn));
+        renderCaptures(_lastCapturesList);
+    };
+});
+// Label + hands chips are multi-select toggles
+document.querySelectorAll('#cap-filter-label .filter-chip').forEach(btn => {
+    btn.onclick = () => {
+        const v = btn.dataset.label;
+        if (capFilter.labels.has(v)) capFilter.labels.delete(v);
+        else capFilter.labels.add(v);
+        btn.classList.toggle('on', capFilter.labels.has(v));
+        renderCaptures(_lastCapturesList);
+    };
+});
+document.querySelectorAll('#cap-filter-hands .filter-chip').forEach(btn => {
+    btn.onclick = () => {
+        const v = parseInt(btn.dataset.hands, 10);
+        if (capFilter.hands.has(v)) capFilter.hands.delete(v);
+        else capFilter.hands.add(v);
+        btn.classList.toggle('on', capFilter.hands.has(v));
+        renderCaptures(_lastCapturesList);
+    };
+});
+if (capFilterJunk) capFilterJunk.onchange = () => {
+    capFilter.showJunk = capFilterJunk.checked;
+    renderCaptures(_lastCapturesList);
+};
+
 let _lastCapturesList = [];
+
+// Rebuild gate (same convention as _modelsSig): the 5s poll must not rebuild
+// the tbody under the cursor when nothing it renders has changed.
+let _capturesSig = null;
 
 function renderCaptures(list) {
     _lastCapturesList = list;
@@ -1345,27 +1696,38 @@ function renderCaptures(list) {
         if (!existing.has(n)) selectedCaptures.delete(n);
     }
 
+    const filtered = applyCaptureFilters(list);
+    const junkCount = filtered.filter(captureIsJunk).length;
+    const visible = capFilter.showJunk ? filtered : filtered.filter(c => !captureIsJunk(c));
+    if (capJunkCount) capJunkCount.textContent =
+        (!capFilter.showJunk && junkCount) ? `(${junkCount} junk hidden)` : '';
+
+    const sig = JSON.stringify([
+        capFilter.session, capFilter.days, [...capFilter.labels],
+        [...capFilter.hands], capFilter.showJunk,
+        activeSession ? activeSession.id : null,
+        // meta rides along so an edit re-renders even though mtime is unchanged
+        visible.map(c => [c.name, c.mtime, c.session_id || '', c.hands,
+                          c.label_source || '', c.rows, c.duration_s, c.meta]),
+    ]);
+    if (sig === _capturesSig) { updateSelectionStatus(); return; }
+    _capturesSig = sig;
+
     if (!list.length) {
         capturesBody.innerHTML = '<tr class="empty"><td colspan="6">No captures saved yet.</td></tr>';
         updateSelectionStatus();
         return;
     }
 
-    // Session view: filter to the active session unless "show all" is on.
-    let working = list;
-    let hiddenCount = 0;
-    if (activeSession && !showAllCaptures) {
-        working = list.filter(c => captureIsInActiveSession(c));
-        hiddenCount = list.length - working.length;
-    }
-
-    const rows = working.map(c => {
-        const date = new Date(c.mtime * 1000).toLocaleString();
+    const rows = visible.map(c => {
+        const date = new Date(captureTimeMs(c)).toLocaleString();
         const kb = (c.size_bytes / 1024).toFixed(1);
         const checked = selectedCaptures.has(c.name) ? 'checked' : '';
         const metaCell = renderCaptureMetaSummary(c.meta);
-        const outsideSession = !captureIsInActiveSession(c);
-        const trClass = outsideSession ? ' class="outside-session"' : '';
+        const junk = captureIsJunk(c);
+        const trClass = junk ? ' class="junk-row"' : '';
+        const junkTag = junk
+            ? ' <span class="tag" title="too few rows / too short to train on">junk</span>' : '';
         // 1H/2H badge: was this take one band or a true two-hand capture?
         // (backend list_captures counts left+right roles in the CSV.)
         const hands = c.hands === 2
@@ -1374,7 +1736,7 @@ function renderCaptures(list) {
                 ? '<span class="hands-badge h1" title="single-band capture">1H</span>' : '');
         return `<tr${trClass} data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
-            <td>${hands} ${escapeHtml(c.name)}</td>
+            <td>${hands} ${escapeHtml(c.name)}${junkTag}</td>
             <td>${metaCell}</td>
             <td>${kb} KB</td>
             <td>${escapeHtml(date)}</td>
@@ -1386,19 +1748,9 @@ function renderCaptures(list) {
             </td>
         </tr>`;
     }).join('');
-    const emptySession = (!working.length)
-        ? '<tr class="empty"><td colspan="6">No captures in this session yet — hit Record.</td></tr>' : '';
-    const toggleRow = (activeSession && (hiddenCount > 0 || showAllCaptures))
-        ? `<tr class="show-all-row"><td colspan="6"><button class="link" id="captures-show-all">${
-            showAllCaptures ? '▾ hide captures outside this session'
-                            : `▸ show ${hiddenCount} older capture${hiddenCount === 1 ? '' : 's'} (outside this session)`
-          }</button></td></tr>` : '';
-    capturesBody.innerHTML = emptySession + rows + toggleRow;
-    const showAllBtn = document.getElementById('captures-show-all');
-    if (showAllBtn) showAllBtn.onclick = () => {
-        showAllCaptures = !showAllCaptures;
-        renderCaptures(_lastCapturesList);
-    };
+    const emptyFiltered = (!visible.length)
+        ? '<tr class="empty"><td colspan="6">No captures match the current filters.</td></tr>' : '';
+    capturesBody.innerHTML = emptyFiltered + rows;
     capturesBody.querySelectorAll('button[data-del]').forEach(btn => {
         btn.onclick = async () => {
             const name = btn.dataset.del;
@@ -1539,14 +1891,19 @@ metaForm.onsubmit = async (e) => {
 };
 
 function updateSelectionStatus() {
+    // Selection survives filter flips (Train uses the FULL set), so call out
+    // selected captures the current filters are hiding.
     const n = selectedCaptures.size;
-    selStatus.textContent = `${n} selected`;
+    const boxes = [...capturesBody.querySelectorAll('input.cap-check')];
+    const visibleNames = new Set(boxes.map(b => b.dataset.name));
+    const hiddenSel = [...selectedCaptures].filter(name => !visibleNames.has(name)).length;
+    selStatus.textContent = `${n} selected` + (hiddenSel ? ` (${hiddenSel} filtered out)` : '');
     trainBtn.disabled = (n === 0);
-    // Sync check-all state: checked when ALL rows are selected, indeterminate
-    // when some but not all are.
-    const total = capturesBody.querySelectorAll('input.cap-check').length;
-    checkAll.checked = (n > 0 && n === total);
-    checkAll.indeterminate = (n > 0 && n < total);
+    // Check-all reflects VISIBLE rows only: checked when every visible row is
+    // selected, indeterminate when some are.
+    const visSel = boxes.filter(b => selectedCaptures.has(b.dataset.name)).length;
+    checkAll.checked = (boxes.length > 0 && visSel === boxes.length);
+    checkAll.indeterminate = (visSel > 0 && visSel < boxes.length);
 }
 
 checkAll.onchange = () => {
@@ -1587,6 +1944,28 @@ function trainRunHint() {
         ? 'predicting' : 'click ▶ Resume to run';
 }
 
+// Train -> see it live (the core-loop fix): after a successful activate,
+// start predicting without a trip to the Predict button (mirrors the VR
+// client's runTrain) and pulse the control-bar model chips.
+async function autoEnablePrediction() {
+    try {
+        const r = await fetch('/api/inference/enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true }),
+        });
+        // Optimistic local flip so trainRunHint() says "predicting" now
+        // instead of one WS tick from now; the next tick confirms.
+        if (r.ok && inferenceState) inferenceState.enabled = true;
+    } catch (e) {
+        console.warn('auto-enable after train failed', e);
+    }
+    if (predictModels) {
+        predictModels.classList.add('just-trained');
+        setTimeout(() => predictModels.classList.remove('just-trained'), 4000);
+    }
+}
+
 trainBtn.onclick = async () => {
     if (selectedCaptures.size === 0) return;
     const captures = [...selectedCaptures];
@@ -1623,6 +2002,7 @@ trainBtn.onclick = async () => {
                 trainStatus.className = 'train-status error';
                 trainStatus.textContent = `⚠ Trained (L R²=${r2s.left}, R R²=${r2s.right}) but NOT loaded: ${why}`;
             } else {
+                await autoEnablePrediction();
                 trainStatus.className = 'train-status ok';
                 trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}`;
             }
@@ -1646,6 +2026,7 @@ trainBtn.onclick = async () => {
                 trainStatus.className = 'train-status error';
                 trainStatus.textContent = `⚠ Trained + loaded, but: ${result.warning}`;
             } else {
+                await autoEnablePrediction();
                 trainStatus.className = 'train-status ok';
                 trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]`;
             }
@@ -1661,11 +2042,16 @@ trainBtn.onclick = async () => {
 
 // ---------- models panel ----------
 
+// name -> wearer, for the predict-chip mismatch warning (a model trained on
+// someone else's arm quietly underperforms; tint the chip instead).
+const _modelWearerByName = new Map();
+
 async function refreshModels() {
     try {
         const r = await fetch('/api/models');
         if (!r.ok) return;
         const list = await r.json();
+        list.forEach(m => { if (m.name) _modelWearerByName.set(m.name, m.wearer || null); });
         renderModels(list);
     } catch (e) {
         // best-effort
@@ -1805,7 +2191,10 @@ function renderModels(list) {
 // anything larger is treated as raw ADC and divided by 4095.
 const LASK_ADC_MAX = 4095;
 const laskMeta = document.getElementById('lask-meta');
-const laskBars = document.getElementById('lask-bars');
+// Paired per-finger pistons: GT + predicted live side by side inside
+// #comparator-fingers (the old #lask-bars / #inference-bars columns).
+const laskBars = document.querySelectorAll('#comparator-fingers .piston.gt');
+const comparatorFingers = document.getElementById('comparator-fingers');
 const joyCanvas = document.getElementById('joystick-canvas');
 const joyCtx = joyCanvas.getContext('2d');
 const joyVals = document.getElementById('joystick-vals');
@@ -1824,11 +2213,29 @@ function pistonValText(v) {
     return (v <= 1 && v !== Math.floor(v)) ? v.toFixed(2) : String(v);
 }
 
+// BAR fill fraction. LASK5 wire convention (board #0317): pressed piston ->
+// 0.0 on the wire, so 1.0 = released = finger extended. Tory reads "bar
+// filled = finger curled", so wire-space (0..1) values invert for DISPLAY
+// only; the .piston-val text keeps the raw wire number so CSV/log
+// cross-checks still match. Legacy raw ADC (>1.5) keeps the direct
+// proportional fill via pistonFraction (never double-transform).
+function pistonFillFraction(v) {
+    if (typeof v !== 'number' || !isFinite(v)) return 0;
+    // Wire-space (predictions can overshoot [0,1] slightly): clamp, invert.
+    if (v >= -0.5 && v <= 1.5) return 1 - Math.min(Math.max(v, 0), 1);
+    return pistonFraction(v);
+}
+
 function renderLask(dev) {
-    if (!dev || !Array.isArray(dev.values) || dev.values.length === 0) {
+    // Flexion bars show whenever LASK5 streams, alongside the hand panels if
+    // VR is also live (a VR session with a LASK5 plugged in shows both).
+    const comparator = document.querySelector('.comparator');
+    const hasLask = !!(dev && Array.isArray(dev.values) && dev.values.length);
+    if (comparator) comparator.classList.toggle('has-lask', hasLask);
+    if (!hasLask) {
         laskMeta.textContent = 'no device';
         // zero the bars
-        laskBars.querySelectorAll('.piston').forEach(p => {
+        laskBars.forEach(p => {
             p.querySelector('.piston-fill').style.height = '0%';
             p.querySelector('.piston-val').textContent = '--';
         });
@@ -1838,10 +2245,10 @@ function renderLask(dev) {
     laskMeta.textContent =
         `${dev.device_id} · ${dev.hz.toFixed(1)} Hz · ${dev.packets} pkts`;
     const vals = dev.values;
-    laskBars.querySelectorAll('.piston').forEach(p => {
+    laskBars.forEach(p => {
         const i = parseInt(p.dataset.i, 10);
         const v = i < vals.length ? vals[i] : 0;
-        const pct = pistonFraction(v) * 100;
+        const pct = pistonFillFraction(v) * 100;
         p.querySelector('.piston-fill').style.height = pct.toFixed(1) + '%';
         p.querySelector('.piston-val').textContent = pistonValText(v);
     });
@@ -1877,7 +2284,7 @@ function drawJoystick(j) {
 // ---------- ML inference (predicted LASK) ----------
 
 const inferenceMeta   = document.getElementById('inference-meta');
-const inferenceBars   = document.getElementById('inference-bars');
+const inferenceBars   = document.querySelectorAll('#comparator-fingers .piston.pred');
 const inferToggleBtn  = document.getElementById('infer-toggle');
 const inferHandInput  = document.getElementById('infer-hand');
 const inferHandApply  = document.getElementById('infer-hand-apply');
@@ -1905,20 +2312,22 @@ function renderInference(inf) {
     }
     if (!inf.available || !Array.isArray(inf.piston_values)) {
         inferenceMeta.innerHTML = escapeHtml(inf.status || 'no model loaded') + recLiveSpan;
-        inferenceBars.classList.add('dimmed');
-        inferenceBars.querySelectorAll('.piston').forEach(p => {
+        if (comparatorFingers) comparatorFingers.classList.add('dimmed');
+        inferenceBars.forEach(p => {
             p.querySelector('.piston-fill').style.height = '0%';
             p.querySelector('.piston-val').textContent = '--';
         });
         return;
     }
-    inferenceBars.classList.remove('dimmed');
+    if (comparatorFingers) comparatorFingers.classList.remove('dimmed');
     inferenceMeta.innerHTML = escapeHtml(inf.model || 'live') + recLiveSpan;
     const vals = inf.piston_values;
-    inferenceBars.querySelectorAll('.piston').forEach(p => {
+    inferenceBars.forEach(p => {
         const i = parseInt(p.dataset.i, 10);
         const v = i < vals.length ? vals[i] : 0;
-        const pct = pistonFraction(v) * 100;
+        // Same wire-space bar inversion as the GT pistons: training consumes
+        // wire-space label_*, so predictions are wire-space too.
+        const pct = pistonFillFraction(v) * 100;
         p.querySelector('.piston-fill').style.height = pct.toFixed(1) + '%';
         p.querySelector('.piston-val').textContent = pistonValText(v);
     });
@@ -1958,8 +2367,45 @@ async function autoApplyHandTarget(raw) {
     }
 }
 
+// Control-bar model chips: which model each engine slot is running, always
+// visible next to the Predict toggle. Rebuilt in place, sig-gated so ticks
+// with unchanged slots leave the DOM alone.
+let _predictChipsSig = null;
+
+function renderPredictModelChips(inf) {
+    if (!predictModels) return;
+    const am = (inf && inf.active_models) || {};
+    const live = !!(inf && inf.enabled) && inf.status === 'live';
+    const sessionWearer = (activeSession && activeSession.wearer) || null;
+    const entries = [];
+    if (am.left)  entries.push(['L ', am.left]);
+    if (am.right) entries.push(['R ', am.right]);
+    if (!entries.length && am.shared) entries.push(['', am.shared]);
+    const sig = JSON.stringify([am, inf && inf.status, !!(inf && inf.enabled),
+        sessionWearer, entries.map(([, n]) => _modelWearerByName.get(n) || null)]);
+    if (sig === _predictChipsSig) return;
+    _predictChipsSig = sig;
+    if (!entries.length) {
+        predictModels.innerHTML = '<span class="model-chip empty">no model, train first</span>';
+        return;
+    }
+    const stateCls = live ? 'on' : 'paused';
+    predictModels.innerHTML = entries.map(([badge, name]) => {
+        // Warn when the model was trained on a different wearer than the
+        // active session's: it will quietly underperform on this arm.
+        const wearer = _modelWearerByName.get(name) || null;
+        const mismatch = !!(sessionWearer && wearer && wearer !== sessionWearer);
+        const title = mismatch
+            ? `trained on ${wearer}, session wearer is ${sessionWearer}`
+            : ((inf && inf.status) || '');
+        return `<span class="model-chip ${stateCls}${mismatch ? ' wearer-mismatch' : ''}"`
+            + ` title="${escapeHtml(title)}">${escapeHtml(badge + name)}</span>`;
+    }).join('');
+}
+
 function renderInferenceControls(inf) {
     maybeRestoreHandTarget(inf);
+    renderPredictModelChips(inf);
 
     const hasModel = !!(inf && inf.model);
     const enabled  = !!(inf && inf.enabled);
@@ -2065,7 +2511,7 @@ inferHandInput.addEventListener('keydown', (e) => {
 const RESIDUAL_CLOSE_THRESHOLD = 0.05;
 
 function renderResiduals(laskDev, inf) {
-    const deltaRows = document.querySelectorAll('#comparator-deltas .delta-row');
+    const deltaRows = document.querySelectorAll('#comparator-fingers .delta-row');
     if (!deltaRows.length) return;
     const gt   = laskDev && Array.isArray(laskDev.values) ? laskDev.values : null;
     const pred = inf && Array.isArray(inf.piston_values)  ? inf.piston_values : null;

@@ -1559,6 +1559,21 @@ class AppState:
                 "zero-filled)".format(
                     rec.path.name, rec.label_width_mismatch_count,
                     rec.locked_label_count))
+        # Persist final stats into the meta sidecar so list_captures() can
+        # surface rows/duration for the dashboard's capture filters and junk
+        # detection (Tory's UI-overhaul ask) without re-reading every CSV.
+        # write_capture_meta shallow-merges the "auto" dict, so adding the
+        # new "final" key leaves the seeded auto.* fields intact.
+        try:
+            self.write_capture_meta(rec.path.name, {"auto": {"final": {
+                "rows": rec.row_count,
+                "duration_s": round(rec.duration_s, 1),
+                "match_rate": round(rec.match_rate, 3),
+            }}})
+        except Exception as e:
+            self.log_buffer.warn("meta",
+                "could not persist final stats for {}: {}".format(
+                    rec.path.name, e))
         result = {
             "filename": rec.path.name,
             "rows": rec.row_count,
@@ -1610,12 +1625,25 @@ class AppState:
                     "has_notes": bool(meta.get("notes")),
                     "session_id": (meta.get("auto") or {}).get("session_id"),
                 }
+            # Final stats written by stop_recording(); legacy captures lack
+            # them and return nulls (the dashboard falls back to size_bytes
+            # for junk detection).
+            fin = ((meta or {}).get("auto") or {}).get("final") or {}
             out.append({
                 "name": p.name,
                 "size_bytes": stat.st_size,
                 "mtime": stat.st_mtime,
                 "hands": hands,                 # 1 or 2 (for the in-VR badge)
                 "session_id": (meta.get("auto") or {}).get("session_id") if meta else None,
+                # Wire-vocabulary label source ("lask5" | "quest" | None) for
+                # the Data-view VR/LASK5 filter chips.
+                "label_source": meta.get("label_source") if meta else None,
+                # Recording-time epoch ms. The dashboard's date filter prefers
+                # this over mtime: this checkout syncs via OneDrive, which can
+                # rewrite file mtimes.
+                "created_ms": meta.get("created_ms") if meta else None,
+                "rows": fin.get("rows"),
+                "duration_s": fin.get("duration_s"),
                 "meta": meta_summary,
             })
         return out
