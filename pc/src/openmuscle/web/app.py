@@ -86,6 +86,13 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         model_right=model_right,
     )
 
+    # Inbound label sockets (/ws/quest, /ws/gamepad) register here so the
+    # lifespan can close them on shutdown. They are NOT in state.ws_clients
+    # (that set is the broadcaster's snapshot targets; these are receive-only),
+    # but they hold connections open just the same and must be closed or
+    # uvicorn's graceful shutdown waits them out.
+    inbound_ws: set = set()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         state.start()
@@ -98,16 +105,19 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
-            # Actively close the live WebSocket clients (the dashboard + stream
-            # view hold /ws/live open, and the dashboard also holds /ws/gamepad).
-            # Uvicorn's graceful shutdown waits on open connections, so without
-            # this Ctrl+C sits at "Waiting for connections to close" until forced.
-            for client in list(state.ws_clients):
+            # Close EVERY open WebSocket so uvicorn's graceful shutdown does not
+            # wait out the timeout: /ws/live (dashboard + stream view) plus the
+            # inbound label sockets /ws/quest and /ws/gamepad. Their handler
+            # receive() calls then raise and return, uvicorn sees no open
+            # connections, and Ctrl+C returns to a prompt in well under the
+            # timeout (instead of the messy forced-shutdown traceback).
+            for sock in list(state.ws_clients) + list(inbound_ws):
                 try:
-                    await client.close(code=1001)   # 1001 = server going away
+                    await sock.close(code=1001)   # 1001 = server going away
                 except Exception:
                     pass
             state.ws_clients.clear()
+            inbound_ws.clear()
             state.stop()
 
     app = FastAPI(title="OpenMuscle Web UI", lifespan=lifespan)
@@ -190,6 +200,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.websocket("/ws/quest")
     async def ws_quest(websocket: WebSocket):
         await websocket.accept()
+        inbound_ws.add(websocket)   # so shutdown can close it (no timeout hang)
         client = (f"{websocket.client.host}:{websocket.client.port}"
                   if websocket.client else "unknown")
         state.log_buffer.info("quest", f"connected: {client}")
@@ -213,6 +224,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             state.log_buffer.error(
                 "quest", f"socket error from {client}: "
                          f"{type(e).__name__}: {e}")
+        finally:
+            inbound_ws.discard(websocket)
 
     # Inbound WS from a USB game controller read by the dashboard browser
     # (navigator.getGamepads). Same idea as /ws/quest: the browser can't speak
@@ -223,6 +236,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.websocket("/ws/gamepad")
     async def ws_gamepad(websocket: WebSocket):
         await websocket.accept()
+        inbound_ws.add(websocket)   # so shutdown can close it (no timeout hang)
         client = (f"{websocket.client.host}:{websocket.client.port}"
                   if websocket.client else "unknown")
         state.log_buffer.info("gamepad", f"connected: {client}")
@@ -244,6 +258,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             state.log_buffer.error(
                 "gamepad", f"socket error from {client}: "
                            f"{type(e).__name__}: {e}")
+        finally:
+            inbound_ws.discard(websocket)
 
     # ----- REST: devices -----
 
