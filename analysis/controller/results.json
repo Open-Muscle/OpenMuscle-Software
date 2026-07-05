@@ -1,0 +1,368 @@
+{
+  "capture": "capture_1783267460_fixed.csv",
+  "n_rows": 54869,
+  "hands": [
+    {
+      "hand": "left",
+      "per_split": {
+        "temporal": {
+          "n_train": 21997,
+          "n_test": 5500,
+          "analog_r2": -0.26725462199202776,
+          "digital_r2": -0.023229404740791566,
+          "per_channel": [
+            {
+              "name": "LS_x",
+              "kind": "stick",
+              "analog": true,
+              "r2": -0.4335343070096602,
+              "mae": 0.1200164109090909,
+              "base_rate": null
+            },
+            {
+              "name": "LS_y",
+              "kind": "stick",
+              "analog": true,
+              "r2": -0.15187689422317585,
+              "mae": 0.3753057938181818,
+              "base_rate": null
+            },
+            {
+              "name": "LB",
+              "kind": "bumper",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.00019090909090909095,
+              "base_rate": 0.0
+            },
+            {
+              "name": "LT",
+              "kind": "trigger",
+              "analog": true,
+              "r2": -0.2163526647432472,
+              "mae": 0.0005680141818181819,
+              "base_rate": null
+            },
+            {
+              "name": "Back",
+              "kind": "system",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.0,
+              "base_rate": 0.0
+            },
+            {
+              "name": "L3",
+              "kind": "stick_click",
+              "analog": false,
+              "r2": 0.10746968942036195,
+              "mae": 0.1965490909090909,
+              "base_rate": 0.108
+            },
+            {
+              "name": "DpadUp",
+              "kind": "dpad",
+              "analog": false,
+              "r2": -0.057903565576968186,
+              "mae": 0.004947272727272727,
+              "base_rate": 0.0012727272727272728
+            },
+            {
+              "name": "DpadDown",
+              "kind": "dpad",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.0007200000000000002,
+              "base_rate": 0.0
+            },
+            {
+              "name": "DpadLeft",
+              "kind": "dpad",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.0020345454545454542,
+              "base_rate": 0.0
+            },
+            {
+              "name": "DpadRight",
+              "kind": "dpad",
+              "analog": false,
+              "r2": -0.11925433806576846,
+              "mae": 0.002978181818181818,
+              "base_rate": 0.001090909090909091
+            }
+          ]
+        },
+        "random": {
+          "n_train": 21997,
+          "n_test": 5500,
+          "analog_r2": 0.25178595994640796,
+          "digital_r2": 0.06878247828296269,
+          "per_channel": [
+            {
+              "name": "LS_x",
+              "kind": "stick",
+              "analog": true,
+              "r2": 0.2592283756537219,
+              "mae": 0.06271976745454545,
+              "base_rate": null
+            },
+            {
+              "name": "LS_y",
+              "kind": "stick",
+              "analog": true,
+              "r2": 0.22644448444558452,
+              "mae": 0.19768239163636364,
+              "base_rate": null
+            },
+            {
+              "name": "LB",
+              "kind": "bumper",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.00032,
+              "base_rate": 0.0
+            },
+            {
+              "name": "LT",
+              "kind": "trigger",
+              "analog": true,
+              "r2": 0.26968501973991743,
+              "mae": 0.0011016601818181818,
+              "base_rate": null
+            },
+            {
+              "name": "Back",
+              "kind": "system",
+              "analog": false,
+              "r2": NaN,
+              "mae": 1.0909090909090909e-05,
+              "base_rate": 0.0
+            },
+            {
+              "name": "L3",
+              "kind": "stick_click",
+              "analog": false,
+              "r2": 0.2966424009180798,
+              "mae": 0.06681636363636363,
+              "base_rate": 0.05109090909090909
+            },
+            {
+              "name": "DpadUp",
+              "kind": "dpad",
+              "analog": false,
+              "r2": 0.17120632026739602,
+              "mae": 0.004672727272727273,
+              "base_rate": 0.0027272727272727275
+            },
+            {
+              "name": "DpadDown",
+              "kind": "dpad",
+              "analog": false,
+              "r2": -0.10890485719483323,
+              "mae": 0.0014709090909090909,
+              "base_rate": 0.0005454545454545455
+            },
+            {
+              "name": "DpadLeft",
+              "kind": "dpad",
+              "analog": false,
+              "r2": -0.18651385604269,
+              "mae": 0.0017054545454545456,
+              "base_rate": 0.0005454545454545455
+            },
+            {
+              "name": "DpadRight",
+              "kind": "dpad",
+              "analog": false,
+              "r2": 0.17148238346686084,
+              "mae": 0.0023145454545454545,
+              "base_rate": 0.0014545454545454545
+            }
+          ]
+        }
+      }
+    },
+    {
+      "hand": "right",
+      "per_split": {
+        "temporal": {
+          "n_train": 21897,
+          "n_test": 5475,
+          "analog_r2": -0.08293472671288364,
+          "digital_r2": -1.4246288725095613,
+          "per_channel": [
+            {
+              "name": "RS_x",
+              "kind": "stick",
+              "analog": true,
+              "r2": -0.12530636475633083,
+              "mae": 0.10619835762557078,
+              "base_rate": null
+            },
+            {
+              "name": "RS_y",
+              "kind": "stick",
+              "analog": true,
+              "r2": -0.0822413614663815,
+              "mae": 0.04034666538812785,
+              "base_rate": null
+            },
+            {
+              "name": "A",
+              "kind": "face",
+              "analog": false,
+              "r2": -5.246569611356643,
+              "mae": 0.12020821917808219,
+              "base_rate": 0.0052968036529680365
+            },
+            {
+              "name": "B",
+              "kind": "face",
+              "analog": false,
+              "r2": -0.3088009690985556,
+              "mae": 0.008916894977168952,
+              "base_rate": 0.001095890410958904
+            },
+            {
+              "name": "X",
+              "kind": "face",
+              "analog": false,
+              "r2": -0.1302599077562301,
+              "mae": 0.03189771689497717,
+              "base_rate": 0.006757990867579908
+            },
+            {
+              "name": "Y",
+              "kind": "face",
+              "analog": false,
+              "r2": -0.012885001826816955,
+              "mae": 0.0003634703196347032,
+              "base_rate": 0.00018264840182648402
+            },
+            {
+              "name": "RB",
+              "kind": "bumper",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.0,
+              "base_rate": 0.0
+            },
+            {
+              "name": "RT",
+              "kind": "trigger",
+              "analog": true,
+              "r2": -0.041256453915938573,
+              "mae": 0.002693365844748858,
+              "base_rate": null
+            },
+            {
+              "name": "Start",
+              "kind": "system",
+              "analog": false,
+              "r2": NaN,
+              "mae": 1.643835616438356e-05,
+              "base_rate": 0.0
+            },
+            {
+              "name": "R3",
+              "kind": "stick_click",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.0,
+              "base_rate": 0.0
+            }
+          ]
+        },
+        "random": {
+          "n_train": 21897,
+          "n_test": 5475,
+          "analog_r2": 0.2685440818663593,
+          "digital_r2": 0.11394026179265992,
+          "per_channel": [
+            {
+              "name": "RS_x",
+              "kind": "stick",
+              "analog": true,
+              "r2": 0.2436779956240318,
+              "mae": 0.07595571324200913,
+              "base_rate": null
+            },
+            {
+              "name": "RS_y",
+              "kind": "stick",
+              "analog": true,
+              "r2": 0.2142846682781664,
+              "mae": 0.03361528621004566,
+              "base_rate": null
+            },
+            {
+              "name": "A",
+              "kind": "face",
+              "analog": false,
+              "r2": 0.13255908256880733,
+              "mae": 0.009490410958904112,
+              "base_rate": 0.0045662100456621
+            },
+            {
+              "name": "B",
+              "kind": "face",
+              "analog": false,
+              "r2": 0.004318819368215876,
+              "mae": 0.0032438356164383566,
+              "base_rate": 0.0016438356164383563
+            },
+            {
+              "name": "X",
+              "kind": "face",
+              "analog": false,
+              "r2": 0.19084240719927226,
+              "mae": 0.03695890410958904,
+              "base_rate": 0.02228310502283105
+            },
+            {
+              "name": "Y",
+              "kind": "face",
+              "analog": false,
+              "r2": 0.12804073803434424,
+              "mae": 0.0005479452054794521,
+              "base_rate": 0.00018264840182648402
+            },
+            {
+              "name": "RB",
+              "kind": "bumper",
+              "analog": false,
+              "r2": NaN,
+              "mae": 1.8264840182648402e-05,
+              "base_rate": 0.0
+            },
+            {
+              "name": "RT",
+              "kind": "trigger",
+              "analog": true,
+              "r2": 0.34766958169687967,
+              "mae": 0.0028645141552511417,
+              "base_rate": null
+            },
+            {
+              "name": "Start",
+              "kind": "system",
+              "analog": false,
+              "r2": NaN,
+              "mae": 9.315068493150686e-05,
+              "base_rate": 0.0
+            },
+            {
+              "name": "R3",
+              "kind": "stick_click",
+              "analog": false,
+              "r2": NaN,
+              "mae": 0.0,
+              "base_rate": 0.0
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
