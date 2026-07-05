@@ -1383,6 +1383,22 @@ class AppState:
         # raw label_* stay, so the canonical block is re-derivable.
         with_canonical = (label_device_type == "quest_hand")
 
+        # A game controller sends axes + buttons (Xbox standard = 4 + 17 = 21).
+        # The default label_count=4 sizes the CSV header to the axes only while
+        # the rows still write all 21 values, so header and rows desync and the
+        # capture is corrupt: pandas reads more fields than header names, shifts
+        # the columns, and training dies with "no rows with role=left". Size the
+        # label columns to the pad's full width from its reported axis/button
+        # counts, and lock it (below) so every row stays rectangular even if an
+        # early frame lands before the buttons populate.
+        gamepad_label_width = None
+        if label_device_type == "gamepad":
+            gp_w = ((getattr(label_dev_for_width, "gp_axis_count", 0) or 0)
+                    + (getattr(label_dev_for_width, "gp_button_count", 0) or 0))
+            if gp_w > 0:
+                effective_label_count = gp_w
+                gamepad_label_width = gp_w
+
         # Pick the match window: explicit arg wins; otherwise per-device-type
         # default (Quest needs a wider window than LASK5 because WebXR
         # latency is higher than ESP-NOW).
@@ -1461,6 +1477,10 @@ class AppState:
             with_forearm=with_forearm,
             with_canonical=with_canonical,
         )
+        # Lock the gamepad label width so _record_packet pads/truncates every
+        # paired row to the header's column count, keeping the CSV rectangular.
+        if gamepad_label_width is not None:
+            self.recording.locked_label_count = gamepad_label_width
         self.log_buffer.info("recording",
             "started: {} (sensor={}, label={}, window={}ms)".format(
                 name, sensor_device_id, label_device_id or "(none)", window_ms))
