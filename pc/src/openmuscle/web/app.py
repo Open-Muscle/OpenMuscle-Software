@@ -98,6 +98,16 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
+            # Actively close the live WebSocket clients (the dashboard + stream
+            # view hold /ws/live open, and the dashboard also holds /ws/gamepad).
+            # Uvicorn's graceful shutdown waits on open connections, so without
+            # this Ctrl+C sits at "Waiting for connections to close" until forced.
+            for client in list(state.ws_clients):
+                try:
+                    await client.close(code=1001)   # 1001 = server going away
+                except Exception:
+                    pass
+            state.ws_clients.clear()
             state.stop()
 
     app = FastAPI(title="OpenMuscle Web UI", lifespan=lifespan)
@@ -853,5 +863,10 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         model_right=model_right,
         debug=debug,
     )
+    # timeout_graceful_shutdown bounds the wait: a single Ctrl+C exits within a
+    # couple seconds even if a WebSocket (Quest / gamepad / another dashboard
+    # tab) is still open, instead of hanging forever. Belt to the lifespan's
+    # suspenders (which closes the /ws/live clients it tracks).
     uvicorn.run(app, host=host, port=port, log_level="info",
-                ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
+                ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
+                timeout_graceful_shutdown=3)
