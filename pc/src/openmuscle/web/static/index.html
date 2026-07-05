@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenMuscle Studio</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <!-- Shared FlexGrid heatmap color ramp (window.OMHeatColor). Loaded plain
+         and BEFORE app.js so pressureColor delegates to the one shared ramp;
+         the OBS /stream view loads the same file so its heatmaps match ours. -->
+    <script src="/static/heatmap-color.js?v=1"></script>
     <!-- Three.js for the quest_hand 3D viewer. Same CDN + version the VR
          client uses. hand-viewer.js is an ES module exposing window.OMHandViewer;
          the plain app.js drives it from handleTick. -->
@@ -30,6 +34,11 @@
         </div>
 
         <div class="topbar-right">
+            <!-- Pop the compact OBS stream view in its own window (window-capture
+                 it in OBS while playing a game with the bracelets). Display-only:
+                 it reads /ws/live, never the local controller. -->
+            <a href="/stream" target="_blank" rel="noopener" class="stream-link"
+               title="Compact read-only view for OBS window capture">◱ stream view</a>
             <span id="ws-status" class="badge offline">disconnected</span>
         </div>
     </header>

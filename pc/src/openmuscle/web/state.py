@@ -80,6 +80,15 @@ class DeviceInfo:
     last_matrix: list = field(default_factory=list)   # [cols][rows] flexgrid
     last_values: list = field(default_factory=list)   # generic 1-D payload (LASK5 pistons, sensorband, ...)
     last_joystick: dict = field(default_factory=dict) # LASK5 joystick {"x": v, "y": v}
+    # Gamepad structure carried alongside the flat last_values (axes+buttons)
+    # so a snapshot consumer can split axes vs buttons and pick the xbox-vs-bars
+    # render without re-deriving it. Populated only for device_type=="gamepad".
+    # The OBS /stream view (Tory's play-a-game-and-capture page) reads these to
+    # draw the virtual controller purely from the snapshot, without touching the
+    # local Gamepad API (that would double-send label frames and corrupt the take).
+    gp_axis_count: int = 0
+    gp_button_count: int = 0
+    gp_mapping: str = ""
     # Fast IMU path: data.imu = {gyro[3], accel[3]} on every flexgrid frame
     # (PROTOCOL.md 7.1, ~18-20Hz). The gyro/orientation viz reads this, not the
     # ~1Hz status meta.imu.
@@ -121,6 +130,23 @@ class DeviceInfo:
         joy = pkt.data.get("joystick")
         if isinstance(joy, dict):
             self.last_joystick = joy
+
+        # Gamepad axes/buttons split + mapping. ingest_gamepad_packet stores the
+        # structured pad under data.gamepad {id, axes, buttons, mapping}; keep the
+        # counts + mapping so the snapshot lets a display-only client (the OBS
+        # /stream view) reconstruct which flat values are axes vs buttons and
+        # whether the standard-mapping xbox face applies.
+        gp = pkt.data.get("gamepad")
+        if isinstance(gp, dict):
+            axes = gp.get("axes")
+            buttons = gp.get("buttons")
+            if isinstance(axes, list):
+                self.gp_axis_count = len(axes)
+            if isinstance(buttons, list):
+                self.gp_button_count = len(buttons)
+            mapping = gp.get("mapping")
+            if isinstance(mapping, str):
+                self.gp_mapping = mapping
 
         # Fast IMU path: data.imu {gyro[3], accel[3]} on every flexgrid frame
         # (~18-20Hz) drives the gyro/orientation viz. Distinct from the ~1Hz
@@ -598,6 +624,11 @@ class AppState:
                     "id": payload.get("id") or "",
                     "axes": [float(v) for v in axes],
                     "buttons": [float(v) for v in buttons],
+                    # Gamepad API mapping ("standard" for Xbox pads in Chrome/
+                    # Edge). Relayed so the snapshot can tell the OBS /stream view
+                    # to draw the standard xbox face vs the generic bars fallback,
+                    # matching what gamepad.js draws on the dashboard.
+                    "mapping": payload.get("mapping") or "",
                 },
             },
             metadata=payload.get("meta") or {},
@@ -977,7 +1008,7 @@ class AppState:
         for d in self.devices.values():
             status_age = (round(time.time() - d.status_updated_at, 2)
                           if d.status_updated_at else None)
-            devices_out.append({
+            dev_out = {
                 "device_id": d.device_id,
                 "device_type": d.device_type,
                 "rows": d.rows,
@@ -1003,7 +1034,16 @@ class AppState:
                 # Firmware per-chip IMU scale (scale_dict); lets the debug overlay
                 # confirm the hub knows the scale before a capture (#0220/#0245).
                 "imu_scale": (disc_by_id.get(d.device_id) or {}).get("imu"),
-            })
+            }
+            # Gamepad extras (additive, gamepad devices only): axis/button split
+            # + mapping so the display-only OBS /stream view can reconstruct
+            # axes vs buttons from the flat `values` and pick the xbox-vs-bars
+            # render. Other device types are unchanged.
+            if d.device_type == "gamepad":
+                dev_out["axis_count"] = d.gp_axis_count
+                dev_out["button_count"] = d.gp_button_count
+                dev_out["mapping"] = d.gp_mapping
+            devices_out.append(dev_out)
         rec = None
         if self.recording:
             r = self.recording

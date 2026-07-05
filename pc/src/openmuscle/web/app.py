@@ -119,7 +119,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # /vr in this list, Quest Browser cached the old VR HTML (which
         # pointed at app.js without the version querystring), so refreshes
         # kept loading stale JS even after the file changed on disk.
-        if path == "/" or path == "/vr" or path.startswith("/static/"):
+        if (path == "/" or path == "/vr" or path == "/stream"
+                or path.startswith("/static/")):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -136,6 +137,18 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/vr")
     async def vr_page():
         return FileResponse(STATIC_DIR / "vr" / "index.html")
+
+    # Compact, read-only "stream view" for OBS. Tory captures this window while
+    # livestreaming a game played with the forearm bracelets: two band heatmaps,
+    # the frames-captured counter, and the virtual controller. It is DISPLAY
+    # ONLY: it connects to /ws/live and renders from the server snapshot, and it
+    # never reads the local Gamepad API or opens /ws/gamepad (the dashboard is
+    # the sole controller reader; a second reader would double-send label frames
+    # and corrupt the recording). ?transparent=1 gives a transparent bg for an
+    # OBS browser-source overlay; default is a solid dark window for window capture.
+    @app.get("/stream")
+    async def stream_page():
+        return FileResponse(STATIC_DIR / "stream.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

@@ -333,6 +333,11 @@
                 id: state.id,
                 axes,
                 buttons,
+                // Relay the Gamepad API mapping so the server can surface it in
+                // the /ws/live snapshot; the OBS /stream view uses it to pick the
+                // standard xbox face vs the generic bars fallback (matches this
+                // dashboard's own render). Nothing else in read/send changes.
+                mapping: pad.mapping,
             }));
         }
     }

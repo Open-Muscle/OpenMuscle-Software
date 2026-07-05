@@ -882,7 +882,13 @@ function applyHeatmapLayout() {
 // "Inferno"-style ramp with a clearly visible low end. Anything above the
 // noise gate gets a perceptible color; only the truly idle cells stay near
 // the background.
+//
+// The ramp itself lives in static/heatmap-color.js (window.OMHeatColor) so the
+// OBS /stream view renders IDENTICAL colors. We delegate to it when loaded and
+// keep the byte-identical body below as a fallback, so a missing/blocked
+// heatmap-color.js can never break the live dashboard heatmap.
 function pressureColor(v, vmax) {
+    if (window.OMHeatColor) return window.OMHeatColor.pressureColor(v, vmax);
     if (v < HEATMAP_NOISE_GATE) return '#1a1f2b';
     const t = Math.max(0, Math.min(1, v / vmax));
     const stops = [

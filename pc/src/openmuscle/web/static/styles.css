@@ -60,6 +60,21 @@ header.topbar .topbar-right {
     gap: 12px;
     align-items: center;
 }
+/* Unobtrusive link to the compact OBS stream view (opens in its own window so
+   Tory can window-capture it in OBS during a play-and-capture session). */
+header.topbar .topbar-right .stream-link {
+    font-size: 12px;
+    color: var(--fg-dim);
+    text-decoration: none;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    white-space: nowrap;
+}
+header.topbar .topbar-right .stream-link:hover {
+    color: var(--fg);
+    border-color: var(--fg-faint);
+}
 
 /* ===== Sticky control bar (Record | Predict | Session | signal pills) =====
    The record -> train -> predict loop stays reachable while scrolled anywhere

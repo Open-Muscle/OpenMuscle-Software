@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenMuscle Stream</title>
+    <!--
+      OBS STREAM VIEW (Tory's play-a-game-and-capture session).
+
+      Compact, read-only page captured as an OBS window (or browser source):
+      the two band heatmaps (the hero), a big FRAMES CAPTURED counter, and a
+      virtual controller. It connects to /ws/live and renders ENTIRELY from the
+      server snapshot. It never reads the local Gamepad API and never opens
+      /ws/gamepad; the main dashboard is the sole controller reader, and a
+      second reader would double-send label frames and corrupt the recording.
+
+      ?transparent=1 -> transparent page background for an OBS browser-source
+      overlay. Default is a solid dark window (--bg) for OBS window capture,
+      which is the expected path given the self-signed HTTPS cert.
+    -->
+    <!-- Shared FlexGrid heatmap color ramp (window.OMHeatColor). SAME file the
+         dashboard loads, so the streamed heatmaps match the dashboard exactly.
+         Plain script, loaded before stream.js so OMHeatColor is ready. -->
+    <script src="/static/heatmap-color.js?v=1"></script>
+    <style>
+        :root {
+            --bg:        #0b0d12;
+            --bg-panel:  #141821;
+            --bg-soft:   #1d2230;
+            --fg:        #e7e9ee;
+            --fg-dim:    #8a92a3;
+            --fg-faint:  #555c6c;
+            --accent:    #6cf;
+            --green:     #2cd16a;
+            --red:       #ff5a6b;
+            --orange:    #ffa42c;
+            --border:    #232838;
+            /* Xbox face colorways, muted to the theme (match gamepad.js). */
+            --gp-a: var(--green);
+            --gp-b: #d05a5a;
+            --gp-x: var(--accent);
+            --gp-y: #c9a23f;
+        }
+
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--fg);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 14px;
+            line-height: 1.35;
+            height: 100%;
+            overflow: hidden;               /* OBS window: never scroll */
+        }
+
+        /* Transparent overlay mode: body.transparent set by stream.js from
+           ?transparent=1. Only the page bg goes clear; the panels keep a faint
+           tint so heatmaps/controller stay legible over any game scene. */
+        body.transparent { background: transparent; }
+        body.transparent .panel { background: rgba(20, 24, 33, 0.72); }
+
+        .wrap {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px;
+        }
+
+        /* Hero row: heatmaps take the room, the right rail (counter + pad) is
+           fixed-ish. Stacks vertically when the window is narrow. */
+        .stage {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 1fr 300px;
+            gap: 12px;
+        }
+        @media (max-width: 720px) {
+            .stage { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px;
+        }
+
+        .heatwrap {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+        .heatwrap-title {
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--fg-dim);
+            margin-bottom: 8px;
+        }
+        /* Two bands side by side; stack when the whole window is narrow. */
+        .bands {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            gap: 12px;
+        }
+        @media (max-width: 560px) {
+            .bands { flex-direction: column; }
+        }
+        .band {
+            flex: 1 1 0;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .band-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--fg-dim);
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .role-pill {
+            font-weight: 700;
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 5px;
+            color: #0b0d12;
+        }
+        .role-left  { background: var(--accent); }
+        .role-right { background: var(--orange); }
+        .role-none  { background: var(--fg-faint); color: var(--fg); }
+        .band canvas {
+            flex: 1 1 auto;
+            width: 100%;
+            min-height: 0;
+            border-radius: 6px;
+            background: #1a1f2b;
+            display: block;
+        }
+        .heat-empty {
+            flex: 1 1 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--fg-faint);
+            font-size: 13px;
+        }
+
+        /* Right rail: frames counter on top, controller below. */
+        .rail {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 0;
+        }
+
+        .counter {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .counter-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--fg-dim);
+        }
+        .rec-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--fg-faint);
+            flex: 0 0 auto;
+        }
+        .rec-dot.rec-good { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.4s ease-in-out infinite; }
+        .rec-dot.rec-warn { background: var(--orange); box-shadow: 0 0 8px var(--orange); animation: pulse 1.4s ease-in-out infinite; }
+        .rec-dot.rec-bad  { background: var(--red); box-shadow: 0 0 8px var(--red); animation: pulse 1.4s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+        .counter-num {
+            font-variant-numeric: tabular-nums;
+            font-weight: 800;
+            font-size: 54px;
+            line-height: 1;
+            color: var(--fg);
+            letter-spacing: -0.02em;
+        }
+        .counter-sub {
+            font-size: 12px;
+            color: var(--fg-dim);
+        }
+        .counter-sub b { color: var(--fg); font-variant-numeric: tabular-nums; }
+        .counter-bands {
+            display: flex;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--fg-dim);
+            margin-top: 2px;
+        }
+        .idle .counter-num { color: var(--fg-faint); }
+
+        /* Virtual controller. The compact xbox face + the bars fallback share
+           this container; stream.js swaps innerHTML on shape change. */
+        .pad {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .pad-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--fg-dim);
+            margin-bottom: 6px;
+        }
+        .pad-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--fg);
+        }
+        .pad-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .pad-empty { color: var(--fg-faint); font-size: 13px; text-align: center; }
+
+        /* Xbox face SVG (compact port of gamepad.js geometry). */
+        .gp-xbox { display: block; width: 100%; height: auto; max-height: 210px; }
+        .gp-x-body { fill: var(--bg-soft); stroke: var(--border); stroke-width: 1.5; }
+        .gp-x-well { fill: var(--border); fill-opacity: .35; stroke: var(--border); stroke-width: 1; }
+        .gp-x-cap { fill: var(--fg-dim); fill-opacity: .5; stroke: var(--border); stroke-width: 1.5; }
+        .gp-x-cap.on { fill: var(--accent); fill-opacity: .85; stroke: var(--accent); stroke-width: 2.5; }
+        .gp-x-face { stroke-width: 1.5; }
+        .gp-x-face.on { stroke-width: 3; }
+        .gp-x-face-label { fill: var(--fg); font-size: 11px; font-weight: 600; font-family: inherit; text-anchor: middle; pointer-events: none; }
+        .gp-x-arm { fill: var(--fg-dim); stroke: var(--border); stroke-width: 1; }
+        .gp-x-arm.on { fill: var(--accent); stroke: var(--accent); }
+        .gp-x-arm-center { fill: var(--fg-dim); fill-opacity: .18; }
+        .gp-x-pill { fill: var(--fg-dim); stroke: var(--border); stroke-width: 1; }
+        .gp-x-pill.on { fill: var(--accent); stroke: var(--accent); }
+        .gp-x-trig-track { fill: var(--border); fill-opacity: .35; stroke: var(--border); stroke-width: 1; }
+        .gp-x-trig-fill { fill: var(--orange); }
+        .gp-x-small-label { fill: var(--fg-dim); font-size: 9px; font-weight: 500; font-family: inherit; }
+
+        /* Bars fallback for non-standard pads. */
+        .gp-bars { width: 100%; }
+        .gp-axis { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+        .gp-axis-name { font-size: 10px; color: var(--fg-dim); width: 22px; flex: 0 0 auto; }
+        .gp-axis-track { position: relative; flex: 1 1 auto; height: 8px; background: var(--bg-soft); border-radius: 4px; overflow: hidden; }
+        .gp-axis-fill { position: absolute; top: 0; height: 100%; background: var(--accent); }
+        .gp-axis-fill.neg { background: var(--orange); }
+        .gp-btns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+        .gp-btn { font-size: 10px; min-width: 20px; text-align: center; padding: 2px 4px; border-radius: 4px; background: var(--bg-soft); color: var(--fg-dim); }
+        .gp-btn.on { background: var(--accent); color: #0b0d12; }
+
+        /* Connection banner (only shown when /ws/live drops). */
+        .conn {
+            font-size: 12px;
+            color: var(--red);
+            padding: 2px 4px;
+            display: none;
+        }
+        .conn.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="conn" id="conn">reconnecting to server…</div>
+        <div class="stage">
+            <div class="panel heatwrap">
+                <div class="heatwrap-title">Band heatmaps</div>
+                <div class="bands" id="bands">
+                    <div class="heat-empty">Waiting for a flexgrid…</div>
+                </div>
+            </div>
+            <div class="rail">
+                <div class="panel counter idle" id="counter">
+                    <div class="counter-head">
+                        <span class="rec-dot" id="rec-dot"></span>
+                        <span id="counter-title">IDLE - not recording</span>
+                    </div>
+                    <div class="counter-num" id="counter-num">0</div>
+                    <div class="counter-sub" id="counter-sub"></div>
+                    <div class="counter-bands" id="counter-bands"></div>
+                </div>
+                <div class="panel pad">
+                    <div class="pad-head">
+                        <span>Controller</span>
+                        <span class="pad-name" id="pad-name"></span>
+                    </div>
+                    <div class="pad-body" id="pad-body">
+                        <div class="pad-empty">no controller</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="/static/stream.js?v=1"></script>
+</body>
+</html>
