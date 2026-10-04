@@ -55,6 +55,7 @@
                 <select id="label-source-select">
                     <option value="vr">VR hands (Quest)</option>
                     <option value="lask5">LASK5 pistons</option>
+                    <option value="webcam">Webcam hand</option>
                     <option value="none">none (sensor only)</option>
                     <!-- Pluggable label-device seam: a new labeler is one new
                          option value + one new branch in deriveRecordPlan(). -->
@@ -513,7 +514,20 @@
                         <option value="vr">VR (Quest hand / forearm)</option>
                         <option value="lask5">LASK5 finger-labeler</option>
                         <option value="both">both (VR + LASK5)</option>
+                        <option value="webcam">webcam hand</option>
                         <option value="gamepad">gamepad</option>
+                    </select>
+                </div>
+                <!-- Mirrored training: the labeler watches one hand while a band
+                     is on the other limb and the wearer moves both sides together
+                     (used when the hand to be predicted cannot be measured).
+                     Captures in a mirrored session are tagged mirror:true. -->
+                <div class="form-row">
+                    <label for="sess-mirrored">Mirrored</label>
+                    <select id="sess-mirrored">
+                        <option value="">no (labels come from the banded arm's own hand)</option>
+                        <option value="left">yes, labels measured on the LEFT hand</option>
+                        <option value="right">yes, labels measured on the RIGHT hand</option>
                     </select>
                 </div>
                 <div class="form-row">

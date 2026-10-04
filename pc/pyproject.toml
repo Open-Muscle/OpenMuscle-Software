@@ -31,7 +31,9 @@ openmuscle = "openmuscle.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"openmuscle.web" = ["static/*"]
+# static/* alone ships only the top-level files; the VR and webcam pages live in
+# subfolders and were left out of a normal (non-editable) install.
+"openmuscle.web" = ["static/*", "static/**/*"]
 
 [tool.ruff]
 line-length = 100

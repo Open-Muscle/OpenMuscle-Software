@@ -37,6 +37,15 @@ from openmuscle.protocol.schema import CURRENT_VERSION, OpenMusclePacket
 # aspirational comments.
 QUEST_JOINT_CHANNEL_ORDER = ("px", "py", "pz", "rx", "ry", "rz", "rw")
 
+# Label sources that stream a hand skeleton in the 25-joint WebXR layout
+# (joint x QUEST_JOINT_CHANNEL_ORDER). quest_hand is the headset; webcam_hand
+# is a camera hand tracker in the browser (/webcam) that emits the same joint
+# layout, so the recorder, labels-schema sidecar, canonical lbl_* derivation
+# and the 3D hand viewer treat both alike. They differ in provenance and in
+# coordinate frame: the headset reports world-space poses, the webcam reports
+# positions in a hand-local frame with identity rotations.
+HAND_POSE_TYPES = ("quest_hand", "webcam_hand")
+
 
 def _flatten_quest_joint(pos, rot):
     """Pack one joint's (pos, rot) into the canonical channel order.
@@ -542,6 +551,35 @@ class AppState:
         are silently dropped -- we want gaps in the data, not zero rows
         that would mislead the model.
         """
+        self._ingest_hand_pose(payload, "quest_hand", "quest-01")
+
+    def ingest_webcam_packet(self, payload: dict) -> None:
+        """Synthesize an OpenMusclePacket from a webcam hand-tracking frame.
+
+        The /webcam page tracks a hand with the computer's camera and pushes
+        frames over /ws/webcam in the SAME payload shape as the Quest client
+        (25 joints in WebXR order, see ingest_quest_packet), so a webcam can
+        stand in for the headset as a label source. Differences the client is
+        responsible for and that consumers should know:
+
+          - device_type is "webcam_hand" and device_id is webcam-<handedness>,
+            so captures record where the labels came from.
+          - positions are in a hand-local frame (origin at the wrist), not
+            world space, and rotations are identity: a single camera gives
+            landmark positions, not joint orientations.
+          - the camera tracker has no finger-metacarpal landmark, so the client
+            places each one on the wrist-to-knuckle line. Flexion angles derived
+            from the joints are unaffected by where on that line it sits.
+
+        Because it is not gravity-referenced, a webcam capture does not write
+        the forearm_roll_deg / palm_up columns; it does write the canonical
+        lbl_flex_* / lbl_ang_* columns, which depend only on joint geometry.
+        """
+        self._ingest_hand_pose(payload, "webcam_hand", "webcam-01")
+
+    def _ingest_hand_pose(self, payload: dict, device_type: str,
+                          default_device_id: str) -> None:
+        """Shared body of the hand-skeleton label sources (HAND_POSE_TYPES)."""
         joints = payload.get("joints") or []
         if not joints:
             return
@@ -559,8 +597,8 @@ class AppState:
 
         pkt = OpenMusclePacket(
             version=CURRENT_VERSION,
-            device_type="quest_hand",
-            device_id=payload.get("device_id") or "quest-01",
+            device_type=device_type,
+            device_id=payload.get("device_id") or default_device_id,
             timestamp_ms=int(payload.get("ts") or 0),
             data={
                 "values": flat,
@@ -774,7 +812,7 @@ class AppState:
         # the joints are too few -> empty cells.
         forearm = None
         canonical = None
-        if matched_label is not None and matched_label.device_type == "quest_hand":
+        if matched_label is not None and matched_label.device_type in HAND_POSE_TYPES:
             positions = joints_from_flat(matched_label.data.get("values") or [])
             if rec.with_forearm:
                 hand = matched_label.data.get("handedness")
@@ -848,7 +886,7 @@ class AppState:
         # and any client that emits a variable-length payload.)
         rec.locked_label_count = n_label_columns
         schema = {
-            "label_source": "quest_hand",
+            "label_source": pkt.device_type,
             "handedness": handedness,
             "ordering": ordering,
             "floats_per_joint": n_floats,
@@ -857,6 +895,11 @@ class AppState:
             "joint_names": joint_names,
             "columns": columns,
         }
+        # Webcam frames carry how the joints were produced (tracker, coordinate
+        # frame, which joints are synthesized). Keep it with the column map so
+        # the capture explains itself without the client code at hand.
+        if pkt.device_type == "webcam_hand" and pkt.metadata:
+            schema["source_detail"] = dict(pkt.metadata)
         try:
             with open(rec.labels_schema_path, "w") as f:
                 json.dump(schema, f, indent=2)
@@ -1230,7 +1273,10 @@ class AppState:
     # comparison session, we want the wider label vector by default.
     # gamepad is auto-pickable but lowest priority: a lone controller is found
     # by the multiband path, while a quest/lask5 present alongside still wins.
-    AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5", "gamepad")
+    # webcam_hand sits below the dedicated labelers: a headset or a LASK5 that
+    # is switched on was put there on purpose, while a camera page may simply
+    # have been left open.
+    AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5", "webcam_hand", "gamepad")
 
     def _auto_pick_label(self) -> Optional[str]:
         """First connected label-producing device, by type preference."""
@@ -1246,6 +1292,9 @@ class AppState:
     DEFAULT_WINDOW_MS_BY_TYPE = {
         "lask5": 100,
         "quest_hand": 175,
+        # Webcam frames take the same browser -> WS path as the Quest and add
+        # camera exposure plus tracker time, so they get the same wide window.
+        "webcam_hand": 175,
         # Gamepad shares the browser -> WS path with the Quest but streams at a
         # steady ~50Hz with low jitter, so a middle window pairs cleanly.
         "gamepad": 120,
@@ -1371,17 +1420,19 @@ class AppState:
         # derives the column count from the first label packet.
         label_dev_for_width = self.devices.get(label_device_id) if label_device_id else None
         label_device_type = label_dev_for_width.device_type if label_dev_for_width else None
-        if label_device_type == "quest_hand":
+        if label_device_type in HAND_POSE_TYPES:
             effective_label_count = None
         # Forearm-orientation columns are written only when the capture has a
         # Quest labeler (omit-when-no-quest, board #0228). A bilateral capture's
-        # primary labeler is a Quest stream too, so this covers both paths.
+        # primary labeler is a Quest stream too, so this covers both paths. A
+        # webcam hand is NOT included: its joints are in a hand-local frame, so
+        # there is no gravity direction to measure roll against.
         with_forearm = (label_device_type == "quest_hand")
-        # Canonical lbl_* columns: derived at capture time from the Quest joints
-        # (hand_angles). Quest-labeled captures only for now; the LASK5 -> lbl_flex_*
+        # Canonical lbl_* columns: derived at capture time from the hand joints
+        # (hand_angles), for any hand-skeleton source. The LASK5 -> lbl_flex_*
         # path lands once the piston order/calibration are confirmed. Additive: the
         # raw label_* stay, so the canonical block is re-derivable.
-        with_canonical = (label_device_type == "quest_hand")
+        with_canonical = (label_device_type in HAND_POSE_TYPES)
 
         # A game controller sends axes + buttons (Xbox standard = 4 + 17 = 21).
         # The default label_count=4 sizes the CSV header to the axes only while
@@ -1416,10 +1467,11 @@ class AppState:
         sensor_sidecar = stem.with_suffix(".sensor.jsonl")
         label_sidecar  = stem.with_suffix(".label.jsonl")
         # Labels-schema sidecar is only written for label sources whose
-        # column meaning isn't obvious from device_type alone -- v1: Quest.
+        # column meaning isn't obvious from device_type alone: the hand-skeleton
+        # sources (Quest, webcam).
         labels_schema_sidecar: Optional[Path] = (
             Path(str(stem) + ".labels.schema.json")
-            if label_device_type == "quest_hand" else None
+            if label_device_type in HAND_POSE_TYPES else None
         )
 
         writer = CaptureWriter(
@@ -1555,15 +1607,27 @@ class AppState:
         # Schema-v2 interop metadata at the TOP LEVEL, matching the phone
         # meta.json keys (board #0097) so phone- and PC-captured sessions carry
         # identical metadata. label_source uses the phone wire vocabulary
-        # (lask5 / quest / manual); roles maps device_id -> role token. mirror is
-        # False here (one-limb mirroring is a multi-band concern, PROTOCOL.md 8.5).
-        # The PC-specific provenance stays under .auto (which keeps its own
-        # label_source = the raw device_type).
-        label_source_wire = {"lask5": "lask5", "quest_hand": "quest"}.get(
+        # (lask5 / quest / manual, plus webcam); roles maps device_id -> role
+        # token. The PC-specific provenance stays under .auto (which keeps its
+        # own label_source = the raw device_type).
+        #
+        # mirror (PROTOCOL.md 8.5) is true when the active session was started
+        # as mirrored: the labels were measured on one hand while a recorded
+        # band sat on the OTHER limb, the wearer moving both sides together.
+        # Per-finger flexion labels are the same on both sides, so nothing is
+        # transformed here; the flag tells the trainer the labels are already
+        # mirrored so it never mirrors them a second time.
+        label_source_wire = {"lask5": "lask5", "quest_hand": "quest",
+                             "webcam_hand": "webcam"}.get(
             label_device_type, label_device_type)
+        mirrored = bool(self.active_session
+                        and self.active_session.get("mirrored"))
+        if mirrored:
+            auto["session_mirrored"] = True
+            auto["session_labeled_hand"] = self.active_session.get("labeled_hand")
         interop_meta = {
             "schema": "v2",
-            "mirror": False,
+            "mirror": mirrored,
             "label_source": label_source_wire,
             "roles": dict(sensors_map),   # {device_id: role} for every band
             "created_ms": int(self.recording.started_at * 1000),
@@ -1927,8 +1991,14 @@ class AppState:
                       gestures: Optional[list] = None, notes: str = "",
                       tags: Optional[list] = None, wearer: str = "",
                       take: Optional[int] = None, labeler_source: str = "",
-                      video_ref: str = "") -> dict:
+                      video_ref: str = "", mirrored: bool = False,
+                      labeled_hand: Optional[str] = None) -> dict:
         """Start a new session and mark it active.
+
+        mirrored / labeled_hand describe mirrored bilateral training: the labels
+        are measured on one hand (labeled_hand) while a recorded band sits on the
+        other limb and the wearer moves both sides together. Captures made in a
+        mirrored session are tagged mirror:true in their meta (PROTOCOL.md 8.5).
 
         Refuses if another session is already active -- the operator should
         explicitly end the prior one. (We could allow stacked sessions but
@@ -1946,7 +2016,7 @@ class AppState:
         sid = self._new_session_id()
         now = time.time()
         labeler_source = (labeler_source or "").strip().lower()
-        if labeler_source not in ("lask5", "vr", "both", "gamepad", ""):
+        if labeler_source not in ("lask5", "vr", "both", "gamepad", "webcam", ""):
             labeler_source = ""
         session = {
             "id": sid,
@@ -1956,6 +2026,9 @@ class AppState:
             "take": take if isinstance(take, int) else None,
             "arm": arm if arm in ("left", "right") else None,
             "labeler_source": labeler_source,
+            "mirrored": bool(mirrored),
+            "labeled_hand": (labeled_hand
+                             if labeled_hand in ("left", "right") else None),
             "video_ref": video_ref or "",
             # Sync marker on the hub clock. video_sync_ms is filled when the
             # operator ties a video frame to the session (set via update_session

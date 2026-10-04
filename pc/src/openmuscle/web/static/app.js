@@ -149,8 +149,7 @@ function handleTick(msg) {
     // quest_hand 3D viewer: when a hand label source is streaming, swap the
     // LASK5 piston comparator for a live 3D hand (the pistons are zeros for
     // a hand source). No-op when no quest_hand device is present.
-    renderHandViewer(lastDevices.filter(d => d.device_type === 'quest_hand'),
-                     msg.inference);
+    renderHandViewer(lastDevices.filter(isHandPose), msg.inference);
     // Label-device status lines under each visualization (quest / lask5 /
     // gamepad), replacing their old Devices-column entries.
     renderLabelStatusLines(lask);
@@ -199,6 +198,13 @@ function renderImuViewer() {
 }
 
 // ---------- quest_hand 3D viewer ----------
+
+// Hand-skeleton label sources: the headset (quest_hand) and the camera tracker
+// on the /webcam page (webcam_hand). Both send the same 25-joint layout, so
+// the viewer and the status line treat them alike (HAND_POSE_TYPES in state.py).
+function isHandPose(d) {
+    return !!d && (d.device_type === 'quest_hand' || d.device_type === 'webcam_hand');
+}
 
 // Drives the Three.js hand viewer (window.OMHandViewer, loaded as a module).
 // Shows the REAL captured hand from the live quest_hand device's flat joint
@@ -266,7 +272,9 @@ function renderHandViewer(questDevs, inference) {
     }
 
     const gtMeta = document.getElementById('lask-meta');
-    if (gtMeta) gtMeta.textContent = `Quest hands · ${metaBits.join(' · ')}`;
+    const srcName = questDevs.every(d => d.device_type === 'webcam_hand')
+        ? 'Webcam hand' : 'Quest hands';
+    if (gtMeta) gtMeta.textContent = `${srcName} · ${metaBits.join(' · ')}`;
 }
 
 // ---------- label-device status lines ----------
@@ -285,7 +293,7 @@ function setStatusLine(id, text) {
 }
 
 function renderLabelStatusLines(lask) {
-    const quests = lastDevices.filter(d => d.device_type === 'quest_hand');
+    const quests = lastDevices.filter(isHandPose);
     setStatusLine('hand-status-line', quests
         .map(q => `${q.device_id} ${(q.hz ?? 0).toFixed(0)} Hz`).join(' | '));
 
@@ -1377,6 +1385,11 @@ sessionForm.onsubmit = async (e) => {
         labeler_source: document.getElementById('sess-labeler').value || '',
         video_ref: document.getElementById('sess-video').value.trim(),
     };
+    // Mirrored training: one select carries both facts (mirrored or not, and
+    // which hand the labeler watches). Captures in the session get mirror:true.
+    const mirroredHand = (document.getElementById('sess-mirrored') || {}).value || '';
+    body.mirrored = !!mirroredHand;
+    body.labeled_hand = mirroredHand || null;
     try {
         const r = await fetch('/api/sessions', {
             method: 'POST',
@@ -1597,6 +1610,40 @@ function deriveRecordPlan() {
         };
     }
 
+    if (source === 'webcam') {
+        // The /webcam page tracks a hand with the computer's camera and streams
+        // it to /ws/webcam, so it shows up here as a device_type="webcam_hand"
+        // label device (ids webcam-left / webcam-right). One hand labels every
+        // recorded band: with a band on each arm and one hand in view, both
+        // bands get that hand's labels, which is what mirrored training wants.
+        const cams = lastDevices.filter(d => d.device_type === 'webcam_hand' && deviceFresh(d));
+        if (!cams.length) return blocked('webcam hand not streaming: open /webcam in a browser tab and start the camera');
+        const camFor = side => cams.find(d =>
+            String(d.device_id).toLowerCase().includes(side)) || cams[0];
+        if (bandL && bandR) {
+            const cam = cams[0];
+            return {
+                ready: true, mode: '2band-webcam',
+                endpoint: '/api/recording',
+                body: { filename: null, label_device_id: cam.device_id,
+                        sensor_device_id: bandL.device_id, role: 'left',
+                        extra_sensors: [{ device_id: bandR.device_id, role: 'right' }] },
+                summary: `2 bands | L ${bandL.device_id} + R ${bandR.device_id} | labels: webcam ${cam.device_id} | ${winText(175)}`,
+            };
+        }
+        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
+        // Pin the webcam hand as the label so auto-pick can't prefer a stray
+        // quest/lask5. Prefer the hand on the band's own side when both stream.
+        const cam = camFor(soloBand.role || 'right');
+        const body = { filename: null, label_device_id: cam.device_id };
+        if (soloBand.role) { body.sensor_device_id = soloBand.device_id; body.role = soloBand.role; }
+        return {
+            ready: true, mode: '1h-webcam',
+            endpoint: '/api/recording', body,
+            summary: `1H | ${soloBand.device_id}${soloBand.role ? ` (${soloBand.role})` : ''} | labels: webcam ${cam.device_id} | ${winText(175)}`,
+        };
+    }
+
     if (source === 'gamepad') {
         // The dashboard browser streams the controller to /ws/gamepad, so it
         // shows up here as a device_type="gamepad" label device (gamepad.js).
@@ -1673,7 +1720,7 @@ function renderRecordPlan() {
 // Labels pick persists across reloads; default vr (the headset flow).
 if (labelSourceSelect) {
     const saved = localStorage.getItem(STORE_LABEL_SOURCE);
-    if (saved && ['vr', 'lask5', 'none', 'gamepad'].includes(saved)) labelSourceSelect.value = saved;
+    if (saved && ['vr', 'lask5', 'webcam', 'none', 'gamepad'].includes(saved)) labelSourceSelect.value = saved;
     labelSourceSelect.addEventListener('change', () => {
         localStorage.setItem(STORE_LABEL_SOURCE, labelSourceSelect.value);
     });

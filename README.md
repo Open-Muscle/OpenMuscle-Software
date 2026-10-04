@@ -79,6 +79,18 @@ pc/start-vr.bat left            # left arm
 
 Full setup + per-session walkthrough: [`docs/vr-setup.md`](docs/vr-setup.md).
 
+### Webcam labeling (no extra hardware)
+
+The computer's camera can stand in for the headset: a hand tracker in the browser turns the picture into the same hand joints, and they are recorded as labels next to the band data.
+
+```bash
+openmuscle web
+# then, on the same computer, open the dashboard address + /webcam,
+# press "Start camera", and set Labels to "Webcam hand" in the dashboard
+```
+
+The picture stays in the browser; only joint coordinates are recorded. Also covers mirrored training (labeling one hand while the band is on the other limb): [`docs/webcam-labeling.md`](docs/webcam-labeling.md).
+
 ### Firmware (ESP32-S3 + MicroPython)
 
 ```bash
@@ -118,6 +130,7 @@ mpremote cp embedded/devices/flexgrid_v1/config/defaults.json :/config/
 - [CLI Usage Guide](docs/pc-cli.md)
 - [VR Setup & Operation](docs/vr-setup.md) — mkcert + Quest cert install + per-session walkthrough
 - [VR Testing Scenarios](docs/vr-testing-scenarios.md) — bring-up order, 2-minute smoke test, per-feature test runbook
+- [Webcam Hand Labeling](docs/webcam-labeling.md): camera as a label source, mirrored training, what is recorded
 
 ## Adding a New Device
 

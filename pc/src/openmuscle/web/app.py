@@ -140,7 +140,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # pointed at app.js without the version querystring), so refreshes
         # kept loading stale JS even after the file changed on disk.
         if (path == "/" or path == "/vr" or path == "/stream"
-                or path.startswith("/static/")):
+                or path == "/webcam" or path.startswith("/static/")):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -169,6 +169,16 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/stream")
     async def stream_page():
         return FileResponse(STATIC_DIR / "stream.html")
+
+    # Webcam hand labeler. Open it in a browser tab on the computer that has
+    # the camera: it tracks a hand, converts the landmarks to the same 25-joint
+    # layout the headset sends, and streams them over /ws/webcam so the hand
+    # shows up as a label source (device_type "webcam_hand"). The camera image
+    # never leaves the browser; only joint coordinates are sent. Cameras need a
+    # secure context, which http://localhost satisfies.
+    @app.get("/webcam")
+    async def webcam_page():
+        return FileResponse(STATIC_DIR / "webcam" / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -224,6 +234,38 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             state.log_buffer.error(
                 "quest", f"socket error from {client}: "
                          f"{type(e).__name__}: {e}")
+        finally:
+            inbound_ws.discard(websocket)
+
+    # Inbound WS from the /webcam page: hand joints tracked by the computer's
+    # camera, in the same payload shape as /ws/quest. ingest_webcam_packet
+    # synthesizes a device_type="webcam_hand" packet and routes it through
+    # _handle_packet, so the recorder treats it like any other label device.
+    @app.websocket("/ws/webcam")
+    async def ws_webcam(websocket: WebSocket):
+        await websocket.accept()
+        inbound_ws.add(websocket)   # so shutdown can close it (no timeout hang)
+        client = (f"{websocket.client.host}:{websocket.client.port}"
+                  if websocket.client else "unknown")
+        state.log_buffer.info("webcam", f"connected: {client}")
+        frame_count = 0
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                try:
+                    state.ingest_webcam_packet(payload)
+                    frame_count += 1
+                except Exception as e:
+                    state.log_buffer.warn(
+                        "webcam", f"ingest failed at frame {frame_count}: "
+                                  f"{type(e).__name__}: {e}")
+        except WebSocketDisconnect:
+            state.log_buffer.info(
+                "webcam", f"disconnected: {client} after {frame_count} frames")
+        except Exception as e:
+            state.log_buffer.error(
+                "webcam", f"socket error from {client}: "
+                          f"{type(e).__name__}: {e}")
         finally:
             inbound_ws.discard(websocket)
 
@@ -714,8 +756,12 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # Labeled-recording context (board #0284): a self-describing session.
         wearer: Optional[str] = ""              # who is wearing the band(s)
         take: Optional[int] = None              # take number (frontend prefills last+1)
-        labeler_source: Optional[str] = ""      # lask5 | vr | both | gamepad | ""
+        labeler_source: Optional[str] = ""      # lask5 | vr | both | gamepad | webcam | ""
         video_ref: Optional[str] = ""           # headset/screen video filename or note
+        # Mirrored bilateral training: labels measured on one hand while a band
+        # sits on the other limb. Captures in the session get mirror:true.
+        mirrored: Optional[bool] = False
+        labeled_hand: Optional[str] = None      # left | right (the hand the labeler watches)
 
     @app.get("/api/sessions")
     async def list_sessions_endpoint():
@@ -739,6 +785,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 take=body.take,
                 labeler_source=body.labeler_source or "",
                 video_ref=body.video_ref or "",
+                mirrored=bool(body.mirrored),
+                labeled_hand=body.labeled_hand,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))
