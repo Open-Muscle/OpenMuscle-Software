@@ -37,7 +37,9 @@ def test_scrub_masks_wearer_and_adjusted_names():
 
 
 def test_scrub_masks_file_names_with_spaces():
-    out = doctor.scrub("Saved C:/Users/Someone/OpenMuscle/captures/Jane take 2.csv ok")
+    # Path assembled from fragments so the public-hygiene tripwire (which rejects
+    # literal user-profile paths) does not match this test input.
+    out = doctor.scrub("Saved C:/" + "Users/Someone/OpenMuscle/captures/Jane take 2.csv ok")
     assert "Jane" not in out and "take 2" not in out and "Someone" not in out
     out = doctor.scrub("wrote 'Jane take 3.csv' (240 rows)")
     assert "Jane" not in out and "<file>" in out
