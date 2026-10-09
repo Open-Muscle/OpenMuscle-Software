@@ -18,7 +18,8 @@ What every installer does, in the same order:
 6. Runs `openmuscle doctor` and says whether it found anything to fix.
 
 Running the installer again is safe. It repairs a broken install or upgrades an old one
-and never touches your recordings.
+and never touches your recordings. On Windows, close the OpenMuscle window first; the
+installer stops with a plain message if it is still open, before it changes anything.
 
 Everything the installer does is written to `~/OpenMuscle/logs/install.log`. If an
 install stops, that file says why; send it to whoever gave you OpenMuscle.
@@ -37,7 +38,7 @@ else; the launcher remembers it.
    Right-click the ZIP first, choose Properties, tick Unblock if you see it, then extract:
    that avoids most Windows warnings.
 2. Open the extracted folder, then `installers`, then `windows`.
-3. Double-click `Install-OpenMuscle.bat`.
+3. Close OpenMuscle if it is running, then double-click `Install-OpenMuscle.bat`.
    - If Windows says "Windows protected your PC", click More info, then Run anyway.
    - If Python is missing it installs Python 3.12 for you with winget when it can. If it
      cannot, it opens the python.org download page. On the first screen of the Python

@@ -20,7 +20,8 @@
     6. Optionally adds the Windows firewall rule the bands need (asks first).
     7. Runs  openmuscle doctor  and says what it found.
 
-  Safe to run again: a second run repairs or upgrades the same install.
+  Safe to run again: a second run repairs or upgrades the same install. Close
+  the OpenMuscle window first; the installer stops with a message if it is open.
   Everything it does is written to  <data folder>\logs\install.log .
 
   The data folder can be moved by setting OPENMUSCLE_HOME before running.
@@ -240,6 +241,35 @@ if (-not $python) {
 Say "     Using Python $($python.Version)"
 Write-Log "Python: $($python.Path)"
 
+# ------------------------------------------------------ running copy check --
+# pip cannot replace files that a running OpenMuscle has open (WinError 32) and
+# can leave the package half removed, so refuse to start while one is open.
+function Test-OpenMuscleRunning {
+    if (-not (Test-Path -LiteralPath $AppDir)) { return $false }
+    $prefix = ([System.IO.Path]::GetFullPath($AppDir)).TrimEnd('\') + '\'
+    try {
+        $procs = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    } catch {
+        Write-Log "Could not list processes: $($_.Exception.Message)"
+        return $false
+    }
+    foreach ($p in $procs) {
+        if ($p.ProcessId -eq $PID) { continue }
+        $path = $p.ExecutablePath
+        if ($path -and $path.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Log "Running copy: $path (pid $($p.ProcessId))"
+            return $true
+        }
+    }
+    return $false
+}
+function Stop-ForRunningCopy {
+    Stop-Install 'OpenMuscle is open.' @(
+        'Close the OpenMuscle window (the black one), then run this installer again.',
+        'Installing while it is open would damage the install.')
+}
+if (Test-OpenMuscleRunning) { Stop-ForRunningCopy }
+
 # ------------------------------------------------------ virtual environment --
 Say '2/6  Setting up the private OpenMuscle environment...'
 $venvOk = $false
@@ -289,6 +319,9 @@ if ($code -eq 0) {
     $code = Invoke-Logged $VenvPython @('-m', 'pip', 'install', '--no-deps', '--force-reinstall', $pc) 'refresh openmuscle'
 }
 if ($code -ne 0 -or -not (Test-Path -LiteralPath $VenvExe)) {
+    if ($script:LastOutput -match 'WinError 32|being used by another process|Access is denied') {
+        Stop-ForRunningCopy
+    }
     $net = $script:LastOutput -match 'Failed to establish|Max retries|getaddrinfo|Temporary failure|Network is unreachable|ProxyError|SSLError|No matching distribution|Could not find a version|timed out|ConnectionError'
     if ($net) {
         Stop-Install 'the libraries could not be downloaded.' @(
@@ -402,10 +435,10 @@ if (Test-FirewallRule) {
             Say '     Firewall rule added.'
         } else {
             Say '     The firewall rule was not added (the question was declined or failed).' 'Yellow'
-            Say '     You can add it later by running this installer again.' 'Yellow'
+            Say '     You can add it later by closing OpenMuscle and running this installer again.' 'Yellow'
         }
     } else {
-        Say '     Skipped the firewall rule. If the bands do not appear later, run this installer again.'
+        Say '     Skipped the firewall rule. If the bands do not appear later, close OpenMuscle and run this installer again.'
     }
 }
 

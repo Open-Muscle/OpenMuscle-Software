@@ -170,6 +170,15 @@ def test_windows_installer_follows_the_python_rules():
     assert "ConvertTo-ArgText" in text
 
 
+def test_windows_installer_refuses_to_run_over_an_open_copy():
+    text = (INSTALLERS / "windows" / "install.ps1").read_text(encoding="ascii")
+    # Checked before step 2, so pip never touches a running install.
+    assert text.index("if (Test-OpenMuscleRunning)") < text.index("Say '2/6")
+    assert "Win32_Process" in text and "ExecutablePath" in text
+    # A WinError 32 from pip gets the same plain advice instead of the generic message.
+    assert "WinError 32" in text and "Stop-ForRunningCopy" in text
+
+
 def test_launcher_runs_the_web_command_and_checks_for_a_running_copy():
     bat = (INSTALLERS / "windows" / "OpenMuscle.bat").read_text(encoding="ascii")
     assert "web %*" in bat
