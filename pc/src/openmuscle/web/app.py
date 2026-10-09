@@ -635,6 +635,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # role's rows and (on activate) loads it into the per-hand engine slot.
         # Call twice (left, right) for model_left + model_right. None = pooled.
         role: Optional[str] = None
+        # Capture names to hold out whole for the honest score (multi-capture
+        # only). Default: the most recently recorded captures.
+        holdout_captures: Optional[list[str]] = None
 
     @app.post("/api/train")
     async def train_endpoint(body: TrainBody):
@@ -652,6 +655,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 body.test_split,
                 body.activate,
                 body.role,
+                body.holdout_captures,
             )
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))

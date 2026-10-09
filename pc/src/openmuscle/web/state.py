@@ -2324,9 +2324,15 @@ class AppState:
                             n_estimators: int = 100,
                             test_split: float = 0.2,
                             activate: bool = True,
-                            role: str = None) -> dict:
+                            role: str = None,
+                            holdout_captures: list = None) -> dict:
         """Combine N captures from captures_dir, train a model, optionally
         hot-swap it into the inference engine.
+
+        The score is HELD-OUT: with 2+ captures the last ones recorded (by
+        created time) are held out whole (`holdout_captures` overrides which);
+        with one capture the chronological tail is held out after a ~1 s purge
+        gap. The shipped model is then fit on every row. See ml/evaluate.py.
 
         `role` (left/right) trains a SINGLE-ARM model per hand (separate-model-
         per-hand): only that role's rows from a two-hand capture are used, and on
@@ -2340,13 +2346,16 @@ class AppState:
                            capture_path() before use.
             model_type:    'random_forest' for now.
             n_estimators:  RF n_estimators (default 100).
-            test_split:    fraction held out for evaluation.
+            test_split:    fraction held out for evaluation (last captures,
+                           or the tail of a single capture).
             activate:      if True, the trained model is loaded into
                            self.engine immediately, so live inference uses
                            it without restarting the server.
 
         Returns:
-            {model_path, metrics: {r2, mse, ...}, active: bool}
+            {model_path, metrics: {r2, mse, curl_r2, per_finger, eval_method,
+             ...}, verdict: {grade, headline, detail, next_step, ...},
+             active: bool}
 
         Raises:
             RuntimeError on invalid capture or empty result.
@@ -2355,6 +2364,7 @@ class AppState:
         import tempfile
         import os
         from openmuscle.ml.training import train_model
+        from openmuscle.ml.verdict import describe_result
         from openmuscle.data.converter import combine_csvs
 
         if not capture_names:
@@ -2367,12 +2377,19 @@ class AppState:
                 len(capture_names), model_type, n_estimators, test_split,
                 ", role={}".format(role) if role else ""))
 
-        paths = []
+        found = []
         for name in capture_names:
             p = self.capture_path(name)
             if p is None:
                 raise RuntimeError(f"Capture not found: {name}")
-            paths.append(str(p))
+            found.append((name, p))
+        # Oldest first by recording time, so "hold out the last captures" means
+        # the most recent recordings (the app can re-order a selection freely).
+        def _recorded_ms(item):
+            meta = self.read_capture_meta(item[0]) or {}
+            return meta.get("created_ms") or int(item[1].stat().st_mtime * 1000)
+        found.sort(key=_recorded_ms)
+        paths = [str(p) for _n, p in found]
 
         # Combine (or just use the single path directly)
         if len(paths) == 1:
@@ -2383,7 +2400,7 @@ class AppState:
             os.close(fd)
             cleanup = combined_path
             try:
-                combine_csvs(paths, combined_path)
+                combine_csvs(paths, combined_path, capture_column="_capture")
             except ValueError as e:
                 # Mismatched-schema capture selection is operator error, not a
                 # server fault -- surface it as a clean 400 (RuntimeError maps to
@@ -2397,6 +2414,7 @@ class AppState:
                 n_estimators=n_estimators,
                 test_split=test_split,
                 role=role,
+                holdout_captures=holdout_captures,
             )
         finally:
             if cleanup:
@@ -2476,19 +2494,25 @@ class AppState:
                 self.engine_status = "trained but activate failed: {}".format(e)
                 self.log_buffer.error("training", "load-after-train failed: {}".format(e))
 
+        verdict = describe_result(metrics, n_captures=len(capture_names),
+                                  hand_side=role)
         self.log_buffer.info("training",
-            "done: rows={} R²={:.3f} MSE={:.4f} feats={}x{} model={} ({})".format(
-                metrics.get("n_train", 0) + metrics.get("n_test", 0),
-                metrics.get("r2", 0.0),
-                metrics.get("mse", 0.0),
+            "done: rows={} held-out curl R²={} ({}) feats={}x{} model={} ({}) | {}".format(
+                metrics.get("n_rows", 0),
+                "n/a" if metrics.get("curl_r2") is None
+                else "{:.3f}".format(metrics["curl_r2"]),
+                metrics.get("eval_method"),
                 metrics.get("n_features", 0),
                 metrics.get("n_labels", 0),
                 Path(model_path).parent.name if model_path else "?",
-                "loaded · click ▶ to run" if activated else "saved only"))
+                "loaded · click ▶ to run" if activated else "saved only",
+                verdict["headline"]))
 
         return {
             "model_path": model_path,
             "metrics": metrics,
+            # Plain-language reading of the held-out score (ml/verdict.py).
+            "verdict": verdict,
             "active": activated,
             # Why activation failed (None when loaded). The UI must show this
             # loudly; "trained but not loaded" burned two capture sessions.
@@ -2666,6 +2690,7 @@ class AppState:
         train_from_captures stamps after each run.
         """
         from openmuscle.ml.registry import ModelRegistry
+        from openmuscle.ml.verdict import describe_result
         reg = ModelRegistry()
         out = []
         # Map registry path -> occupied engine slots (separate-model-per-hand).
@@ -2681,6 +2706,10 @@ class AppState:
             slots = slot_by_path.get(entry.get("path"), [])
             entry["active"] = "shared" in slots
             entry["active_roles"] = slots
+            entry["verdict"] = describe_result(
+                entry.get("metrics") or {},
+                n_captures=len(entry.get("captures") or []) or None,
+                hand_side=(entry.get("metrics") or {}).get("role"))
             out.append(entry)
         # Newest first in the UI
         out.reverse()

@@ -253,7 +253,10 @@ def record(port, output, duration, role):
                 type=click.Path(exists=True, dir_okay=False))
 @click.option("--model-type", default="random_forest", help="Model type to train")
 @click.option("--output", "-o", default=None, help="Output model path (default: data/models/)")
-@click.option("--test-split", default=0.2, type=float, help="Test set fraction")
+@click.option("--test-split", default=0.2, type=float,
+              help="Fraction held out for the honest score: the last captures "
+                   "(2+ files) or the chronological tail of a single file. The "
+                   "saved model is fit on all rows.")
 @click.option("--trees", default=100, type=int, help="Number of trees (RandomForest)")
 @click.option("--role", default=None, type=click.Choice(["left", "right"]),
               help="SEPARATE-MODEL-PER-HAND: keep only this role's rows from a "
@@ -273,7 +276,10 @@ def train(data_paths, model_type, output, test_split, trees, role):
                          data/raw/merged/session_b.csv \\
                          data/raw/merged/session_c.csv
 
-    All CSVs must share the same schema (sensor + label columns).
+    All CSVs must share the same schema (sensor + label columns). With two or
+    more files the last ones are held out whole to score the model (give them
+    oldest first); with one file the end of the recording is held out. The
+    score is printed in plain words at the end.
 
     \b
     For two-hand captures, train one model per hand with --role:
@@ -284,13 +290,22 @@ def train(data_paths, model_type, output, test_split, trees, role):
     import tempfile
     import os
     from openmuscle.ml.training import train_model
+    from openmuscle.ml.verdict import describe_result
     from openmuscle.data.converter import combine_csvs
+
+    def _say(metrics, n_captures):
+        v = describe_result(metrics, n_captures=n_captures, hand_side=role)
+        click.echo("")
+        click.echo(v["headline"])
+        click.echo(v["detail"])
+        click.echo("Next: " + v["next_step"])
 
     if len(data_paths) == 1:
         # Single-CSV: train directly, no temp file dance.
-        train_model(data_path=data_paths[0], model_type=model_type,
-                    output=output, test_split=test_split, n_estimators=trees,
-                    role=role)
+        _model, metrics = train_model(
+            data_path=data_paths[0], model_type=model_type, output=output,
+            test_split=test_split, n_estimators=trees, role=role)
+        _say(metrics, 1)
         return
 
     # Multiple captures: concatenate to a temp file, train, clean up.
@@ -298,11 +313,13 @@ def train(data_paths, model_type, output, test_split, trees, role):
     fd, tmp_path = tempfile.mkstemp(prefix="om_combined_", suffix=".csv")
     os.close(fd)
     try:
-        n_rows = combine_csvs(list(data_paths), tmp_path)
+        n_rows = combine_csvs(list(data_paths), tmp_path,
+                              capture_column="_capture")
         click.echo(f"Combined into {n_rows} rows -> {tmp_path}")
-        train_model(data_path=tmp_path, model_type=model_type,
-                    output=output, test_split=test_split, n_estimators=trees,
-                    role=role)
+        _model, metrics = train_model(
+            data_path=tmp_path, model_type=model_type, output=output,
+            test_split=test_split, n_estimators=trees, role=role)
+        _say(metrics, len(data_paths))
     except ValueError as e:
         # Mismatched-schema capture selection: fail loud + clean, not a traceback.
         raise click.ClickException(str(e))
@@ -351,12 +368,15 @@ def models():
     if not model_list:
         print("No models found in data/models/")
         return
+    from openmuscle.ml.verdict import describe_result
     for m in model_list:
         metrics = m.get("metrics", {})
+        v = describe_result(metrics, n_captures=len(m.get("captures") or []) or None,
+                            hand_side=metrics.get("role"))
         r2 = metrics.get("r2", "N/A")
         mse = metrics.get("mse", "N/A")
-        print(f"  {m['name']}  created={m['created']}  "
-              f"R2={r2}  MSE={mse}  path={m.get('path', '')}")
+        print(f"  {m['name']}  created={m['created']}  {v['headline']}  "
+              f"(legacy R2={r2}  MSE={mse})  path={m.get('path', '')}")
 
 
 @main.command()
