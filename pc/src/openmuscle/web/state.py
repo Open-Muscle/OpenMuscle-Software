@@ -1460,12 +1460,32 @@ class AppState:
     # have been left open.
     AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5", "webcam_hand", "gamepad")
 
+    # A label device counts as streaming when it was heard from within this many
+    # seconds (the dashboard's device list uses the same 2 s). Devices stay in
+    # self.devices after they go quiet, so without this a camera page that was
+    # closed minutes ago (webcam-left) would beat the one that is live now
+    # (webcam-right) just because it was registered first.
+    LABEL_FRESH_S = 2.0
+
     def _auto_pick_label(self) -> Optional[str]:
-        """First connected label-producing device, by type preference."""
-        for preferred_type in self.AUTO_LABEL_TYPE_PREFERENCE:
-            for d in self.devices.values():
-                if d.device_type == preferred_type:
-                    return d.device_id
+        """The label-producing device to use when none was named.
+
+        Type preference decides first (AUTO_LABEL_TYPE_PREFERENCE), but only
+        among devices that are streaming now; within a type the most recently
+        heard one wins. If nothing is streaming at all, fall back to the most
+        recently heard device of the best type so behaviour for a labeler that
+        just paused is unchanged (the dashboard's record plan already blocks a
+        stale labeler before it gets here).
+        """
+        now = time.time()
+        for fresh_only in (True, False):
+            for preferred_type in self.AUTO_LABEL_TYPE_PREFERENCE:
+                cands = [d for d in self.devices.values()
+                         if d.device_type == preferred_type
+                         and (not fresh_only
+                              or now - d.last_seen < self.LABEL_FRESH_S)]
+                if cands:
+                    return max(cands, key=lambda d: d.last_seen).device_id
         return None
 
     # Default match windows per label-device family. Quest WebXR has higher
