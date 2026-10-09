@@ -45,7 +45,8 @@ Then in the desktop UI (`http://localhost:8000/`):
    sensor columns and 175 label columns plus the labels-schema sidecar.
 4. Train on that capture; the combo simulator's sensor values are
    derived from the same latent finger curls as the hand, so the model
-   should reach a clearly positive held-out R^2. Load the model and the
+   should reach a clearly positive held-out curl score (the last part of
+   the recording is held out, never a shuffled split). Load the model and the
    amber predicted hand tracks the green real hand in the viewer.
 
 If all of that works, a real-headset failure is in the headset/network

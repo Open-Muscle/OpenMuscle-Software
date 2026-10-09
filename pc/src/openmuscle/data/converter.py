@@ -109,7 +109,20 @@ def _summarize_header(header: list) -> dict:
     }
 
 
-def combine_csvs(csv_paths: list[str], output_path: str) -> int:
+def capture_labels(csv_paths: list[str]) -> list[str]:
+    """One unique, human-readable tag per input file (its file name; a repeated
+    name gets a `#<n>` suffix) used for the optional capture column."""
+    seen: dict = {}
+    out = []
+    for p in csv_paths:
+        name = Path(p).name
+        seen[name] = seen.get(name, 0) + 1
+        out.append(name if seen[name] == 1 else f"{name}#{seen[name]}")
+    return out
+
+
+def combine_csvs(csv_paths: list[str], output_path: str,
+                 capture_column: str = None) -> int:
     """Concatenate multiple SCHEMA-COMPATIBLE CSVs into one file.
 
     Every input MUST share the exact same header (same sensor R{r}C{c}, label_*,
@@ -128,6 +141,10 @@ def combine_csvs(csv_paths: list[str], output_path: str) -> int:
     Args:
         csv_paths: CSV file paths to combine (all the same schema).
         output_path: path for the combined output CSV.
+        capture_column: when set, append a column of that name holding each
+            row's source file name (see capture_labels), so the trainer can hold
+            out whole captures. Default None keeps the header byte-identical to
+            the inputs.
 
     Returns:
         Total number of data rows written.
@@ -167,15 +184,16 @@ def combine_csvs(csv_paths: list[str], output_path: str) -> int:
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     total = 0
+    tags = capture_labels(csv_paths)
     with open(output_path, "w", newline="") as f_out:
         writer = csv.writer(f_out)
-        writer.writerow(ref_header)
-        for csv_path in csv_paths:
+        writer.writerow(ref_header + [capture_column] if capture_column else ref_header)
+        for csv_path, tag in zip(csv_paths, tags):
             with open(csv_path, "r") as f_in:
                 reader = csv.reader(f_in)
                 next(reader)   # skip the (already-validated) header
                 for row in reader:
-                    writer.writerow(row)
+                    writer.writerow(row + [tag] if capture_column else row)
                     total += 1
 
     return total

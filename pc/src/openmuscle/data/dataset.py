@@ -44,6 +44,36 @@ def is_bilateral_v2(df: pd.DataFrame) -> bool:
     return "left" in roles and "right" in roles
 
 
+def _pivot_bilateral_frame(df: pd.DataFrame, window_ms: int = 50,
+                           extra_cols: tuple = ()) -> pd.DataFrame:
+    """The merged wide frame behind pivot_bilateral: left rows (sorted by
+    ts_hub_ms) with the nearest right row's sensors joined as `<feat>_R`.
+    `extra_cols` are carried from the LEFT row (capture tag, canonical labels)
+    so callers can keep per-row bookkeeping aligned with X and y."""
+    sensor_cols, label_cols = detect_columns(df)
+    if "ts_hub_ms" not in df.columns:
+        raise ValueError("pivot_bilateral needs a ts_hub_ms column (schema v2)")
+    extra = [c for c in extra_cols if c in df.columns and c != "ts_hub_ms"]
+
+    left = (df[df["role"] == "left"]
+            .sort_values("ts_hub_ms", kind="stable")
+            [["ts_hub_ms"] + sensor_cols + label_cols + extra]
+            .reset_index(drop=True))
+    right = (df[df["role"] == "right"]
+             .sort_values("ts_hub_ms", kind="stable")[["ts_hub_ms"] + sensor_cols]
+             .reset_index(drop=True))
+    if left.empty or right.empty:
+        raise ValueError("pivot_bilateral needs both left and right rows")
+
+    merged = pd.merge_asof(
+        left, right, on="ts_hub_ms", direction="nearest",
+        tolerance=window_ms, suffixes=("_L", "_R"),
+    )
+    # Drop left frames with no right match inside the window (unpaired groups).
+    right_marker = sensor_cols[0] + "_R"
+    return merged.dropna(subset=[right_marker]).reset_index(drop=True)
+
+
 def pivot_bilateral(df: pd.DataFrame,
                     window_ms: int = 50) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Pivot a v2 long capture (interleaved left/right source rows) into the wide
@@ -59,34 +89,43 @@ def pivot_bilateral(df: pd.DataFrame,
     Returns (X, y): X columns are `<feat>_L` then `<feat>_R`; y is the labels.
     """
     sensor_cols, label_cols = detect_columns(df)
-    if "ts_hub_ms" not in df.columns:
-        raise ValueError("pivot_bilateral needs a ts_hub_ms column (schema v2)")
-
-    left = (df[df["role"] == "left"]
-            .sort_values("ts_hub_ms")[["ts_hub_ms"] + sensor_cols + label_cols]
-            .reset_index(drop=True))
-    right = (df[df["role"] == "right"]
-             .sort_values("ts_hub_ms")[["ts_hub_ms"] + sensor_cols]
-             .reset_index(drop=True))
-    if left.empty or right.empty:
-        raise ValueError("pivot_bilateral needs both left and right rows")
-
-    merged = pd.merge_asof(
-        left, right, on="ts_hub_ms", direction="nearest",
-        tolerance=window_ms, suffixes=("_L", "_R"),
-    )
-    # Drop left frames with no right match inside the window (unpaired groups).
-    right_marker = sensor_cols[0] + "_R"
-    merged = merged.dropna(subset=[right_marker]).reset_index(drop=True)
-
+    merged = _pivot_bilateral_frame(df, window_ms=window_ms)
     X = merged[[c + "_L" for c in sensor_cols] + [c + "_R" for c in sensor_cols]]
     y = merged[label_cols]
     return X, y
 
 
-def load_training_data(csv_path: str,
-                       bilateral_window_ms: int = 50,
-                       role: str = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+# Row bookkeeping the trainer needs next to X and y, carried through the role
+# filter and the bilateral pivot: which capture a row came from (added by
+# combine_csvs(capture_column=...)), when it was recorded, and the canonical
+# finger-flexion labels when the capture already holds them.
+CAPTURE_COLUMN = "_capture"
+CANONICAL_FLEX_COLS = ("lbl_flex_thumb", "lbl_flex_index", "lbl_flex_middle",
+                       "lbl_flex_ring", "lbl_flex_pinky")
+
+
+def _row_extras(df: pd.DataFrame) -> pd.DataFrame:
+    """Extras frame (aligned to df's index) with `_capture`, `_time_ms` and any
+    lbl_flex_* columns that exist."""
+    out = pd.DataFrame(index=df.index)
+    if CAPTURE_COLUMN in df.columns:
+        out[CAPTURE_COLUMN] = df[CAPTURE_COLUMN].astype(str)
+    if "ts_hub_ms" in df.columns:
+        out["_time_ms"] = pd.to_numeric(df["ts_hub_ms"], errors="coerce")
+    elif "timestamp" in df.columns:
+        t = pd.to_numeric(df["timestamp"], errors="coerce")
+        # v1 captures stamp epoch seconds; ms epochs are ~1000x larger.
+        out["_time_ms"] = t * 1000.0 if t.abs().median() < 1e11 else t
+    for c in CANONICAL_FLEX_COLS:
+        if c in df.columns:
+            out[c] = pd.to_numeric(df[c], errors="coerce")
+    return out
+
+
+def load_training_frame(csv_path: str,
+                        bilateral_window_ms: int = 50,
+                        role: str = None
+                        ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Load a capture CSV and split into features (X) and labels (y).
 
     Schema-v2 multi-role (bilateral) captures are pivoted to the wide
@@ -101,7 +140,9 @@ def load_training_data(csv_path: str,
     we are NOT concatenating L||R into one model; each hand gets its own.
 
     Returns:
-        (X, y) DataFrames
+        (X, y, extras) DataFrames, row-aligned. `extras` carries `_capture`
+        (when the file was built by combine_csvs(capture_column=...)),
+        `_time_ms`, and any lbl_flex_* columns, for honest held-out evaluation.
     """
     df = load_capture(csv_path)
     if role:
@@ -116,10 +157,34 @@ def load_training_data(csv_path: str,
             raise ValueError(
                 f"No rows with role={role} in {csv_path} (found roles: {roles})")
         sensor_cols, label_cols = detect_columns(df)
-        return df[sensor_cols], df[label_cols]
+        return df[sensor_cols], df[label_cols], _row_extras(df)
     if is_bilateral_v2(df):
-        return pivot_bilateral(df, window_ms=bilateral_window_ms)
+        sensor_cols, label_cols = detect_columns(df)
+        extra = (CAPTURE_COLUMN,) + CANONICAL_FLEX_COLS
+        if CAPTURE_COLUMN in df.columns:
+            # Several captures: pair left with right WITHIN each capture (the
+            # hub clock can restart between recordings) and keep capture order.
+            parts = []
+            for _name, part in df.groupby(CAPTURE_COLUMN, sort=False):
+                if is_bilateral_v2(part):
+                    parts.append(_pivot_bilateral_frame(
+                        part, window_ms=bilateral_window_ms, extra_cols=extra))
+            if not parts:
+                raise ValueError("pivot_bilateral needs both left and right rows")
+            merged = pd.concat(parts, ignore_index=True)
+        else:
+            merged = _pivot_bilateral_frame(
+                df, window_ms=bilateral_window_ms, extra_cols=extra)
+        X = merged[[c + "_L" for c in sensor_cols] + [c + "_R" for c in sensor_cols]]
+        return X, merged[label_cols], _row_extras(merged)
     sensor_cols, label_cols = detect_columns(df)
-    X = df[sensor_cols]
-    y = df[label_cols]
+    return df[sensor_cols], df[label_cols], _row_extras(df)
+
+
+def load_training_data(csv_path: str,
+                       bilateral_window_ms: int = 50,
+                       role: str = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(X, y) only; see load_training_frame for the rules and the extras."""
+    X, y, _extras = load_training_frame(
+        csv_path, bilateral_window_ms=bilateral_window_ms, role=role)
     return X, y
