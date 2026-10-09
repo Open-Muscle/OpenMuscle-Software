@@ -23,8 +23,8 @@ OpenMuscle-Software/
         tests/                  Test suite
         pyproject.toml          Package configuration
     data/
-        raw/                    Organized sensor captures
-        models/                 Trained ML model artifacts
+        raw/                    Older sensor captures from earlier firmware
+        samples/legacy/         Sample CSVs from the first FlexGrid bands
     docs/                       Documentation
     archive/                    Pre-modular firmware snapshots (preserved
                                 verbatim so working state is never lost)
@@ -52,7 +52,7 @@ openmuscle record -o my_capture.csv
 openmuscle train my_capture.csv
 
 # Run real-time predictions
-openmuscle predict -m data/models/random_forest_*/model.pkl
+openmuscle predict -m ~/OpenMuscle/models/<model folder>/model.pkl
 
 # Test without hardware
 openmuscle simulate --device-type flexgrid
@@ -61,6 +61,8 @@ openmuscle simulate --device-type flexgrid
 # synthetic flexgrid + synthetic Quest hand driven by the same finger curls
 openmuscle simulate --device-type combo
 ```
+
+**Your recordings are private.** `openmuscle web` saves everything you record (takes, sessions, trained models, exports, logs) under `~/OpenMuscle`, outside this repository, and the repository's `.gitignore` also covers those file types if you point `--data-dir` somewhere inside a clone. Recordings are labeled with a participant code, not a name. Nothing is uploaded; share a take only by sending the file yourself.
 
 ### VR companion (Meta Quest 3)
 

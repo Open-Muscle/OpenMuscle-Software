@@ -15,6 +15,8 @@ verdict (with plain-English reasons) that is persisted per take and read by the
 dashboard, so the thresholds live in exactly one place.
 """
 
+from openmuscle.take_limits import MIN_TAKE_ROWS, MIN_TAKE_SECONDS, advice
+
 # A cell whose (max - min) stays under this many ADC counts across the take is
 # "flat" (baseline noise only; the dud's 50 flat cells all sat under 5).
 FLAT_RANGE_COUNTS = 5
@@ -155,8 +157,8 @@ def worst_band(trackers) -> dict:
 
 MATCH_RATE_BAD = 0.5          # labels paired with fewer than half the frames
 MATCH_RATE_CHECK = 0.9
-MIN_SECONDS = 10.0            # shorter takes are probably an accidental click
-MIN_ROWS = 50
+MIN_SECONDS = MIN_TAKE_SECONDS    # shorter takes are probably an accidental click
+MIN_ROWS = MIN_TAKE_ROWS
 HAND_LOST_CHECK = 0.05        # any padded row also trips "check"
 HAND_LOST_BAD = 0.5
 NO_LABEL_FRAMES = 20          # frames seen with zero matches = labels never came
@@ -164,7 +166,7 @@ NO_LABEL_FRAMES = 20          # frames seen with zero matches = labels never cam
 # Short words for the table badges (code -> word).
 FLAG_WORDS = {
     "empty": "empty",
-    "short": "short",
+    "short": "too short",
     "weak_signal": "weak signal",
     "no_labels": "no labels",
     "low_match": "labels missing",
@@ -213,12 +215,12 @@ def evaluate_take(stats: dict) -> dict:
         short_r = rows is not None and rows < MIN_ROWS
         if short_s:
             flags.append(_flag("short", "check",
-                               "Only {} seconds recorded. Short takes rarely help "
-                               "training.".format(int(round(dur)))))
+                               "Only {} seconds recorded. Too short to train on. "
+                               "{}".format(int(round(dur)), advice())))
         elif short_r:
             flags.append(_flag("short", "check",
-                               "Only {} rows recorded. Short takes rarely help "
-                               "training.".format(rows)))
+                               "Only {} rows recorded. Too short to train on. "
+                               "{}".format(rows, advice())))
 
     if s.get("band_flat"):
         flags.append(_flag("weak_signal", "bad",

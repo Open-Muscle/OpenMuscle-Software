@@ -402,9 +402,9 @@ def train(data_paths, model_type, output, test_split, trees, role):
     before fitting -- run this when you have several short recordings and
     want them treated as one dataset:
 
-        openmuscle train data/raw/merged/session_a.csv \\
-                         data/raw/merged/session_b.csv \\
-                         data/raw/merged/session_c.csv
+        openmuscle train ~/OpenMuscle/captures/session_a.csv \\
+                         ~/OpenMuscle/captures/session_b.csv \\
+                         ~/OpenMuscle/captures/session_c.csv
 
     All CSVs must share the same schema (sensor + label columns). With two or
     more files the last ones are held out whole to score the model (give them

@@ -1032,13 +1032,14 @@ function renderActiveSession() {
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
         const nDev = (s.context && Array.isArray(s.context.devices)) ? s.context.devices.length : 0;
         const sig = JSON.stringify([s.id, s.name, s.arm, s.wearer, s.subject, s.take,
-            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(',')]);
+            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(','),
+            s.modified_at]);
         if (sig !== _activeSessionSig) {
             _activeSessionSig = sig;
-            const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
-            const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(s.arm)} arm</span>` : '<span class="empty">no arm set</span>';
-            const who = s.wearer || s.subject;
-            const whoBit = who ? ' · ' + escapeHtml(who) : '';
+            const armCls = s.arm ? 'arm-' + s.arm : '';
+            const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(OMParticipant.armText(s.arm))}</span>` : '<span class="empty">no arm set</span>';
+            const who = OMParticipant.codeOf(s);
+            const whoBit = who ? ` · <span title="Participant code">${escapeHtml(who)}</span>` : '';
             const takeBit = (typeof s.take === 'number') ? ` · take ${s.take}` : '';
             const labelerBit = s.labeler_source ? ` · ${escapeHtml(s.labeler_source)}` : '';
             const devBit = nDev ? ` · ${nDev} dev @ start` : '';
@@ -1063,6 +1064,8 @@ function renderActiveSession() {
             document.getElementById('session-end-btn').onclick = endSession;
             const addBtn = document.getElementById('active-session-add-btn');
             if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
+            const editBtn = activeSessionArea.querySelector('button[data-edit-session]');
+            if (editBtn) editBtn.onclick = () => openSessionModal(activeSession);
             sessionStartBtn.disabled = true;
             sessionStartBtn.title = 'End the current session before starting a new one';
         } else {
@@ -1231,7 +1234,7 @@ function renderPastSessions() {
     }
     pastSessionsList.innerHTML = pastSessions.map(s => {
         const dur = (s.ended_at && s.started_at) ? Math.floor(s.ended_at - s.started_at) : null;
-        const armBit = s.arm ? escapeHtml(s.arm) + ' arm' : '—';
+        const armBit = s.arm ? escapeHtml(OMParticipant.armText(s.arm)) : 'no arm set';
         const captureList = Array.isArray(s.captures) ? s.captures : [];
         const captureCount = s.capture_count != null ? s.capture_count : captureList.length;
         const isOpen = expandedSessions.has(s.id);
@@ -1257,7 +1260,7 @@ function renderPastSessions() {
                 <div>
                     <span class="session-caret">${caret}</span>
                     <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.subject || '—')} · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                    <span class="session-meta-line">${armBit} · <span title="Participant code">${escapeHtml(OMParticipant.codeOf(s) || 'no code')}</span> · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
                 </div>
                 <div class="session-actions">
                     <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
@@ -1317,6 +1320,13 @@ function renderPastSessions() {
             removeCaptureFromSession(btn.dataset.fromSession, btn.dataset.unlinkCap);
         };
     });
+    pastSessionsList.querySelectorAll('button[data-edit-session]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            const session = pastSessions.find(x => x.id === btn.dataset.editSession);
+            if (session) openSessionModal(session);
+        };
+    });
     pastSessionsList.querySelectorAll('button[data-add-to-session]').forEach(btn => {
         btn.onclick = (e) => {
             e.stopPropagation();
@@ -1336,32 +1346,100 @@ pastSessionsToggle.onclick = () => {
 
 sessionStartBtn.onclick = () => openSessionModal();
 
-async function openSessionModal() {
+// The one session form serves "Start new session" and "Edit session".
+// sessionEditId is the id being edited, or null for a new session.
+let sessionEditId = null;
+
+function showSessionError(msg) {
+    const el = document.getElementById('sess-error');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+}
+
+// Soft warning under a participant-code input: appears when the value looks
+// like a name, never blocks saving.
+function wireParticipantWarning(input, warnEl) {
+    if (!input || !warnEl) return;
+    const update = () => {
+        const w = OMParticipant.nameWarning(input.value);
+        warnEl.textContent = w;
+        warnEl.hidden = !w;
+    };
+    input.addEventListener('input', update);
+    input.addEventListener('change', update);
+    input._refreshWarning = update;
+}
+wireParticipantWarning(document.getElementById('sess-wearer'),
+                       document.getElementById('sess-wearer-warn'));
+
+function fillSessionForm(s) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('sess-name', s.name && s.name !== s.id ? s.name : '');
+    set('sess-wearer', OMParticipant.codeOf(s));
+    set('sess-arm', s.arm || '');
+    set('sess-labeler', s.labeler_source || '');
+    set('sess-take', typeof s.take === 'number' ? s.take : '');
+    set('sess-mirrored', s.mirrored ? (s.labeled_hand || '') : '');
+    set('sess-gestures', (s.gestures || []).join(', '));
+    set('sess-video', s.video_ref || '');
+    set('sess-tags', (s.tags || []).join(', '));
+    set('sess-notes', s.notes || '');
+}
+
+async function openSessionModal(editSession) {
+    sessionEditId = editSession ? editSession.id : null;
+    sessionForm.reset();
+    showSessionError('');
+    document.getElementById('session-modal-title').textContent =
+        sessionEditId ? 'Edit session' : 'Start new session';
+    document.getElementById('sess-submit').textContent =
+        sessionEditId ? 'Save changes' : 'Start session';
+    const more = document.getElementById('sess-more');
     sessionModal.classList.add('open');
     sessionModal.setAttribute('aria-hidden', 'false');
-    // Prefill wearer / arm / labeler from the most recent session and bump the
-    // take number, so a repeat session is one edit. Only fills empty fields.
-    try {
-        const r = await fetch('/api/sessions');
-        if (r.ok) {
-            const last = (await r.json())[0];
-            if (last) {
-                const w = document.getElementById('sess-wearer');
-                if (w && !w.value) w.value = last.wearer || last.subject || '';
-                const a = document.getElementById('sess-arm');
-                if (a && !a.value && last.arm) a.value = last.arm;
-                const l = document.getElementById('sess-labeler');
-                if (l && !l.value && last.labeler_source) l.value = last.labeler_source;
-                const t = document.getElementById('sess-take');
-                if (t && !t.value && typeof last.take === 'number') t.value = last.take + 1;
+
+    if (sessionEditId) {
+        // Edit: prefill from the session as the server has it now.
+        let s = editSession;
+        try {
+            const r = await fetch('/api/sessions/' + encodeURIComponent(sessionEditId));
+            if (r.ok) s = await r.json();
+        } catch (e) { /* fall back to the copy we already hold */ }
+        fillSessionForm(s);
+        // Open "More details" when something in it is already filled in.
+        if (more) more.open = !!(s.mirrored || s.video_ref || s.notes
+            || (s.gestures || []).length || (s.tags || []).length);
+    } else {
+        if (more) more.open = false;
+        // Prefill participant code / arm / labeler from the most recent session
+        // and bump the take number, so a repeat session is one edit. Only fills
+        // empty fields.
+        try {
+            const r = await fetch('/api/sessions');
+            if (r.ok) {
+                const last = (await r.json())[0];
+                if (last) {
+                    const w = document.getElementById('sess-wearer');
+                    if (w && !w.value) w.value = OMParticipant.codeOf(last);
+                    const a = document.getElementById('sess-arm');
+                    if (a && !a.value && last.arm) a.value = last.arm;
+                    const l = document.getElementById('sess-labeler');
+                    if (l && !l.value && last.labeler_source) l.value = last.labeler_source;
+                    const t = document.getElementById('sess-take');
+                    if (t && !t.value && typeof last.take === 'number') t.value = last.take + 1;
+                }
             }
-        }
-    } catch (e) { /* prefill is best-effort */ }
+        } catch (e) { /* prefill is best-effort */ }
+    }
+    const w = document.getElementById('sess-wearer');
+    if (w && w._refreshWarning) w._refreshWarning();
     document.getElementById('sess-name').focus();
 }
 function closeSessionModal() {
     sessionModal.classList.remove('open');
     sessionModal.setAttribute('aria-hidden', 'true');
+    sessionEditId = null;
 }
 sessionModal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeSessionModal));
 document.addEventListener('keydown', (e) => {
@@ -1370,15 +1448,19 @@ document.addEventListener('keydown', (e) => {
 
 sessionForm.onsubmit = async (e) => {
     e.preventDefault();
+    showSessionError('');
     const takeRaw = parseInt(document.getElementById('sess-take').value, 10);
+    const code = document.getElementById('sess-wearer').value.trim();
+    // One participant code, sent under both keys. The server keeps the two in
+    // step (wearer drives the model guard, subject is what capture meta uses).
     const body = {
         name:     document.getElementById('sess-name').value.trim(),
-        subject:  document.getElementById('sess-subject').value.trim(),
+        subject:  code,
+        wearer:   code,
         arm:      document.getElementById('sess-arm').value || null,
         gestures: document.getElementById('sess-gestures').value.split(',').map(s=>s.trim()).filter(Boolean),
         tags:     document.getElementById('sess-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
         notes:    document.getElementById('sess-notes').value,
-        wearer:   document.getElementById('sess-wearer').value.trim(),
         take:     Number.isFinite(takeRaw) ? takeRaw : null,
         labeler_source: document.getElementById('sess-labeler').value || '',
         video_ref: document.getElementById('sess-video').value.trim(),
@@ -1388,18 +1470,36 @@ sessionForm.onsubmit = async (e) => {
     const mirroredHand = (document.getElementById('sess-mirrored') || {}).value || '';
     body.mirrored = !!mirroredHand;
     body.labeled_hand = mirroredHand || null;
+    const editing = sessionEditId;
+    const submitBtn = document.getElementById('sess-submit');
+    submitBtn.disabled = true;
     try {
-        const r = await fetch('/api/sessions', {
-            method: 'POST',
+        const r = await fetch(editing ? '/api/sessions/' + encodeURIComponent(editing) : '/api/sessions', {
+            method: editing ? 'PUT' : 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
         });
         if (!r.ok) throw new Error(await readError(r));
-        // Clear the form for next time
+        const saved = await r.json();
         sessionForm.reset();
         closeSessionModal();
-    } catch (e) {
-        alert('Could not start session: ' + e.message);
+        if (editing) {
+            // Show the new name/code everywhere now, without a reload: the card,
+            // the chip, the typeahead and the capture rows that name the session.
+            if (activeSession && activeSession.id === saved.id) {
+                activeSession = saved;
+                _activeSessionSig = null;
+                renderActiveSession();
+            }
+            await refreshPastSessions();
+            refreshCaptures();
+            refreshModels();
+        }
+    } catch (err) {
+        showSessionError((editing ? 'Could not save the session: ' : 'Could not start the session: ')
+            + (err.message || err));
+    } finally {
+        submitBtn.disabled = false;
     }
 };
 
@@ -1416,6 +1516,34 @@ async function endSession() {
 
 // ---------- recording UI ----------
 
+// The status block is rebuilt only when what it shows changes (the timer ticks
+// once a second, the verdict now and then), and the Details disclosure keeps
+// its open/closed state across rebuilds so a click on it is never lost.
+let _recStatusSig = null;
+let _recDetailsOpen = false;
+
+function setRecStatusHtml(sigParts, build) {
+    const sig = JSON.stringify([sigParts, _recDetailsOpen]);
+    if (sig === _recStatusSig) return;
+    _recStatusSig = sig;
+    recordStatus.innerHTML = build();
+    const d = recordStatus.querySelector('details.rec-details');
+    if (d) d.addEventListener('toggle', () => { _recDetailsOpen = d.open; });
+}
+
+function recSentencesHtml(st) {
+    return (st.sentences || [])
+        .map(t => `<div class="rec-sentence">${escapeHtml(t)}</div>`).join('')
+        + (st.hint ? `<div class="rec-hint">${escapeHtml(st.hint)}</div>` : '');
+}
+
+function recDetailsHtml(st) {
+    return `<details class="rec-details"${_recDetailsOpen ? ' open' : ''}>
+        <summary>Details</summary>
+        ${(st.details || []).map(t => `<div>${escapeHtml(t)}</div>`).join('')}
+    </details>`;
+}
+
 function renderRecording() {
     if (recordingState) {
         recordBtn.textContent = '■ Stop';
@@ -1423,51 +1551,31 @@ function renderRecording() {
         if (recordMultibandBtn) recordMultibandBtn.disabled = true;
 
         const r = recordingState;
-        const rate = (r.match_rate ?? 0);
-        const ratePct = (rate * 100).toFixed(1);
-        let rateCls = 'match-rate-good';
-        if (rate < 0.5)      rateCls = 'match-rate-bad';
-        else if (rate < 0.9) rateCls = 'match-rate-warn';
-
-        const label  = r.label_device_id  || '(none)';
-        // Multi-band: show every tagged band; single-source: just the sensor.
-        const sensorsMap = r.sensors || {};
-        const sensorLine = Object.keys(sensorsMap).length > 1
-            ? 'bands: <b>' + Object.entries(sensorsMap)
-                .map(([id, role]) => `${escapeHtml(role)}:${escapeHtml(id)}`).join(', ') + '</b>'
-            : `sensor: <b>${escapeHtml(r.sensor_device_id || '?')}</b>`;
-
-        // At-a-glance capture-quality verdict so a bad take is caught in real time
-        // (data-capture quality is goal #1). The verdict and its
-        // plain reasons come from the server (quality.py), the same code that
-        // persists the final verdict with the take, so they cannot drift.
-        const seen = r.sensor_frames_seen ?? 0;
-        const q = r.quality || { verdict: 'good', reasons: [] };
-        const vCls = QUALITY_CAP_CLS[q.verdict] || 'cap-good';
-        const verdict = (QUALITY_WORD[q.verdict] || 'Good').toUpperCase();
-        const reasonLines = qualityReasonsHtml(q);
-
+        // The verdict, its flags and the length limits come from the server
+        // (quality.py, take_limits.py); OMRecStatus (rec-status.js) turns them
+        // into the big timer, one plain sentence per problem, and the counters
+        // that sit under "Details".
+        const st = OMRecStatus.live(r);
         const nameLine = r.name_adjusted
             ? `<div class="cap-warn-line">Saving as ${escapeHtml(r.filename)} (that name was already used or had characters a file name cannot hold; your earlier take is untouched)</div>`
             : '';
-        recordStatus.innerHTML = `
-            <div class="cap-verdict ${vCls}">capture: ${verdict}</div>
-            ${nameLine}
-            <div>${escapeHtml(r.filename)} · ${r.rows} paired rows · ${r.duration_s}s · win ${r.window_ms ?? 100}ms</div>
-            <div>${sensorLine} &nbsp; label: <b>${escapeHtml(label)}</b></div>
-            <div>matched: ${r.matched ?? 0} / ${seen}
-                 (<span class="${rateCls}">${ratePct}%</span>)
-                 · unpaired sensor: ${r.unpaired_sensor ?? 0}
-                 · label pkts: ${r.label_packets_seen ?? 0}</div>
-            ${reasonLines}
-        `;
+        setRecStatusHtml(['live', st, r.name_adjusted ? r.filename : ''], () => `
+            <div class="rec-live">
+                <div class="rec-timer" aria-label="Recording time">${escapeHtml(st.timer)}</div>
+                <div class="rec-live-text">
+                    <div class="cap-verdict ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}">${escapeHtml(st.headline)}</div>
+                    ${nameLine}
+                    ${recSentencesHtml(st)}
+                </div>
+            </div>
+            ${recDetailsHtml(st)}`);
     } else {
         recordBtn.textContent = '● Record';
         recordBtn.classList.remove('recording');
         if (recordMultibandBtn) recordMultibandBtn.disabled = false;
         // Keep the post-stop result card (verdict + next-take actions) up
         // until the operator acts on it; the next start clears the flag.
-        if (!_postStopCard) recordStatus.textContent = '';
+        if (!_postStopCard) { recordStatus.textContent = ''; _recStatusSig = null; }
     }
 }
 
@@ -1616,25 +1724,30 @@ let _postStopCard = false;
 
 function showPostStopCard(result) {
     // The verdict is computed server-side at stop and persisted with the take
-    // (quality.py); this card just shows what was saved.
-    const rate = result.match_rate ?? 0;
-    const q = result.quality || { verdict: 'good', reasons: [] };
-    const vCls = QUALITY_CAP_CLS[q.verdict] || 'cap-good';
-    const verdict = (QUALITY_WORD[q.verdict] || 'Good').toUpperCase();
-    const flatLine = qualityReasonsHtml(q);
+    // (quality.py); this card just shows what was saved, in plain words.
+    const st = OMRecStatus.saved(result);
     const sessionBit = activeSession
-        ? ` · linked to ${escapeHtml(activeSession.name || activeSession.id)}`
-        : ' · no session (ungrouped)';
+        ? `Linked to ${escapeHtml(activeSession.name || activeSession.id)}.`
+        : 'Not part of a session.';
+    _recStatusSig = null;
     recordStatus.innerHTML = `
-        <div class="cap-verdict ${vCls}">saved: ${verdict}</div>
-        <div>${escapeHtml(result.filename || '?')} · ${result.rows ?? 0} rows · ${result.duration_s ?? 0}s
-             · match ${(rate * 100).toFixed(1)}%${sessionBit}</div>
-        ${flatLine}
+        <div class="rec-live">
+            <div class="rec-timer" aria-label="Length of the saved take">${escapeHtml(st.timer)}</div>
+            <div class="rec-live-text">
+                <div class="cap-verdict ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}">${escapeHtml(st.headline)}</div>
+                ${recSentencesHtml(st)}
+                <div class="rec-hint">${sessionBit}</div>
+            </div>
+        </div>
+        ${recDetailsHtml(st)}
         <div class="rec-next-actions">
             <button class="link" id="rec-next-take">● Record next take</button>
-            <button class="link" id="rec-go-train">⚙ Go train</button>
+            <button class="link" id="rec-show-file" title="Show this take in your file manager">📂 Show file</button>
+            <button class="link" id="rec-go-train"${st.tooShort ? ' title="Too short to train on, so it is not ticked for you"' : ''}>⚙ Go to Train</button>
         </div>`;
     _postStopCard = true;
+    const showBtn = document.getElementById('rec-show-file');
+    if (showBtn) showBtn.onclick = () => revealCaptureFolder(result.filename);
     const nextBtn = document.getElementById('rec-next-take');
     if (nextBtn) nextBtn.onclick = async () => {
         // Re-arm with a suggested take name; the next click on Record starts.
@@ -1657,8 +1770,9 @@ function showPostStopCard(result) {
     };
     const goTrain = document.getElementById('rec-go-train');
     if (goTrain) goTrain.onclick = () => {
-        // Pre-check the fresh capture so Train is one click away.
-        if (result.filename) {
+        // Pre-check the fresh capture so Train is one click away, unless it
+        // is too short to train on (it stays in the list, just not ticked).
+        if (result.filename && !result.too_short) {
             selectedCaptures.add(result.filename);
             updateSelectionStatus();
         }
@@ -1711,8 +1825,9 @@ async function refreshCaptures() {
 // ---------- captures filter bar ----------
 //
 // Session / date / label-source / hands filters compose with AND; within a
-// chip group an empty selection passes all, multiple picks OR together. Junk
-// takes (too short to train on) hide by default. Replaces the old binary
+// chip group an empty selection passes all, multiple picks OR together. Short
+// takes (under the minimum length, see take_limits.py) are tagged "too short"
+// and stay visible unless the user hides them. Replaces the old binary
 // "active session vs show all" view.
 
 const capFilter = {
@@ -1720,12 +1835,12 @@ const capFilter = {
     days: null,               // null | 1 | 7
     labels: new Set(),        // subset of {'quest','lask5'}
     hands: new Set(),         // subset of {1,2}
-    showJunk: false,
+    showShort: true,
 };
 
 const capFilterSession = document.getElementById('cap-filter-session');
-const capFilterJunk    = document.getElementById('cap-filter-junk');
-const capJunkCount     = document.getElementById('cap-junk-count');
+const capFilterShort   = document.getElementById('cap-filter-short');
+const capShortCount    = document.getElementById('cap-short-count');
 
 // Recording-time epoch ms for date logic + display. Falls back to file mtime
 // for legacy captures; created_ms is preferred because cloud-sync
@@ -1734,13 +1849,49 @@ function captureTimeMs(c) {
     return (c.created_ms != null) ? c.created_ms : c.mtime * 1000;
 }
 
-// Junk = not enough paired rows / seconds to train on. rows/duration_s are
-// the new backend fields; size is the fallback for pre-field captures.
-function captureIsJunk(c) {
-    if (c.rows != null && c.rows < 200) return true;
-    if (c.duration_s != null && c.duration_s < 10) return true;
-    if (c.rows == null && c.size_bytes < 51200) return true;
-    return false;
+// Too short to train on: decided by the server from the take's rows and
+// length (take_limits.py), with file size as the fallback for old takes.
+function captureIsShort(c) {
+    return !!c.too_short;
+}
+
+// Plain words for the filters currently narrowing the list, for the
+// "nothing matches" message.
+function describeCaptureFilters() {
+    const parts = [];
+    if (capFilter.session === '__active__') parts.push('the active session only');
+    else if (capFilter.session === '__none__') parts.push('takes that are not in a session');
+    else if (capFilter.session !== '__all__') {
+        const sess = [activeSession, ...pastSessions].find(x => x && x.id === capFilter.session);
+        parts.push('session ' + (sess ? (sess.name || sess.id) : capFilter.session));
+    }
+    if (capFilter.days === 1) parts.push('recorded today');
+    else if (capFilter.days != null) parts.push(`recorded in the last ${capFilter.days} days`);
+    if (capFilter.labels.size) {
+        const names = { quest: 'VR headset', lask5: 'LASK5', webcam: 'webcam' };
+        parts.push('finger data from ' + [...capFilter.labels].map(l => names[l] || l).join(' or '));
+    }
+    if (capFilter.hands.size) {
+        parts.push([...capFilter.hands].sort().map(h => h + (h === 1 ? ' band' : ' bands')).join(' or '));
+    }
+    return parts;
+}
+
+function clearCaptureFilters() {
+    capFilter.days = null;
+    capFilter.labels.clear();
+    capFilter.hands.clear();
+    capFilter.showShort = true;
+    if (capFilterShort) capFilterShort.checked = true;
+    document.querySelectorAll('#cap-filter-date .filter-chip').forEach(b =>
+        b.classList.toggle('on', !b.dataset.days));
+    document.querySelectorAll('#cap-filter-label .filter-chip, #cap-filter-hands .filter-chip').forEach(b =>
+        b.classList.remove('on'));
+    if (capFilterSession && capSessionCombo) {
+        capFilterSession.value = 'All sessions';
+        capSessionCombo.resolve();
+    }
+    renderCaptures(_lastCapturesList);
 }
 
 function applyCaptureFilters(list) {
@@ -1917,8 +2068,8 @@ document.querySelectorAll('#cap-filter-hands .filter-chip').forEach(btn => {
         renderCaptures(_lastCapturesList);
     };
 });
-if (capFilterJunk) capFilterJunk.onchange = () => {
-    capFilter.showJunk = capFilterJunk.checked;
+if (capFilterShort) capFilterShort.onchange = () => {
+    capFilter.showShort = capFilterShort.checked;
     renderCaptures(_lastCapturesList);
 };
 
@@ -1937,25 +2088,26 @@ function renderCaptures(list) {
     }
 
     const filtered = applyCaptureFilters(list);
-    const junkCount = filtered.filter(captureIsJunk).length;
-    const visible = capFilter.showJunk ? filtered : filtered.filter(c => !captureIsJunk(c));
-    if (capJunkCount) capJunkCount.textContent =
-        (!capFilter.showJunk && junkCount) ? `(${junkCount} junk hidden)` : '';
+    const shortCount = filtered.filter(captureIsShort).length;
+    const visible = capFilter.showShort ? filtered : filtered.filter(c => !captureIsShort(c));
+    const shortHidden = capFilter.showShort ? 0 : shortCount;
+    if (capShortCount) capShortCount.textContent =
+        shortHidden ? `(${shortHidden} hidden)` : '';
 
     const sig = JSON.stringify([
         capFilter.session, capFilter.days, [...capFilter.labels],
-        [...capFilter.hands], capFilter.showJunk,
+        [...capFilter.hands], capFilter.showShort,
         activeSession ? activeSession.id : null,
         // meta rides along so an edit re-renders even though mtime is unchanged
         visible.map(c => [c.name, c.mtime, c.session_id || '', c.hands,
                           c.label_source || '', c.rows, c.duration_s, c.meta,
-                          c.quality]),
+                          c.quality, c.too_short, c.short_note]),
     ]);
     if (sig === _capturesSig) { updateSelectionStatus(); return; }
     _capturesSig = sig;
 
     if (!list.length) {
-        capturesBody.innerHTML = '<tr class="empty"><td colspan="7">No captures saved yet.</td></tr>';
+        capturesBody.innerHTML = '<tr class="empty"><td colspan="7">Nothing recorded yet. Press Record to make your first take.</td></tr>';
         updateSelectionStatus();
         return;
     }
@@ -1965,10 +2117,10 @@ function renderCaptures(list) {
         const kb = (c.size_bytes / 1024).toFixed(1);
         const checked = selectedCaptures.has(c.name) ? 'checked' : '';
         const metaCell = renderCaptureMetaSummary(c.meta);
-        const junk = captureIsJunk(c);
-        const trClass = junk ? ' class="junk-row"' : '';
-        const junkTag = junk
-            ? ' <span class="tag" title="too few rows / too short to train on">junk</span>' : '';
+        const short = captureIsShort(c);
+        const trClass = short ? ' class="short-row"' : '';
+        const shortTag = short
+            ? ` <span class="tag tag-short" title="${escapeHtml(c.short_note || 'Too short to train on.')}">too short</span>` : '';
         // 1H/2H badge: was this take one band or a true two-hand capture?
         // (backend list_captures counts left+right roles in the CSV.)
         const hands = c.hands === 2
@@ -1977,7 +2129,7 @@ function renderCaptures(list) {
                 ? '<span class="hands-badge h1" title="single-band capture">1H</span>' : '');
         return `<tr${trClass} data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
-            <td>${hands} ${escapeHtml(c.name)}${junkTag}</td>
+            <td>${hands} ${escapeHtml(c.name)}${shortTag}</td>
             <td>${renderQualityCell(c)}</td>
             <td>${metaCell}</td>
             <td>${kb} KB</td>
@@ -1990,9 +2142,33 @@ function renderCaptures(list) {
             </td>
         </tr>`;
     }).join('');
-    const emptyFiltered = (!visible.length)
-        ? '<tr class="empty"><td colspan="7">No captures match the current filters.</td></tr>' : '';
-    capturesBody.innerHTML = emptyFiltered + rows;
+    // Never an unexplained empty table: say which filters are on, and how many
+    // short takes are tucked away, with a way back in one click.
+    let notice = '';
+    if (!visible.length) {
+        const active = describeCaptureFilters();
+        const why = active.length ? ' Filters on: ' + active.join(', ') + '.' : '';
+        const hid = shortHidden
+            ? ` ${shortHidden} short take${shortHidden === 1 ? ' is' : 's are'} hidden.` : '';
+        notice = `<tr class="empty"><td colspan="7">No takes to show.${escapeHtml(why)}${escapeHtml(hid)} `
+            + (shortHidden ? '<button class="link" data-show-short>Show them</button> ' : '')
+            + (active.length ? '<button class="link" data-clear-filters>Clear filters</button>' : '')
+            + '</td></tr>';
+    } else if (shortHidden) {
+        notice = `<tr class="empty"><td colspan="7">${shortHidden} short take${shortHidden === 1 ? ' is' : 's are'} hidden. `
+            + '<button class="link" data-show-short>Show them</button></td></tr>';
+    }
+    capturesBody.innerHTML = notice + rows;
+    capturesBody.querySelectorAll('button[data-show-short]').forEach(btn => {
+        btn.onclick = () => {
+            capFilter.showShort = true;
+            if (capFilterShort) capFilterShort.checked = true;
+            renderCaptures(_lastCapturesList);
+        };
+    });
+    capturesBody.querySelectorAll('button[data-clear-filters]').forEach(btn => {
+        btn.onclick = clearCaptureFilters;
+    });
     capturesBody.querySelectorAll('button[data-del]').forEach(btn => {
         btn.onclick = async () => {
             const name = btn.dataset.del;
@@ -2040,14 +2216,14 @@ function renderCaptureMetaSummary(meta) {
     if (!meta) return '<span class="cap-meta-summary empty">— click edit to annotate</span>';
     const parts = [];
     if (meta.arm) {
-        const cls = meta.arm === 'left' ? 'arm-left' : 'arm-right';
+        const cls = 'arm-' + (['left', 'right', 'both'].includes(meta.arm) ? meta.arm : 'right');
         parts.push(`<span class="${cls}">${escapeHtml(meta.arm)}</span>`);
     }
     if (meta.gesture) {
         parts.push(`<span class="gesture">${escapeHtml(meta.gesture)}</span>`);
     }
     if (meta.subject) {
-        parts.push(escapeHtml(meta.subject));
+        parts.push(`<span class="participant-code" title="Participant code">${escapeHtml(meta.subject)}</span>`);
     }
     const inline = parts.join(' · ');
     const tagBits = (meta.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
@@ -2069,6 +2245,14 @@ const metaGestureEl = document.getElementById('meta-gesture');
 const metaTagsEl    = document.getElementById('meta-tags');
 const metaNotesEl   = document.getElementById('meta-notes');
 const metaAutoEl    = document.getElementById('meta-auto');
+const metaErrorEl   = document.getElementById('meta-error');
+
+function showMetaError(msg) {
+    if (!metaErrorEl) return;
+    metaErrorEl.textContent = msg || '';
+    metaErrorEl.hidden = !msg;
+}
+wireParticipantWarning(metaSubjectEl, document.getElementById('meta-subject-warn'));
 
 let editingCaptureName = null;
 
@@ -2079,10 +2263,12 @@ async function openMetaModal(name) {
     // doesn't show stale values from the previous capture briefly.
     metaArmEl.value = '';
     metaSubjectEl.value = '';
+    if (metaSubjectEl._refreshWarning) metaSubjectEl._refreshWarning();
     metaGestureEl.value = '';
     metaTagsEl.value = '';
     metaNotesEl.value = '';
     metaAutoEl.textContent = '(loading...)';
+    showMetaError('');
     metaModal.classList.add('open');
     metaModal.setAttribute('aria-hidden', 'false');
 
@@ -2092,6 +2278,7 @@ async function openMetaModal(name) {
         const meta = await r.json();
         metaArmEl.value     = meta.arm || '';
         metaSubjectEl.value = meta.subject || '';
+        if (metaSubjectEl._refreshWarning) metaSubjectEl._refreshWarning();
         metaGestureEl.value = meta.gesture || '';
         metaTagsEl.value    = Array.isArray(meta.tags) ? meta.tags.join(', ') : '';
         metaNotesEl.value   = meta.notes || '';
@@ -2143,7 +2330,7 @@ metaForm.onsubmit = async (e) => {
         closeMetaModal();
         await refreshCaptures();   // re-render the row summary
     } catch (err) {
-        alert('Save failed: ' + (err.message || err));
+        showMetaError('Could not save: ' + (err.message || err));
     }
 };
 

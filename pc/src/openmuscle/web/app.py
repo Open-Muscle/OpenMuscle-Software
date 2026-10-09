@@ -40,7 +40,7 @@ def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
 
     # Explorer / Finder / xdg-open all need *absolute* paths -- they don't
     # inherit our CWD predictably and a relative path like
-    # "data/raw/merged/foo.csv" silently fails with "location not found".
+    # "captures/foo.csv" silently fails with "location not found".
     path = path.resolve()
 
     try:

@@ -128,7 +128,22 @@ header.topbar .topbar-right .stream-link:hover {
 }
 #control-bar .rec-status { flex-basis: 100%; margin-top: 4px; }
 /* Post-stop result card action row (Record next take / Go train) */
-.rec-next-actions { display: flex; gap: 14px; margin-top: 6px; }
+.rec-next-actions { display: flex; gap: 14px; margin-top: 6px; flex-wrap: wrap; }
+
+/* Plain recording status: big timer, one sentence per problem, counters under Details */
+.rec-live { display: flex; align-items: center; gap: 14px; }
+.rec-timer {
+    font: 700 34px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg);
+    min-width: 4.2ch;
+}
+.rec-live-text { min-width: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.rec-sentence { color: var(--fg); font-size: 13px; margin-top: 2px; }
+.rec-hint { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
+.rec-details { margin-top: 6px; font-size: 11px; color: var(--fg-dim); }
+.rec-details > summary { cursor: pointer; }
+.rec-details > summary:hover { color: var(--fg); }
 
 .session-chip {
     font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -631,7 +646,7 @@ main.studio {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-/* ---- Captures filter bar (session / date / label-source / hands / junk) ---- */
+/* ---- Captures filter bar (session / date / label-source / hands / short takes) ---- */
 .filter-bar {
     display: flex;
     flex-wrap: wrap;
@@ -664,7 +679,7 @@ main.studio {
     border-color: var(--accent);
     background: rgba(102,204,255,.08);
 }
-.filter-junk {
+.filter-short {
     display: flex;
     align-items: center;
     gap: 5px;
@@ -672,8 +687,9 @@ main.studio {
     color: var(--fg-dim);
     margin-left: auto;
 }
-/* Junk takes (too few rows / too short) render dimmed when revealed */
-.junk-row td { opacity: .5; }
+/* Short takes (under the minimum length) stay listed, a little dimmed */
+.short-row td { opacity: .65; }
+.tag-short { color: var(--orange); border-color: var(--orange); }
 
 /* Typeahead session picker. An <input list=...> reusing the select
    styling; one instance per panel (captures + models), shared datalist. */
@@ -807,6 +823,8 @@ main.studio {
 
 .cap-meta-summary .arm-left  { color: var(--accent); font-weight: 600; }
 .cap-meta-summary .arm-right { color: var(--accent-2); font-weight: 600; }
+.cap-meta-summary .arm-both   { color: var(--green); font-weight: 600; }
+.cap-meta-summary .participant-code { color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cap-meta-summary .gesture   { color: var(--fg); }
 .cap-meta-summary .tag {
     display: inline-block;
@@ -920,6 +938,35 @@ main.studio {
 }
 
 .form-row.meta-auto-block label { align-self: start; padding-top: 4px; }
+
+/* Field + helper text stacked in one grid cell (participant code). */
+.form-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.form-field input { width: 100%; }
+.form-hint { font-size: 11px; color: var(--fg-faint); line-height: 1.35; }
+.form-hint.warn { color: var(--orange); }
+
+/* Inline error shown inside a modal instead of a browser alert. */
+.form-error {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--red);
+    border-radius: 4px;
+    color: var(--red);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+.form-error[hidden], .form-hint[hidden] { display: none; }
+
+/* "More details" disclosure in the session form. */
+.more-details { margin: 12px 0 0; border-top: 1px solid var(--border); padding-top: 8px; }
+.more-details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg-dim);
+    padding: 2px 0;
+}
+.more-details > summary:hover { color: var(--fg); }
 
 .meta-readonly {
     background: var(--bg);
