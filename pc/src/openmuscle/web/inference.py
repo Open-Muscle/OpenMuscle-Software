@@ -30,7 +30,7 @@ class InferenceEngine:
 
     def __init__(self, model_path: str, expected_features: Optional[int] = None):
         """Load a model. `expected_features` is the LOAD-TIME feature-count
-        guard (board #0311.e): when given (= the live band's cell count), a
+        guard: when given (= the live band's cell count), a
         model trained on a different sensor width is REFUSED with a clear
         message instead of loading and then silently predicting nothing every
         frame (the stale-64-feature-model trap: predict() returns None on

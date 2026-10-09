@@ -1,5 +1,5 @@
 """Tests for openmuscle.lask5_labels: LASK5 pistons + thumb joystick -> the
-ratified Tier-1 canonical lbl_flex_* (DATA_SCHEMA.md #0302), with the open details
+ratified Tier-1 canonical lbl_flex_* (docs/data-schema.md), with the open details
 (piston order, calibration, thumb) as parameters."""
 
 from openmuscle import lask5_labels as ll

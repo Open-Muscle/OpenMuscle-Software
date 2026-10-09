@@ -91,7 +91,7 @@ class TestCaptureWriterLazyHeader:
 
 class TestCaptureWriterV2Golden:
     """The PC CaptureWriter v2 output must match the schema-v2 byte golden
-    (OpenMuscle-Connect tools/make_golden_csv_v2.py, board #0073) byte-for-byte,
+    (OpenMuscle-Connect tools/make_golden_csv_v2.py) byte-for-byte,
     so the phone and PC writers stay interchangeable. Features are flattened with
     the canonical row-major helper (flat_sensor_values, fixed in 0bbd6e4)."""
 

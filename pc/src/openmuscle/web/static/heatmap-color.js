@@ -1,8 +1,8 @@
 // Shared FlexGrid heatmap color ramp.
 //
 // SINGLE SOURCE OF TRUTH for the band-heatmap colors, so the main dashboard
-// (app.js) and the OBS /stream view (stream.js) can never drift apart. Tory
-// glances between the live dashboard and the streamed window; matching colors
+// (app.js) and the OBS /stream view (stream.js) can never drift apart. Viewers
+// glance between the live dashboard and the streamed window; matching colors
 // are the whole point of extracting this.
 //
 // Plain script (NOT an ES module) exposing window.OMHeatColor, because app.js

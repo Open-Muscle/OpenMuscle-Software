@@ -1,4 +1,4 @@
-"""Flat-cell dud detection (board #0311.4 / #0314.2): the exact dud capture
+"""Flat-cell dud detection: the exact dud capture
 capture_1779731309 (band not engaged; 50/60 cells with range < 5 yet a
 normal-looking file) MUST be flagged, and an engaged take must not be."""
 

@@ -1,9 +1,9 @@
-// OpenMuscle OBS stream view (Tory's play-a-game-and-capture session).
+// OpenMuscle OBS stream view.
 //
 // DISPLAY ONLY. This page connects to /ws/live and renders ENTIRELY from the
 // server snapshot: the two band heatmaps, a big FRAMES CAPTURED counter, and a
 // virtual controller. It is captured as a window (or browser source) in OBS
-// while Tory plays a game wearing the forearm bracelets.
+// while a player plays a game wearing the forearm bracelets.
 //
 // HARD ARCHITECTURE RULE: this file MUST NOT call navigator.getGamepads and
 // MUST NOT open /ws/gamepad. The main dashboard is the sole controller reader;

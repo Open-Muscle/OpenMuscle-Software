@@ -1,4 +1,4 @@
-"""Restart-safety tests (board #0314.1 / #0311.d-e): per-hand models auto-restore
+"""Restart-safety tests: per-hand models auto-restore
 from the registry on server start, and the load-time feature-count guard refuses
 models trained on a different sensor layout (the stale-64-feature trap)."""
 

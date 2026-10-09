@@ -15,9 +15,7 @@
 //     OMHandViewer.snapshot()                   // PNG data URL, all views
 //     OMHandViewer.isReady()
 //
-// PER-HAND SUBVIEWS (Tory: "currently it spins both hands... maybe two
-// windows for each and the ability to rotate and zoom 3d. 1 and two handed
-// version too"): the old design put both hands in one scene under a single
+// PER-HAND SUBVIEWS: the old design put both hands in one scene under a single
 // always-auto-spinning orbit camera with no zoom. Now each VISIBLE hand gets
 // its own sub-viewport inside the container: two side by side when both
 // hands stream, one full width when only one does, re-splitting live as
@@ -72,7 +70,7 @@ const DEFAULT_PITCH = -0.25;
 const ZOOM_MIN = 0.35;          // wheel zoom clamps AROUND the fit distance,
 const ZOOM_MAX = 4.0;           // so "sensible" tracks whatever hand size fit
 const IDLE_DRIFT = 0.05;        // rad/s pre-interaction drift (vs the old
-                                // 0.005 rad/FRAME spin Tory complained about)
+                                // 0.005 rad/FRAME spin, which was too fast)
 const REFRAME_FRAC = 0.15;      // material size change that triggers a refit
 
 const VIEW_SIDES = ['left', 'right'];

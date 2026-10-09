@@ -1,15 +1,15 @@
 """Madgwick AHRS orientation fusion (IMU-only: gyro + accel, no magnetometer).
 
-Hub-side fusion for the orientation-viz workstream (overseer #0201 decision 1:
+Hub-side fusion for the orientation-viz workstream (design decision:
 device stays ~22Hz, orientation comes from a hub-side Madgwick filter). This is
 the CANONICAL, tested reference of the locked algorithm; the PC (JS) and phone
-(Kotlin) gizmos port the same math so all hubs agree (board #0206).
+(Kotlin) gizmos port the same math so all hubs agree.
 
 update(q, gyro_rad_s, accel, dt, beta) -> new quaternion (w, x, y, z).
 
 INPUTS:
 - gyro in RAD/S. The device emits raw counts; converting counts -> rad/s needs the
-  per-variant SCALE (TOKMAS), a firmware dependency (board #0200). Pass 0 gyro to
+  per-variant SCALE (TOKMAS), a firmware dependency. Pass 0 gyro to
   run ACCEL-ONLY (the filter still levels to gravity for pitch/roll; yaw is then
   unobservable and holds). The viz uses accel-only until the scale lands.
 - accel in any unit (normalized internally). The direction is what matters.

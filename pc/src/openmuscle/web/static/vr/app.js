@@ -811,7 +811,7 @@ function initScene() {
     // a recording is active, WHEREVER the wearer looks. The menu's REC/STOP
     // button + header live in world space, so a wearer who isn't facing the
     // panels (e.g. the headset person while the PC operator drives) had no
-    // steady indication a take was rolling (board #0314.8 / Tory live ask).
+    // steady indication a take was rolling.
     recPillCanvas = document.createElement('canvas');
     recPillCanvas.width = 640; recPillCanvas.height = 160;
     recPillCtx = recPillCanvas.getContext('2d');
@@ -3361,17 +3361,16 @@ function makeImuBand() {
     return band;
 }
 
-// --- Orientation gizmo (locked board #0206 convention) ----------------------
+// --- Orientation gizmo (locked convention) ----------------------
 // A 2D XYZ axis gizmo so the VR orientation widget is pixel-consistent with the
-// phone's Compose Canvas gizmo. Convention (locked #0206, phone signed off
-// #0222): world frame +X right / +Y up / +Z toward viewer; axis colors X red
+// phone's Compose Canvas gizmo. Convention (locked, shared with the phone app): world frame +X right / +Y up / +Z toward viewer; axis colors X red
 // ef4444 / Y green 22c55e / Z blue 3b82f6; orthographic -Z projection (drop the
 // rotated z, screen y points up); vectors from center, len 0.4*min(w,h);
 // painter-sorted far-to-near by projected z so the nearer axis draws on top.
 // Fed the accel-tilt orientation (interim, correct pitch/roll, no yaw) until
-// firmware states the gyro scale + mounting (#0200); the SAME quaternion will
+// firmware states the gyro scale + mounting; the SAME quaternion will
 // then come from the Madgwick filter (fusion.py) with NO change to this draw.
-// THIS is the JS reference phone mirrors in Kotlin (#0206 / #0222).
+// THIS is the JS reference phone mirrors in Kotlin.
 const _GIZMO_AXES = [
     { v: [1, 0, 0], color: '#ef4444', label: 'X' },
     { v: [0, 1, 0], color: '#22c55e', label: 'Y' },
@@ -3438,7 +3437,7 @@ function ensureBand(deviceId) {
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BAND_W, BAND_H),
         new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
     group.add(mesh);
-    // Orientation widget: the locked #0206 XYZ axis gizmo (pixel-consistent with
+    // Orientation widget: the locked XYZ axis gizmo (pixel-consistent with
     // the phone) fed by the band's accel-tilt. Replaces the older tilting box.
     const giz = makeGizmoPanel();
     giz.mesh.position.set(0, -(BAND_H * 0.5 + 0.04), 0.01);
@@ -3737,7 +3736,7 @@ function drawHeader(text, isRecording, qualityColor) {
 // normalized accel is gravity-up in the band frame, so the band's normal follows
 // it (correct pitch/roll, no gyro-scale dependency; yaw stable). Same axis
 // mapping as the desktop imu-viewer for cross-hub consistency (the mapping is the
-// one tunable to align with phone, board #0197).
+// one tunable to align with phone).
 function updateBandImu(rec, imu) {
     if (!rec.giz || !imu) return;
     const a = imu.accel;

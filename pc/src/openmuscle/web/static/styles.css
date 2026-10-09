@@ -61,7 +61,7 @@ header.topbar .topbar-right {
     align-items: center;
 }
 /* Unobtrusive link to the compact OBS stream view (opens in its own window so
-   Tory can window-capture it in OBS during a play-and-capture session). */
+   it can be window-captured in OBS during a play-and-capture session). */
 header.topbar .topbar-right .stream-link {
     font-size: 12px;
     color: var(--fg-dim);
@@ -78,7 +78,7 @@ header.topbar .topbar-right .stream-link:hover {
 
 /* ===== Sticky control bar (Record | Predict | Session | signal pills) =====
    The record -> train -> predict loop stays reachable while scrolled anywhere
-   (Tory's UI-overhaul ask). Full-width children (.record-plan, .record-advanced,
+  . Full-width children (.record-plan, .record-advanced,
    .rec-status) wrap onto their own rows via flex-basis: 100%. */
 #control-bar {
     position: sticky; top: 0; z-index: 40;
@@ -253,7 +253,7 @@ main.studio {
 
 /* Stage 1: LIVE */
 
-/* Two columns now (Tory's redesign): the standalone Devices rail is gone;
+/* Two columns now: the standalone Devices rail is gone;
    its 220px folded into the heatmap area, which hosts the band rows
    ([card | heatmap]) plus available sources. Comparator untouched. */
 .live-grid {
@@ -673,8 +673,7 @@ main.studio {
 /* Junk takes (too few rows / too short) render dimmed when revealed */
 .junk-row td { opacity: .5; }
 
-/* Typeahead session picker (wave 2 of Tory's UI ask: type the start of a
-   session name, matches drop down). An <input list=...> reusing the select
+/* Typeahead session picker. An <input list=...> reusing the select
    styling; one instance per panel (captures + models), shared datalist. */
 .session-combo { width: 160px; }
 /* Free text that matches no session: the filter falls back to All so rows
@@ -705,8 +704,7 @@ main.studio {
 }
 
 /* ---- device status (inside band cards) ----
-   The old #device-list styles are gone with the Devices column (Tory:
-   redundant); .device-status now renders inside each band card's
+   The old #device-list styles are gone with the Devices column; .device-status now renders inside each band card's
    .band-stats via renderDeviceStatus(). */
 
 .device-status {
@@ -1083,8 +1081,8 @@ button.primary.recording {
     font-weight: 600;
 }
 
-/* Chosen-model highlight (wave 2, Tory: "make it clear and highlighted
-   which one(s) are chosen"). Rows loaded in an engine slot pin to the top
+/* Chosen-model highlight (make it clear and highlighted
+   which one(s) are chosen). Rows loaded in an engine slot pin to the top
    of the table with a green accent border + tint + solid slot chips, so the
    running model(s) read at a glance under any filter combination. */
 #models-table tr.model-active-row td { background: rgba(44, 209, 106, 0.07); }
@@ -1471,7 +1469,7 @@ footer {
 /* ---- IMU band-orientation widget ----
    Single instance; app.js renderImuViewer() moves it into the .imu-slot
    under the band card of the flexgrid it is showing, and parks it in
-   #imu-dock while no band row exists (Tory's redesign). */
+   #imu-dock while no band row exists. */
 .imu-dock { margin-top: 10px; }
 .imu-head {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px;
@@ -1555,7 +1553,7 @@ body.debug .debug-only { display: block; }
     white-space: pre-wrap; word-break: break-word;
 }
 
-/* Recording capture-quality verdict (board #0297: catch a bad take in real time) */
+/* Recording capture-quality verdict */
 .cap-verdict {
     display: inline-block; font-weight: 700; font-size: 12px;
     padding: 2px 8px; border-radius: 4px; margin-bottom: 4px; letter-spacing: .03em;
@@ -1566,9 +1564,9 @@ body.debug .debug-only { display: block; }
 .cap-warn-line { color: var(--orange); font-size: 12px; margin-top: 2px; }
 
 /* Multi-band LIVE band rows: one [band card | heatmap] row per streaming
-   flexgrid (Tory's redesign: the flexgrid square sits to the LEFT of its own
-   heatmap, in line). Two-hand sessions tile the rows side by side (board
-   #0304); the Stack toggle puts one row above the other. */
+   flexgrid (the flexgrid square sits to the LEFT of its own
+   heatmap, in line). Two-hand sessions tile the rows side by side;
+   the Stack toggle puts one row above the other. */
 .heatmap-grids {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));

@@ -1,4 +1,4 @@
-"""Training provenance + the PC train trap (board #0314-adjacent).
+"""Training provenance + the PC train trap.
 
 Two guarantees from train_from_captures:
 
@@ -13,7 +13,7 @@ Two guarantees from train_from_captures:
    the per-band router can never run (separate-model-per-hand needs one
    single-arm model per hand). It stays allowed for CLI/offline analysis but
    the result payload and log buffer must say so out loud; the silent version
-   of this cost Tory two capture sessions of garbage ghosts.
+   of this cost two capture sessions of garbage ghosts.
 
 Uses tiny synthetic schema-v2 CSVs (6 features, 2 labels, 4-tree forests) so
 the whole file runs in a few seconds.
@@ -60,7 +60,7 @@ def test_train_stamps_session_provenance(tmp_path, monkeypatch):
     s = _state(tmp_path, 53880)
     _write_v2_csv(s.captures_dir / "take1.csv")
     s.active_session = {"id": "s_stamp01", "name": "stamp check",
-                        "wearer": "tory"}
+                        "wearer": "wearer-a"}
 
     result = s.train_from_captures(["take1.csv"], n_estimators=4,
                                    activate=True, role="left")
@@ -69,7 +69,7 @@ def test_train_stamps_session_provenance(tmp_path, monkeypatch):
     meta = json.loads(meta_path.read_text())
     assert meta["session_id"] == "s_stamp01"
     assert meta["session_name"] == "stamp check"
-    assert meta["wearer"] == "tory"
+    assert meta["wearer"] == "wearer-a"
     assert meta["captures"] == ["take1.csv"]
     assert meta["metrics"]["role"] == "left"
 
@@ -133,7 +133,7 @@ def test_single_role_roleless_train_has_no_warning(tmp_path, monkeypatch):
 
 
 def test_start_session_warns_on_wearer_mismatch(tmp_path, monkeypatch):
-    """The CLARK trap: a restart auto-restored the previous wearer's models
+    """The stale-model trap: a restart auto-restored the previous wearer's models
     as newest-on-disk right before a new wearer's session (cross-wearer
     inference measured ~47x worse). start_session must compare each loaded
     per-hand engine's stamped wearer against the session's and warn."""
@@ -142,25 +142,25 @@ def test_start_session_warns_on_wearer_mismatch(tmp_path, monkeypatch):
     _write_v2_csv(s.captures_dir / "take1.csv")
 
     # Train + activate a left-hand model stamped with a DIFFERENT wearer.
-    s.active_session = {"id": "s_clark01", "name": "clark take",
-                        "wearer": "clark"}
+    s.active_session = {"id": "s_other01", "name": "other take",
+                        "wearer": "wearer-b"}
     s.train_from_captures(["take1.csv"], n_estimators=4,
                           activate=True, role="left")
     s.active_session = None
 
-    session = s.start_session(name="tory take", wearer="tory")
+    session = s.start_session(name="a take", wearer="wearer-a")
     assert session["model_wearer_mismatch"] == ["left"]
     assert any(e["level"] == "WARN"
-               and "left-hand model was trained on wearer 'clark'" in e["message"]
+               and "left-hand model was trained on wearer 'wearer-b'" in e["message"]
                for e in s.log_buffer.entries())
     s.end_session()
 
     # Matching wearer (case/whitespace-insensitive): no mismatch, no warning.
-    session2 = s.start_session(name="clark again", wearer="  Clark ")
+    session2 = s.start_session(name="b again", wearer="  Wearer-B ")
     assert session2["model_wearer_mismatch"] == []
     s.end_session()
 
     # Unstamped model (no wearer in metadata): defensive no-op.
     s.engines["left"].metadata.pop("wearer", None)
-    session3 = s.start_session(name="anon model", wearer="tory")
+    session3 = s.start_session(name="anon model", wearer="wearer-a")
     assert session3["model_wearer_mismatch"] == []

@@ -1,4 +1,4 @@
-"""Gamepad label ingest (Tory: plug in a USB controller, capture its inputs).
+"""Gamepad label ingest.
 
 A browser Gamepad-API frame pushed over /ws/gamepad must synthesize a
 device_type="gamepad" label device that flows through the same packet path as

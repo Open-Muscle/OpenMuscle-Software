@@ -45,8 +45,7 @@
 
     <!-- Sticky control bar: the whole record -> train -> predict loop lives up
          here so Record, Predict and session context stay reachable while
-         scrolled anywhere (Tory's UI-overhaul ask: one Record button whose mode
-         is derived from what's streaming, plus always-visible Predict).
+         scrolled anywhere.
          app.js renderRecordPlan() drives the plan line + button state per tick. -->
     <div id="control-bar">
         <div class="cb-group cb-record">
@@ -92,7 +91,7 @@
         <!-- ============================================================
              STAGE 1 — LIVE (hero)
              Heatmap band rows + GT-vs-Predicted comparator + joystick.
-             The standalone Devices column is gone (Tory: redundant); each
+             The standalone Devices column is gone; each
              band's card sits to the LEFT of its own heatmap instead.
              ============================================================ -->
         <section id="stage-live" class="stage stage-live">
@@ -104,7 +103,7 @@
             <div class="live-grid">
                 <!-- Heatmap area (left, the hero). One BAND ROW per streaming
                      flexgrid: [band card | its heatmap], so device info lives
-                     WITH the visualization (Tory's redesign). app.js
+                     WITH the visualization. app.js
                      drawHeatmaps() builds the row scaffold; renderBandCards()
                      fills the cards from the WS snapshot's `discovery` array. -->
                 <div class="heatmap-hero">
@@ -214,7 +213,7 @@
                             </div>
                         </div>
                         <!-- LASK5 status line: device info lives WITH the
-                             visualization (Tory's redesign). app.js
+                             visualization. app.js
                              renderLabelStatusLines() fills it; hidden when
                              empty via CSS :empty. -->
                         <div id="lask-status-line" class="device-status-line"></div>
@@ -232,8 +231,8 @@
                             <span class="hv-hint">drag rotate | wheel zoom</span>
                         </div>
                         <!-- Quest hand status line, under the legend: e.g.
-                             "quest-left 24 Hz | quest-right 25 Hz" (Tory's
-                             redesign: device info lives WITH the visualization).
+                             "quest-left 24 Hz | quest-right 25 Hz" (device
+                             info lives WITH the visualization).
                              app.js renderLabelStatusLines() fills it. -->
                         <div id="hand-status-line" class="device-status-line"></div>
                     </div>
@@ -311,9 +310,7 @@
 
             <!-- Shared typeahead options for BOTH session pickers (captures +
                  models). One datalist, two inputs; app.js rebuilds it
-                 sig-gated on the session list (wave 2 of Tory's UI ask:
-                 "type the start of a session name and have them show up in
-                 a drop down"). -->
+                 sig-gated on the session list. -->
             <datalist id="session-datalist"></datalist>
 
             <div class="data-grid">
@@ -326,7 +323,7 @@
                             <button id="captures-open-folder" class="link" title="Open the captures folder in your file manager">📂 Open folder</button>
                         </div>
                     </div>
-                    <!-- Filter bar (Tory's UI-overhaul ask): compose session /
+                    <!-- Filter bar: compose session /
                          date / label-source / hands filters with AND; junk
                          takes hidden by default. app.js applyCaptureFilters(). -->
                     <div id="captures-filterbar" class="filter-bar">
@@ -382,8 +379,7 @@
                         <h3>Models</h3>
                         <span id="models-count" class="sel-status"></span>
                     </div>
-                    <!-- Models filter bar (wave 2 of Tory's UI ask: "models
-                         filterable as well"): session typeahead + role +
+                    <!-- Models filter bar: session typeahead + role +
                          wearer chips, AND-composed. Replaces the old binary
                          session scope + "show all N models" toggle row; the
                          picker's "All sessions" entry covers that job.
@@ -501,7 +497,7 @@
                 </div>
                 <div class="form-row">
                     <label for="sess-wearer">Wearer</label>
-                    <input id="sess-wearer" type="text" placeholder="who's wearing the band(s), e.g. Tory">
+                    <input id="sess-wearer" type="text" placeholder="who's wearing the band(s), e.g. W01">
                 </div>
                 <div class="form-row">
                     <label for="sess-take">Take #</label>
@@ -532,7 +528,7 @@
                 </div>
                 <div class="form-row">
                     <label for="sess-subject">Subject</label>
-                    <input id="sess-subject" type="text" placeholder="e.g. Tory / S001 / self">
+                    <input id="sess-subject" type="text" placeholder="e.g. S001 / self">
                 </div>
                 <div class="form-row">
                     <label for="sess-gestures">Planned gestures</label>
@@ -607,7 +603,7 @@
                 <div class="form-row">
                     <label for="meta-subject">Subject</label>
                     <input id="meta-subject" name="subject" type="text"
-                           placeholder="e.g. S001 / Alex / self">
+                           placeholder="e.g. S001 / self">
                 </div>
                 <div class="form-row">
                     <label for="meta-gesture">Gesture / motion</label>

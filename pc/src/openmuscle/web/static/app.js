@@ -2,7 +2,7 @@
 // Single-page vanilla JS. No bundler, no framework.
 
 const wsStatus    = document.getElementById('ws-status');
-// #device-list is gone (Tory: the standalone Devices column was redundant);
+// #device-list is gone;
 // band cards next to each heatmap + label status lines replaced it.
 const recordBtn   = document.getElementById('record-btn');
 // The dedicated multiband/bilateral buttons are gone (one Record button whose
@@ -22,8 +22,8 @@ const checkAll    = document.getElementById('captures-check-all');
 const modelsBody  = document.getElementById('models-body');
 const modelsCount = document.getElementById('models-count');
 const openFolderBtn = document.getElementById('captures-open-folder');
-// Sticky control bar (Tory's UI-overhaul: one Record button + derived plan,
-// always-visible Predict, compact session chip)
+// Sticky control bar: one Record button + derived plan, always-visible
+// Predict, compact session chip
 const controlBar          = document.getElementById('control-bar');
 const labelSourceSelect   = document.getElementById('label-source-select');
 const recordPlanEl        = document.getElementById('record-plan');
@@ -125,10 +125,9 @@ function handleTick(msg) {
     }
     renderActiveSession();
     // Draw a pressure grid for EVERY streaming flexgrid (both hands at once in a
-    // two-hand session), not just the selected one (board #0304). drawHeatmaps
+    // two-hand session), not just the selected one. drawHeatmaps
     // builds the band-row scaffold FIRST so renderBandCards can fill the card
-    // to the left of each heatmap (Tory's redesign: no standalone Devices
-    // column; device info lives with the visualization).
+    // to the left of each heatmap.
     drawHeatmaps();
     renderBandCards(msg.discovery || []);
     renderAvailableSources(msg.discovery || []);
@@ -174,7 +173,7 @@ function renderImuViewer() {
         return;
     }
     // Re-home the single widget under the band card of the flexgrid it is
-    // showing (Tory's redesign: device info lives WITH the visualization).
+    // showing.
     // appendChild MOVES the node, keeping the WebGL canvas alive; we only
     // touch the DOM when the target slot actually changes. Fallback: no band
     // row yet (imu frames before the first matrix frame) parks it in the dock
@@ -237,7 +236,7 @@ function renderHandViewer(questDevs, inference) {
     if (liveGrid) liveGrid.classList.add('hand-mode');
     window.OMHandViewer.setVisible(true);
 
-    // BOTH hands (Tory, Clark session): route each quest device to its side's
+    // BOTH hands: route each quest device to its side's
     // viewer slot. A hand that stopped updating (tracking lost / left the view)
     // is hidden rather than frozen -- a stale skeleton reads as "still fine".
     const byDev = (inference && inference.by_device) || {};
@@ -279,7 +278,7 @@ function renderHandViewer(questDevs, inference) {
 
 // ---------- label-device status lines ----------
 //
-// Tory's redesign: label devices lost their Devices-column entries; their
+// Redesign note: label devices lost their Devices-column entries; their
 // info now sits UNDER their own visualization instead. Quest hands under the
 // hand-viewer legend, LASK5 under the piston cluster, gamepad beside
 // #gamepad-panel (that panel's internals belong to gamepad.js; ours is a
@@ -315,7 +314,7 @@ function renderLabelStatusLines(lask) {
 
 // ---------- native V4 discovery: band cards + available sources ----------
 //
-// Tory's redesign: the standalone Devices column was redundant, so device
+// Redesign note: the standalone Devices column was redundant, so device
 // info now lives WITH each visualization. Streaming flexgrids get a card to
 // the LEFT of their own heatmap (renderBandCards fills the row scaffold that
 // drawHeatmaps builds); discovered sources with no heatmap yet stay as
@@ -508,7 +507,7 @@ function renderAvailableSources(discovery) {
 
     // Rebuild the list ONLY when its meaningful state changes, not every WS tick.
     // Rebuilding ~5x/sec destroyed the role <select> mid-interaction, so it
-    // "glitched" and could not be used (Tory). `age` is excluded from the
+    // "glitched" and could not be used (user report). `age` is excluded from the
     // signature (it ticks every frame) and refreshed in place instead, so an open
     // dropdown / focused control is never blown away.
     const sig = JSON.stringify(avail.map(d => [
@@ -746,8 +745,7 @@ let heatmapVmax = HEATMAP_VMAX_DEFAULT;
 
 // Render one BAND ROW per streaming flexgrid, in a STABLE order (left, then
 // right, then others) so the two hands never swap positions. Each row is
-// [band card | its heatmap] (Tory's redesign: the flexgrid square sits to
-// the left of its heatmap, in line); renderBandCards fills the card, this
+// [band card | its heatmap]; renderBandCards fills the card, this
 // draws the canvas. The per-device canvases are REUSED across ticks exactly
 // as before; only the wrapping row scaffold changed.
 function drawHeatmaps() {
@@ -1341,8 +1339,7 @@ async function openSessionModal() {
     sessionModal.classList.add('open');
     sessionModal.setAttribute('aria-hidden', 'false');
     // Prefill wearer / arm / labeler from the most recent session and bump the
-    // take number, so a repeat session is one edit (Tory can't type well in-VR,
-    // and this halves the friction on the PC too). Only fills empty fields.
+    // take number, so a repeat session is one edit. Only fills empty fields.
     try {
         const r = await fetch('/api/sessions');
         if (r.ok) {
@@ -1440,13 +1437,13 @@ function renderRecording() {
             : `sensor: <b>${escapeHtml(r.sensor_device_id || '?')}</b>`;
 
         // At-a-glance capture-quality verdict so a bad take is caught in real time
-        // (data-capture quality is goal #1, board #0297) instead of after the fact.
+        // (data-capture quality is goal #1) instead of after the fact.
         // Joints dropping mid-capture pad/truncate the label row -> a quality hit.
         const widthMiss = r.label_width_mismatch ?? 0;
         const seen = r.sensor_frames_seen ?? 0;
         // band_flat (server-side): most cells never moved = band not engaged.
         // The capture_1779731309 dud class -- looks like a normal file, trains
-        // nothing (board #0311.4).
+        // nothing.
         const bandFlat = r.band_flat === true;
         let verdict = 'GOOD', vCls = 'cap-good';
         if (bandFlat || rate < 0.5 || (seen > 20 && (r.matched ?? 0) === 0)) {
@@ -1508,7 +1505,7 @@ async function readError(r) {
 // ---------- record plan: one Record button, derived mode ----------
 //
 // The three record buttons (single / multi-band / two-hand) collapsed into ONE
-// Record button (Tory's UI-overhaul ask). The mode is derived per tick from
+// Record button. The mode is derived per tick from
 // the Labels pick + which devices are streaming; #record-plan previews the
 // derived call so the operator sees exactly what one click will do. Adding a
 // future label device (keyboard/controller) = one <option> + one branch here.
@@ -1836,7 +1833,7 @@ async function refreshCaptures() {
 // Session / date / label-source / hands filters compose with AND; within a
 // chip group an empty selection passes all, multiple picks OR together. Junk
 // takes (too short to train on) hide by default. Replaces the old binary
-// "active session vs show all" view (Tory's UI-overhaul ask: filters).
+// "active session vs show all" view.
 
 const capFilter = {
     session: '__all__',       // '__active__' | '__all__' | '__none__' | <session_id>
@@ -1851,8 +1848,8 @@ const capFilterJunk    = document.getElementById('cap-filter-junk');
 const capJunkCount     = document.getElementById('cap-junk-count');
 
 // Recording-time epoch ms for date logic + display. Falls back to file mtime
-// for legacy captures; created_ms is preferred because this checkout syncs
-// via OneDrive, which can rewrite mtimes.
+// for legacy captures; created_ms is preferred because cloud-sync
+// tools can rewrite mtimes.
 function captureTimeMs(c) {
     return (c.created_ms != null) ? c.created_ms : c.mtime * 1000;
 }
@@ -1886,8 +1883,8 @@ function applyCaptureFilters(list) {
 
 // ---------- shared session typeahead (captures + models pickers) ----------
 //
-// Wave 2 of Tory's UI ask: "type the start of a session name and have them
-// show up in a drop down". A plain <input> + one shared <datalist> gives
+// Type the start of a session name and have matches show up in a drop
+// down. A plain <input> + one shared <datalist> gives
 // native prefix/substring matching with zero dependencies; both panels
 // (captures + models) wire their own input via wireSessionCombo below.
 
@@ -2282,7 +2279,7 @@ checkAll.onchange = () => {
 
 // ---------- training ----------
 
-// PC TRAIN TRAP (board #0314-adjacent): a role-less /api/train on a two-hand
+// PC TRAIN TRAP: a role-less /api/train on a two-hand
 // capture builds the 120-feature bilateral-pivot model, which the per-band
 // router can never run (separate-model-per-hand needs one 60-feature model
 // per hand). The load guard rightly refuses it, so training LOOKED fine
@@ -2532,8 +2529,7 @@ let _modelsSig = null;
 
 // One <tr> for the models table. pinned=true rows are the CHOSEN models
 // (occupying an engine slot): strong highlight class + solid green slot
-// chips, so which model(s) are running is impossible to miss (Tory's exact
-// pain from wave 2).
+// chips, so which model(s) are running is impossible to miss.
 function modelRowHtml(m, pinned) {
     const metrics = m.metrics || {};
     const r2  = (metrics.r2 ?? null);
@@ -2679,8 +2675,8 @@ function pistonValText(v) {
     return (v <= 1 && v !== Math.floor(v)) ? v.toFixed(2) : String(v);
 }
 
-// BAR fill fraction. LASK5 wire convention (board #0317): pressed piston ->
-// 0.0 on the wire, so 1.0 = released = finger extended. Tory reads "bar
+// BAR fill fraction. LASK5 wire convention: pressed piston ->
+// 0.0 on the wire, so 1.0 = released = finger extended. Users read "bar
 // filled = finger curled", so wire-space (0..1) values invert for DISPLAY
 // only; the .piston-val text keeps the raw wire number so CSV/log
 // cross-checks still match. Legacy raw ADC (>1.5) keeps the direct

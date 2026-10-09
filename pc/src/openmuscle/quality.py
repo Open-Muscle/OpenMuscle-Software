@@ -1,6 +1,6 @@
 """Capture-quality primitives: cell-engagement tracking.
 
-The dud-take trap (board #0311.4): capture_1779731309 looks like a normal file
+The dud-take trap: capture_1779731309 looks like a normal file
 (plausible per-cell baselines, paired labels) but 50/60 cells have a value RANGE
 under 5 counts across the whole take -- the band was effectively not being worn /
 not engaged, so the file trains nothing. Match-rate can't catch this (labels

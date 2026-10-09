@@ -92,7 +92,7 @@ class DeviceInfo:
     # Gamepad structure carried alongside the flat last_values (axes+buttons)
     # so a snapshot consumer can split axes vs buttons and pick the xbox-vs-bars
     # render without re-deriving it. Populated only for device_type=="gamepad".
-    # The OBS /stream view (Tory's play-a-game-and-capture page) reads these to
+    # The OBS /stream view reads these to
     # draw the virtual controller purely from the snapshot, without touching the
     # local Gamepad API (that would double-send label frames and corrupt the take).
     gp_axis_count: int = 0
@@ -226,7 +226,7 @@ class ActiveCapture:
     window_s: float
     matcher: TemporalMatcher
     # Hub-assigned role for the PRIMARY sensor source in schema-v2 captures (one
-    # of the lowercase wire tokens left/right/labeler; board #0091).
+    # of the lowercase wire tokens left/right/labeler).
     role: str = "left"
     # All recorded bands as {device_id: role}. Single-source = one entry (the
     # primary). Multi-band capture adds more (each a feature source tagged with
@@ -264,12 +264,12 @@ class ActiveCapture:
     # derive (forearm_roll_deg, palm_up) from the matched hand's joints and write
     # the two columns. Omitted (flag False) when no Quest labeler is present.
     with_forearm: bool = False
-    # Canonical lbl_* label columns (DATA_SCHEMA.md #0302), derived at capture
+    # Canonical lbl_* label columns (docs/data-schema.md), derived at capture
     # time. Additive/opt-in; the raw label_* + .jsonl are preserved, so the
     # canonical encoding is never the only copy (re-derivable if calibration
     # or piston order is revised later).
     with_canonical: bool = False
-    # Per-cell engagement over the take (board #0311.4: the flat-cell dud trap).
+    # Per-cell engagement over the take.
     # Fed every written sensor row; the WS snapshot surfaces flat-cell counts so
     # the live verdict can flag a not-engaged band DURING the recording.
     activity: "CellActivityTracker" = field(default_factory=lambda: CellActivityTracker())
@@ -356,7 +356,7 @@ class AppState:
         self._started = False
 
         # ----- inference -----
-        # Separate-model-per-hand (Tory 2026-06-27): one model can NOT predict
+        # Separate-model-per-hand: one model can NOT predict
         # both arms (mirror musculature, different per-arm placement), so a band
         # tagged left/right runs through ITS hand's model. self.engine is the
         # shared/single-model engine (legacy + the fallback when no per-role
@@ -391,9 +391,9 @@ class AppState:
                 self.log_buffer.error(
                     "inference", "{}-hand model load failed at startup: {}".format(_role, e))
 
-        # RESTART-SAFETY (board #0314.1): the TRAIN BOTH models used to live only
-        # in memory and died with the server (bit Tory at the first compaction:
-        # a restart silently lost both hands' models). Auto-load the newest
+        # RESTART-SAFETY: the TRAIN BOTH models used to live only
+        # in memory and died with the server (a restart silently
+        # lost both hands' models). Auto-load the newest
         # role-tagged model from the registry into any per-hand slot the CLI
         # didn't fill, so a crash + restart comes back predicting.
         self._autoload_role_models()
@@ -799,14 +799,14 @@ class AppState:
         rows = len(mat[0])
         cols = len(mat)
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
-        # Engagement tracking (flat-cell dud detection, #0311.4).
+        # Engagement tracking (flat-cell dud detection).
         rec.activity.update(flat)
         # Schema v2: one long row per sensor frame, tagged with the source's
         # role + device_id and a hub-arrival epoch-ms timestamp. Features are
         # already row-major (above); labels are the matched label vector.
         ts_hub_ms = int(pkt.receive_time * 1000)
         # Forearm orientation (gravity-relative roll + palm-up) from the matched
-        # Quest hand, written as the forearm_roll_deg/palm_up columns (#0228).
+        # Quest hand, written as the forearm_roll_deg/palm_up columns.
         # Handedness drives the palm-normal sign: prefer what the Quest frame
         # tagged, else the band's own side (left band <-> left hand). None when
         # the joints are too few -> empty cells.
@@ -821,7 +821,7 @@ class AppState:
                     hand = side if side in ("left", "right") else "right"
                 forearm = forearm_roll(positions, hand)
             if rec.with_canonical:
-                # Ratified canonical lbl_* (DATA_SCHEMA.md #0302) from the same
+                # Ratified canonical lbl_* (docs/data-schema.md) from the same
                 # Quest joints. Defensive: a derivation error must never break the
                 # recording -- the raw label_* row is still written.
                 try:
@@ -1075,7 +1075,7 @@ class AppState:
                 "subscribed": (disc_by_id.get(d.device_id) or {}).get("subscribed"),
                 "sub_error": (disc_by_id.get(d.device_id) or {}).get("sub_error"),
                 # Firmware per-chip IMU scale (scale_dict); lets the debug overlay
-                # confirm the hub knows the scale before a capture (#0220/#0245).
+                # confirm the hub knows the scale before a capture.
                 "imu_scale": (disc_by_id.get(d.device_id) or {}).get("imu"),
             }
             # Gamepad extras (additive, gamepad devices only): axis/button split
@@ -1117,7 +1117,7 @@ class AppState:
                 # tracking). Surfaced live so the in-VR header can warn the
                 # operator that joints are dropping mid-capture.
                 "label_width_mismatch": r.label_width_mismatch_count,
-                # Engagement (flat-cell dud detection, #0311.4): cells whose
+                # Engagement (flat-cell dud detection): cells whose
                 # value range stayed under the noise floor for the whole take.
                 "flat_cells": r.activity.flat_cells(),
                 "cells_total": r.activity.n_cells,
@@ -1340,7 +1340,7 @@ class AppState:
             raise RuntimeError("Already recording -- stop the current capture first")
 
         # Normalize the role to the schema-v2 wire vocabulary (lowercase
-        # left/right/labeler, board #0091). A single sensor band is left/right;
+        # left/right/labeler). A single sensor band is left/right;
         # default + warn on anything unexpected so a bad token can't reach the CSV.
         role = (role or "left").strip().lower()
         if role not in ("left", "right", "labeler"):
@@ -1423,7 +1423,7 @@ class AppState:
         if label_device_type in HAND_POSE_TYPES:
             effective_label_count = None
         # Forearm-orientation columns are written only when the capture has a
-        # Quest labeler (omit-when-no-quest, board #0228). A bilateral capture's
+        # Quest labeler (omit-when-no-quest). A bilateral capture's
         # primary labeler is a Quest stream too, so this covers both paths. A
         # webcam hand is NOT included: its joints are in a hand-local frame, so
         # there is no gravity direction to measure roll against.
@@ -1544,9 +1544,9 @@ class AppState:
         label_dev_obj = self.devices.get(label_device_id) if label_device_id else None
         label_status = (label_dev_obj.status if (label_dev_obj and label_dev_obj.status) else {})
 
-        # Per-device IMU scale (firmware scale_dict, #0217/#0219) so the trainer
+        # Per-device IMU scale (firmware scale_dict) so the trainer
         # can normalize the RAW imu counts the CSV stores -- Option A, the
-        # store-raw + scale-in-meta decision (#0220, overseer #0245). Pulled from
+        # store-raw + scale-in-meta decision. Pulled from
         # discovery's announce/get_info imu field for every band + the labeler.
         imu_scale = {}
         if self.discovery:
@@ -1569,11 +1569,11 @@ class AppState:
             # labeler, e.g. LASK5 gyro for supination) columns after the labels.
             "imu_columns": bool(with_imu),
             # When set, the CSV carries forearm_roll_deg + palm_up (gravity-
-            # relative orientation from the matched Quest hand, board #0228).
+            # relative orientation from the matched Quest hand).
             "forearm_columns": bool(with_forearm),
             # When set, the CSV carries the ratified canonical lbl_flex_* (Tier-1,
             # normalized [0,1]) + lbl_ang_* (Tier-2, degrees) label columns derived
-            # at capture time (DATA_SCHEMA.md #0302). Additive: raw label_* kept.
+            # at capture time (docs/data-schema.md). Additive: raw label_* kept.
             "canonical_columns": bool(with_canonical),
             # {device_id: {chip, gyro_dps_per_lsb, accel_g_per_lsb}} for bands +
             # labeler that advertised it; the trainer multiplies raw*scale.
@@ -1605,7 +1605,7 @@ class AppState:
             seed_user["tags"] = (self.active_session.get("tags") or []) + [session_tag]
 
         # Schema-v2 interop metadata at the TOP LEVEL, matching the phone
-        # meta.json keys (board #0097) so phone- and PC-captured sessions carry
+        # meta.json keys so phone- and PC-captured sessions carry
         # identical metadata. label_source uses the phone wire vocabulary
         # (lask5 / quest / manual, plus webcam); roles maps device_id -> role
         # token. The PC-specific provenance stays under .auto (which keeps its
@@ -1745,7 +1745,7 @@ class AppState:
                     rec.locked_label_count))
         # Persist final stats into the meta sidecar so list_captures() can
         # surface rows/duration for the dashboard's capture filters and junk
-        # detection (Tory's UI-overhaul ask) without re-reading every CSV.
+        # detection without re-reading every CSV.
         # write_capture_meta shallow-merges the "auto" dict, so adding the
         # new "final" key leaves the seeded auto.* fields intact.
         try:
@@ -1823,7 +1823,7 @@ class AppState:
                 # the Data-view VR/LASK5 filter chips.
                 "label_source": meta.get("label_source") if meta else None,
                 # Recording-time epoch ms. The dashboard's date filter prefers
-                # this over mtime: this checkout syncs via OneDrive, which can
+                # this over mtime: cloud-sync tools can
                 # rewrite file mtimes.
                 "created_ms": meta.get("created_ms") if meta else None,
                 "rows": fin.get("rows"),
@@ -1934,7 +1934,7 @@ class AppState:
 
     def _session_context_snapshot(self) -> dict:
         """Snapshot the connected-device roster + environment at session start so
-        session.json is SELF-DESCRIBING (board #0284): what hardware produced this
+        session.json is SELF-DESCRIBING: what hardware produced this
         dataset. Per device: id, type, hub-assigned role (L/R/labeler), matrix
         shape, live Hz, firmware version + per-chip IMU scale (both advertised on
         announce/get_info), and battery at start. Everything here is read from the
@@ -2007,7 +2007,7 @@ class AppState:
         Beyond the human fields, the session snapshots a self-describing device
         context (roster + fw + roles + IMU scale) and a sync marker (started_at_ms
         on the same ts_hub_ms clock the CSV uses), so a screen/headset video pairs
-        to the exact rows and future-you knows what produced the data (#0284).
+        to the exact rows and future-you knows what produced the data.
         """
         if self.active_session is not None:
             raise RuntimeError(
@@ -2044,7 +2044,7 @@ class AppState:
             "captures": [],
             "capture_count": 0,
         }
-        # Cross-wearer model guard (the CLARK trap): a server restart once
+        # Cross-wearer model guard (the stale-model trap): a server restart once
         # auto-restored the PREVIOUS wearer's models as newest-on-disk 27s
         # before a new wearer's session, and cross-wearer inference measured
         # ~47x worse (mean |err| 0.336 vs 0.0072). train_from_captures stamps
@@ -2151,7 +2151,7 @@ class AppState:
     # doesn't accidentally collide with reserved fields.
     META_USER_KEYS = ("arm", "subject", "gesture", "tags", "notes")
     # Machine-set schema-v2 interop keys, written at the TOP LEVEL (not under
-    # extras) so they match the phone meta.json shape byte-for-key (board #0097):
+    # extras) so they match the phone meta.json shape byte-for-key:
     # the trainer reads the same keys whether a session was captured on phone or PC.
     META_INTEROP_KEYS = ("schema", "mirror", "label_source", "roles", "created_ms")
 
@@ -2409,7 +2409,7 @@ class AppState:
         # recent registry dir (timestamp suffix monotonic) to get its path.
         model_path = self._latest_registered_model_path()
 
-        # PC TRAIN TRAP (board #0314-adjacent): a role-less train on a two-hand
+        # PC TRAIN TRAP: a role-less train on a two-hand
         # capture pivots to the bilateral Left||Right matrix (120 features for
         # two V4 bands). The per-band router needs one single-arm model per
         # hand, so the load guard refuses that model against a live 60-cell
@@ -2434,7 +2434,7 @@ class AppState:
         # Session provenance stamp: merge session + source-capture fields into
         # the fresh model dir's metadata.json so the Models panel can scope
         # its list to the active session (35 historical models were burying
-        # Tory's two fresh ones). registry.list_models reads metadata.json
+        # the fresh ones). registry.list_models reads metadata.json
         # wholesale, so /api/models carries these for free. Defensive: a
         # stamp failure must never fail a finished training run.
         if model_path:
@@ -2503,7 +2503,7 @@ class AppState:
         """Fill empty per-hand engine slots from the newest role-tagged models on
         disk (train_model stamps metrics.role into each model's metadata.json).
         Called once at startup, after the CLI --model-left/--model-right flags
-        (which win). Restart-safety = demo-safety (board #0314.1): a server
+        (which win). Restart-safety = demo-safety: a server
         crash + restart comes back with both hands' models without retraining.
         Untagged models (incl. the stale pre-role 64-feature ones) are never
         auto-loaded; the newest-first scan means the last TRAIN BOTH wins."""
@@ -2576,7 +2576,7 @@ class AppState:
         from openmuscle.web.inference import InferenceEngine
         if self.engine is not None and str(self.engine.model_path) == str(model_path):
             return  # already loaded; don't touch the enabled flag
-        # Load-time feature guard (#0311.e): refuse a model whose feature count
+        # Load-time feature guard: refuse a model whose feature count
         # can't match the connected band (raises ValueError with a clear message).
         new_engine = InferenceEngine(model_path,
                                      expected_features=self._expected_features_for())
@@ -2605,7 +2605,7 @@ class AppState:
         existing = self.engines.get(role)
         if existing is not None and str(existing.model_path) == str(model_path):
             return  # already loaded for this side
-        # Load-time feature guard (#0311.e), against this role's band if seen.
+        # Load-time feature guard, against this role's band if seen.
         self.engines[role] = InferenceEngine(
             model_path, expected_features=self._expected_features_for(role))
         self.engine_status = "loaded"
