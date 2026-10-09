@@ -1,64 +1,64 @@
 {
   "dataset": [
     {
-      "wearer": "tory",
-      "session": "T-jun28",
+      "wearer": "w1",
+      "session": "W1-s1",
       "hand": "left",
       "rows": 3010,
       "duration_s": 776.9,
       "captures": 3
     },
     {
-      "wearer": "tory",
-      "session": "T-jun28",
+      "wearer": "w1",
+      "session": "W1-s1",
       "hand": "right",
       "rows": 3013,
       "duration_s": 776.8,
       "captures": 3
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3am",
+      "wearer": "w2",
+      "session": "W2-s1",
       "hand": "left",
       "rows": 934,
       "duration_s": 48.7,
       "captures": 1
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3am",
+      "wearer": "w2",
+      "session": "W2-s1",
       "hand": "right",
       "rows": 929,
       "duration_s": 48.7,
       "captures": 1
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3pm",
+      "wearer": "w2",
+      "session": "W2-s2",
       "hand": "left",
       "rows": 4361,
       "duration_s": 297.8,
       "captures": 2
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3pm",
+      "wearer": "w2",
+      "session": "W2-s2",
       "hand": "right",
       "rows": 4350,
       "duration_s": 297.7,
       "captures": 2
     },
     {
-      "wearer": "tory",
-      "session": "T-jul3",
+      "wearer": "w1",
+      "session": "W1-s2",
       "hand": "left",
       "rows": 2840,
       "duration_s": 191.6,
       "captures": 2
     },
     {
-      "wearer": "tory",
-      "session": "T-jul3",
+      "wearer": "w1",
+      "session": "W1-s2",
       "hand": "right",
       "rows": 2854,
       "duration_s": 191.6,
@@ -67,8 +67,8 @@
   ],
   "E1_within_random": [
     {
-      "wearer": "tory",
-      "session": "T-jun28",
+      "wearer": "w1",
+      "session": "W1-s1",
       "hand": "left",
       "n_test": 602,
       "flex_mae": 0.04408044761051366,
@@ -84,8 +84,8 @@
       }
     },
     {
-      "wearer": "tory",
-      "session": "T-jun28",
+      "wearer": "w1",
+      "session": "W1-s1",
       "hand": "right",
       "n_test": 603,
       "flex_mae": 0.04162395261207108,
@@ -101,8 +101,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3am",
+      "wearer": "w2",
+      "session": "W2-s1",
       "hand": "left",
       "n_test": 187,
       "flex_mae": 0.04754404074728763,
@@ -118,8 +118,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3am",
+      "wearer": "w2",
+      "session": "W2-s1",
       "hand": "right",
       "n_test": 186,
       "flex_mae": 0.04014164416564304,
@@ -135,8 +135,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3pm",
+      "wearer": "w2",
+      "session": "W2-s2",
       "hand": "left",
       "n_test": 873,
       "flex_mae": 0.04999852799306159,
@@ -152,8 +152,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3pm",
+      "wearer": "w2",
+      "session": "W2-s2",
       "hand": "right",
       "n_test": 870,
       "flex_mae": 0.04445511167865545,
@@ -169,8 +169,8 @@
       }
     },
     {
-      "wearer": "tory",
-      "session": "T-jul3",
+      "wearer": "w1",
+      "session": "W1-s2",
       "hand": "left",
       "n_test": 568,
       "flex_mae": 0.03682161126167684,
@@ -186,8 +186,8 @@
       }
     },
     {
-      "wearer": "tory",
-      "session": "T-jul3",
+      "wearer": "w1",
+      "session": "W1-s2",
       "hand": "right",
       "n_test": 571,
       "flex_mae": 0.03761120608674063,
@@ -205,8 +205,8 @@
   ],
   "E2_within_temporal": [
     {
-      "wearer": "tory",
-      "session": "T-jun28",
+      "wearer": "w1",
+      "session": "W1-s1",
       "hand": "left",
       "n_test": 602,
       "flex_mae": 0.06916321393583366,
@@ -222,8 +222,8 @@
       }
     },
     {
-      "wearer": "tory",
-      "session": "T-jun28",
+      "wearer": "w1",
+      "session": "W1-s1",
       "hand": "right",
       "n_test": 603,
       "flex_mae": 0.0972003268281782,
@@ -239,8 +239,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3am",
+      "wearer": "w2",
+      "session": "W2-s1",
       "hand": "left",
       "n_test": 187,
       "flex_mae": 0.14125118595582,
@@ -256,8 +256,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3am",
+      "wearer": "w2",
+      "session": "W2-s1",
       "hand": "right",
       "n_test": 186,
       "flex_mae": 0.08706123833922756,
@@ -273,8 +273,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3pm",
+      "wearer": "w2",
+      "session": "W2-s2",
       "hand": "left",
       "n_test": 873,
       "flex_mae": 0.10739014805422475,
@@ -290,8 +290,8 @@
       }
     },
     {
-      "wearer": "clark",
-      "session": "C-jul3pm",
+      "wearer": "w2",
+      "session": "W2-s2",
       "hand": "right",
       "n_test": 870,
       "flex_mae": 0.17596908570789194,
@@ -307,8 +307,8 @@
       }
     },
     {
-      "wearer": "tory",
-      "session": "T-jul3",
+      "wearer": "w1",
+      "session": "W1-s2",
       "hand": "left",
       "n_test": 568,
       "flex_mae": 0.08702285043451162,
@@ -324,8 +324,8 @@
       }
     },
     {
-      "wearer": "tory",
-      "session": "T-jul3",
+      "wearer": "w1",
+      "session": "W1-s2",
       "hand": "right",
       "n_test": 571,
       "flex_mae": 0.11634473406709421,
@@ -343,9 +343,9 @@
   ],
   "E3_cross_session": [
     {
-      "wearer": "tory",
-      "train": "T-jun28",
-      "test": "T-jul3",
+      "wearer": "w1",
+      "train": "W1-s1",
+      "test": "W1-s2",
       "hand": "left",
       "n_test": 2840,
       "flex_mae": 0.4165136672289176,
@@ -361,9 +361,9 @@
       }
     },
     {
-      "wearer": "tory",
-      "train": "T-jun28",
-      "test": "T-jul3",
+      "wearer": "w1",
+      "train": "W1-s1",
+      "test": "W1-s2",
       "hand": "right",
       "n_test": 2854,
       "flex_mae": 0.2508491189062371,
@@ -379,9 +379,9 @@
       }
     },
     {
-      "wearer": "tory",
-      "train": "T-jul3",
-      "test": "T-jun28",
+      "wearer": "w1",
+      "train": "W1-s2",
+      "test": "W1-s1",
       "hand": "left",
       "n_test": 3010,
       "flex_mae": 0.26328711874966504,
@@ -397,9 +397,9 @@
       }
     },
     {
-      "wearer": "tory",
-      "train": "T-jul3",
-      "test": "T-jun28",
+      "wearer": "w1",
+      "train": "W1-s2",
+      "test": "W1-s1",
       "hand": "right",
       "n_test": 3013,
       "flex_mae": 0.37904702325987844,
@@ -415,9 +415,9 @@
       }
     },
     {
-      "wearer": "clark",
-      "train": "C-jul3am",
-      "test": "C-jul3pm",
+      "wearer": "w2",
+      "train": "W2-s1",
+      "test": "W2-s2",
       "hand": "left",
       "n_test": 4361,
       "flex_mae": 0.17892393189727587,
@@ -433,9 +433,9 @@
       }
     },
     {
-      "wearer": "clark",
-      "train": "C-jul3am",
-      "test": "C-jul3pm",
+      "wearer": "w2",
+      "train": "W2-s1",
+      "test": "W2-s2",
       "hand": "right",
       "n_test": 4350,
       "flex_mae": 0.16990530572850782,
@@ -451,9 +451,9 @@
       }
     },
     {
-      "wearer": "clark",
-      "train": "C-jul3pm",
-      "test": "C-jul3am",
+      "wearer": "w2",
+      "train": "W2-s2",
+      "test": "W2-s1",
       "hand": "left",
       "n_test": 934,
       "flex_mae": 0.1598725054110496,
@@ -469,9 +469,9 @@
       }
     },
     {
-      "wearer": "clark",
-      "train": "C-jul3pm",
-      "test": "C-jul3am",
+      "wearer": "w2",
+      "train": "W2-s2",
+      "test": "W2-s1",
       "hand": "right",
       "n_test": 929,
       "flex_mae": 0.13313664144495832,
@@ -489,8 +489,8 @@
   ],
   "E4_cross_wearer": [
     {
-      "train": "tory",
-      "test": "clark",
+      "train": "w1",
+      "test": "w2",
       "hand": "left",
       "n_test": 5295,
       "flex_mae": 0.2574147559972228,
@@ -506,8 +506,8 @@
       }
     },
     {
-      "train": "tory",
-      "test": "clark",
+      "train": "w1",
+      "test": "w2",
       "hand": "right",
       "n_test": 5279,
       "flex_mae": 0.2558997555366303,
@@ -523,8 +523,8 @@
       }
     },
     {
-      "train": "clark",
-      "test": "tory",
+      "train": "w2",
+      "test": "w1",
       "hand": "left",
       "n_test": 5850,
       "flex_mae": 0.26289577221463745,
@@ -540,8 +540,8 @@
       }
     },
     {
-      "train": "clark",
-      "test": "tory",
+      "train": "w2",
+      "test": "w1",
       "hand": "right",
       "n_test": 5867,
       "flex_mae": 0.3098722957818154,

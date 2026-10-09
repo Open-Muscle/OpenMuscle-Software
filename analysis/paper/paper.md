@@ -1,6 +1,6 @@
 # OpenMuscle: Forearm Force-Myography with VR Hand-Tracking Ground Truth — Dataset and Honest Baselines
 
-**Authors:** Tory (TURFPTAx) et al. — DRAFT v0.1, 2026-07-03
+**Authors:** TURFPTAx et al. (DRAFT v0.1, 2026-07-03)
 **Artifacts:** open hardware (FlexGrid V4), open-source pipeline (OpenMuscle-Software), dataset + this analysis (`analysis/paper/`)
 
 ## Abstract
@@ -76,16 +76,16 @@ including sessions predating that feature.
 
 ## 3. Dataset
 
-Two wearers (T, C - siblings), four sessions, eight two-hand captures, all
+Two wearers (W1, W2), four sessions, eight two-hand captures, all
 with both bracelets and two-hand labeling. After dropping rows without a full
 25-joint label, the analysis set is:
 
 | Wearer | Session | Date | Hands | Rows (L/R) | Notes |
 |---|---|---|---|---|---|
-| T | T-jun28 | Jun 28 | both | 3,010 / 3,013 | 3 captures |
-| C | C-jul3am | Jul 3 (am) | both | 934 / 929 | 1 capture |
-| C | C-jul3pm | Jul 3 (pm) | both | 4,361 / 4,350 | 2 captures |
-| T | T-jul3 | Jul 3 (pm) | both | 2,840 / 2,854 | 2 captures |
+| W1 | W1-s1 | Jun 28 | both | 3,010 / 3,013 | 3 captures |
+| W2 | W2-s1 | Jul 3 (am) | both | 934 / 929 | 1 capture |
+| W2 | W2-s2 | Jul 3 (pm) | both | 4,361 / 4,350 | 2 captures |
+| W1 | W1-s2 | Jul 3 (pm) | both | 2,840 / 2,854 | 2 captures |
 | **Total** | | | | **11,145 / 11,146** | ~22.3k paired frames |
 
 Excluded (documented in the audit): one 9.7 s single-band fragment and one
@@ -129,8 +129,8 @@ the training set. Reported wearable-sensing accuracy that relies on random
 splits should be read with this factor in mind.
 
 **(2) Donning variance rivals wearer identity.** Re-donning by the same wearer
-on the same day (C-jul3am <-> C-jul3pm) costs 0.16 flexion MAE; five days and
-a re-donning apart (T-jun28 <-> T-jul3) costs 0.25-0.42 — *as bad as or worse
+on the same day (W2-s1 <-> W2-s2) costs 0.16 flexion MAE; five days and
+a re-donning apart (W1-s1 <-> W1-s2) costs 0.25-0.42, *as bad as or worse
 than* transferring across wearers (0.27). The dominant failure mode of this
 sensing modality is not "your muscles differ from mine" but "the band never
 sits in the same place twice." An earlier world-frame analysis of the same
@@ -160,7 +160,7 @@ the raw per-finger distributions with the dataset.
 
 ### 4.3 Session-length effect
 
-The shortest session (C-jul3am, 49 s per hand) shows the worst temporal-split
+The shortest session (W2-s1, 49 s per hand) shows the worst temporal-split
 scores (negative R^2) despite competitive random-split scores — with less than
 a minute of data, the last 20% of the timeline contains poses the first 80%
 never visited. Session length matters more than take count.
@@ -184,7 +184,7 @@ the released code, because dataset papers rarely say how the sausage was made:
 
 ## 6. Limitations
 
-Two wearers (siblings), four sessions, one hardware revision; conclusions
+Two wearers, four sessions, one hardware revision; conclusions
 about cross-wearer transfer are directional, not definitive. The baseline is
 deliberately frame-wise; temporal models (TCN/GRU) and per-session calibration
 are expected to lift every rung of the ladder and are the obvious next
