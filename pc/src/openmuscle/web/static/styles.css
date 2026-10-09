@@ -807,6 +807,8 @@ main.studio {
 
 .cap-meta-summary .arm-left  { color: var(--accent); font-weight: 600; }
 .cap-meta-summary .arm-right { color: var(--accent-2); font-weight: 600; }
+.cap-meta-summary .arm-both   { color: var(--green); font-weight: 600; }
+.cap-meta-summary .participant-code { color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cap-meta-summary .gesture   { color: var(--fg); }
 .cap-meta-summary .tag {
     display: inline-block;
@@ -920,6 +922,35 @@ main.studio {
 }
 
 .form-row.meta-auto-block label { align-self: start; padding-top: 4px; }
+
+/* Field + helper text stacked in one grid cell (participant code). */
+.form-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.form-field input { width: 100%; }
+.form-hint { font-size: 11px; color: var(--fg-faint); line-height: 1.35; }
+.form-hint.warn { color: var(--orange); }
+
+/* Inline error shown inside a modal instead of a browser alert. */
+.form-error {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--red);
+    border-radius: 4px;
+    color: var(--red);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+}
+.form-error[hidden], .form-hint[hidden] { display: none; }
+
+/* "More details" disclosure in the session form. */
+.more-details { margin: 12px 0 0; border-top: 1px solid var(--border); padding-top: 8px; }
+.more-details > summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg-dim);
+    padding: 2px 0;
+}
+.more-details > summary:hover { color: var(--fg); }
 
 .meta-readonly {
     background: var(--bg);

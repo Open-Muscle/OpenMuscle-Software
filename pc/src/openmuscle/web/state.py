@@ -1652,7 +1652,7 @@ class AppState:
             self.log_buffer.info("recording",
                 "capture name adjusted: '{}' -> '{}'".format(requested, name))
         csv_path = self.captures_dir / name
-        stem = csv_path.with_suffix("")           # data/raw/merged/foo (no .csv)
+        stem = csv_path.with_suffix("")           # captures/foo (no .csv)
         sensor_sidecar = stem.with_suffix(".sensor.jsonl")
         label_sidecar  = stem.with_suffix(".label.jsonl")
         # Labels-schema sidecar is only written for label sources whose
@@ -1783,13 +1783,14 @@ class AppState:
             sid = self.active_session.get("id")
             auto["session_id"] = sid
             auto["session_name"] = self.active_session.get("name")
-            auto["session_wearer"] = self.active_session.get("wearer")
+            code = self._participant_code(self.active_session)
+            auto["session_wearer"] = code or None
             auto["session_take"] = self.active_session.get("take")
             auto["session_labeler_source"] = self.active_session.get("labeler_source")
             if self.active_session.get("arm"):
                 seed_user["arm"] = self.active_session["arm"]
-            if self.active_session.get("subject"):
-                seed_user["subject"] = self.active_session["subject"]
+            if code:
+                seed_user["subject"] = code
             # Tag with the session id so capture-search/filter UIs can find it
             session_tag = "session:" + str(sid)
             seed_user["tags"] = (self.active_session.get("tags") or []) + [session_tag]
@@ -2031,7 +2032,11 @@ class AppState:
             if meta:
                 meta_summary = {
                     "arm": meta.get("arm"),
-                    "subject": meta.get("subject") or None,
+                    # The participant code; takes recorded before the code was
+                    # seeded into meta still carry it under auto.session_wearer.
+                    "subject": (meta.get("subject")
+                                or (meta.get("auto") or {}).get("session_wearer")
+                                or None),
                     "gesture": meta.get("gesture") or None,
                     "tags": meta.get("tags") or [],
                     "has_notes": bool(meta.get("notes")),
@@ -2279,6 +2284,17 @@ class AppState:
                     "model".format(r, model_wearer, wearer))
         return mismatched
 
+    # Values the session "arm" field may hold. "both" means the bands sit on
+    # both forearms (a two-band recording); it is stored as given.
+    SESSION_ARMS = ("left", "right", "both")
+
+    @staticmethod
+    def _participant_code(session: Optional[dict]) -> str:
+        """The one participant code of a session. Older sessions kept it under
+        `wearer` or `subject` (sometimes both); either one counts."""
+        s = session or {}
+        return str(s.get("wearer") or s.get("subject") or "").strip()
+
     def start_session(self, name: str = "", subject: str = "", arm: Optional[str] = None,
                       gestures: Optional[list] = None, notes: str = "",
                       tags: Optional[list] = None, wearer: str = "",
@@ -2310,13 +2326,16 @@ class AppState:
         labeler_source = (labeler_source or "").strip().lower()
         if labeler_source not in ("lask5", "vr", "both", "gamepad", "webcam", ""):
             labeler_source = ""
+        # One participant code, stored under both keys: `wearer` drives the
+        # model-mismatch guard, `subject` is what capture meta has always used.
+        code = str(wearer or subject or "").strip()
         session = {
             "id": sid,
-            "name": name or sid,
-            "subject": subject or "",
-            "wearer": wearer or subject or "",
+            "name": (name or "").strip() or sid,
+            "subject": code,
+            "wearer": code,
             "take": take if isinstance(take, int) else None,
-            "arm": arm if arm in ("left", "right") else None,
+            "arm": arm if arm in self.SESSION_ARMS else None,
             "labeler_source": labeler_source,
             "mirrored": bool(mirrored),
             "labeled_hand": (labeled_hand
@@ -2376,12 +2395,26 @@ class AppState:
         s = self.get_session(session_id)
         if s is None:
             return None
-        for k, v in (partial or {}).items():
+        partial = dict(partial or {})
+        for k, v in partial.items():
             if k in ("id", "started_at", "ended_at", "captures", "capture_count"):
                 continue
-            if k == "arm" and v not in ("left", "right", None, ""):
-                continue
+            if k == "arm":
+                if v in ("", None):
+                    v = None
+                elif v not in self.SESSION_ARMS:
+                    continue
+            if k == "name":
+                v = str(v or "").strip() or s.get("name") or s["id"]
             s[k] = v
+        # The participant code lives under both `wearer` and `subject`; an edit
+        # to either one updates both. `wearer` wins if the body carries both.
+        if "wearer" in partial or "subject" in partial:
+            code = str((partial.get("wearer") if "wearer" in partial
+                        else partial.get("subject")) or "").strip()
+            s["wearer"] = code
+            s["subject"] = code
+            s["model_wearer_mismatch"] = self._model_wearer_mismatch(code)
         s["modified_at"] = time.time()
         self._write_session(s)
         # If this is the active session, keep our in-memory ref in sync

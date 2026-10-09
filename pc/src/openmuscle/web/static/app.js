@@ -1032,13 +1032,14 @@ function renderActiveSession() {
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
         const nDev = (s.context && Array.isArray(s.context.devices)) ? s.context.devices.length : 0;
         const sig = JSON.stringify([s.id, s.name, s.arm, s.wearer, s.subject, s.take,
-            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(',')]);
+            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(','),
+            s.modified_at]);
         if (sig !== _activeSessionSig) {
             _activeSessionSig = sig;
-            const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
-            const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(s.arm)} arm</span>` : '<span class="empty">no arm set</span>';
-            const who = s.wearer || s.subject;
-            const whoBit = who ? ' · ' + escapeHtml(who) : '';
+            const armCls = s.arm ? 'arm-' + s.arm : '';
+            const armBit = s.arm ? `<span class="${armCls}">${escapeHtml(OMParticipant.armText(s.arm))}</span>` : '<span class="empty">no arm set</span>';
+            const who = OMParticipant.codeOf(s);
+            const whoBit = who ? ` · <span title="Participant code">${escapeHtml(who)}</span>` : '';
             const takeBit = (typeof s.take === 'number') ? ` · take ${s.take}` : '';
             const labelerBit = s.labeler_source ? ` · ${escapeHtml(s.labeler_source)}` : '';
             const devBit = nDev ? ` · ${nDev} dev @ start` : '';
@@ -1063,6 +1064,8 @@ function renderActiveSession() {
             document.getElementById('session-end-btn').onclick = endSession;
             const addBtn = document.getElementById('active-session-add-btn');
             if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
+            const editBtn = activeSessionArea.querySelector('button[data-edit-session]');
+            if (editBtn) editBtn.onclick = () => openSessionModal(activeSession);
             sessionStartBtn.disabled = true;
             sessionStartBtn.title = 'End the current session before starting a new one';
         } else {
@@ -1231,7 +1234,7 @@ function renderPastSessions() {
     }
     pastSessionsList.innerHTML = pastSessions.map(s => {
         const dur = (s.ended_at && s.started_at) ? Math.floor(s.ended_at - s.started_at) : null;
-        const armBit = s.arm ? escapeHtml(s.arm) + ' arm' : '—';
+        const armBit = s.arm ? escapeHtml(OMParticipant.armText(s.arm)) : '—';
         const captureList = Array.isArray(s.captures) ? s.captures : [];
         const captureCount = s.capture_count != null ? s.capture_count : captureList.length;
         const isOpen = expandedSessions.has(s.id);
@@ -1257,7 +1260,7 @@ function renderPastSessions() {
                 <div>
                     <span class="session-caret">${caret}</span>
                     <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.subject || '—')} · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                    <span class="session-meta-line">${armBit} · <span title="Participant code">${escapeHtml(OMParticipant.codeOf(s) || '—')}</span> · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
                 </div>
                 <div class="session-actions">
                     <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
@@ -1317,6 +1320,13 @@ function renderPastSessions() {
             removeCaptureFromSession(btn.dataset.fromSession, btn.dataset.unlinkCap);
         };
     });
+    pastSessionsList.querySelectorAll('button[data-edit-session]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            const session = pastSessions.find(x => x.id === btn.dataset.editSession);
+            if (session) openSessionModal(session);
+        };
+    });
     pastSessionsList.querySelectorAll('button[data-add-to-session]').forEach(btn => {
         btn.onclick = (e) => {
             e.stopPropagation();
@@ -1336,32 +1346,100 @@ pastSessionsToggle.onclick = () => {
 
 sessionStartBtn.onclick = () => openSessionModal();
 
-async function openSessionModal() {
+// The one session form serves "Start new session" and "Edit session".
+// sessionEditId is the id being edited, or null for a new session.
+let sessionEditId = null;
+
+function showSessionError(msg) {
+    const el = document.getElementById('sess-error');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.hidden = !msg;
+}
+
+// Soft warning under a participant-code input: appears when the value looks
+// like a name, never blocks saving.
+function wireParticipantWarning(input, warnEl) {
+    if (!input || !warnEl) return;
+    const update = () => {
+        const w = OMParticipant.nameWarning(input.value);
+        warnEl.textContent = w;
+        warnEl.hidden = !w;
+    };
+    input.addEventListener('input', update);
+    input.addEventListener('change', update);
+    input._refreshWarning = update;
+}
+wireParticipantWarning(document.getElementById('sess-wearer'),
+                       document.getElementById('sess-wearer-warn'));
+
+function fillSessionForm(s) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('sess-name', s.name && s.name !== s.id ? s.name : '');
+    set('sess-wearer', OMParticipant.codeOf(s));
+    set('sess-arm', s.arm || '');
+    set('sess-labeler', s.labeler_source || '');
+    set('sess-take', typeof s.take === 'number' ? s.take : '');
+    set('sess-mirrored', s.mirrored ? (s.labeled_hand || '') : '');
+    set('sess-gestures', (s.gestures || []).join(', '));
+    set('sess-video', s.video_ref || '');
+    set('sess-tags', (s.tags || []).join(', '));
+    set('sess-notes', s.notes || '');
+}
+
+async function openSessionModal(editSession) {
+    sessionEditId = editSession ? editSession.id : null;
+    sessionForm.reset();
+    showSessionError('');
+    document.getElementById('session-modal-title').textContent =
+        sessionEditId ? 'Edit session' : 'Start new session';
+    document.getElementById('sess-submit').textContent =
+        sessionEditId ? 'Save changes' : 'Start session';
+    const more = document.getElementById('sess-more');
     sessionModal.classList.add('open');
     sessionModal.setAttribute('aria-hidden', 'false');
-    // Prefill wearer / arm / labeler from the most recent session and bump the
-    // take number, so a repeat session is one edit. Only fills empty fields.
-    try {
-        const r = await fetch('/api/sessions');
-        if (r.ok) {
-            const last = (await r.json())[0];
-            if (last) {
-                const w = document.getElementById('sess-wearer');
-                if (w && !w.value) w.value = last.wearer || last.subject || '';
-                const a = document.getElementById('sess-arm');
-                if (a && !a.value && last.arm) a.value = last.arm;
-                const l = document.getElementById('sess-labeler');
-                if (l && !l.value && last.labeler_source) l.value = last.labeler_source;
-                const t = document.getElementById('sess-take');
-                if (t && !t.value && typeof last.take === 'number') t.value = last.take + 1;
+
+    if (sessionEditId) {
+        // Edit: prefill from the session as the server has it now.
+        let s = editSession;
+        try {
+            const r = await fetch('/api/sessions/' + encodeURIComponent(sessionEditId));
+            if (r.ok) s = await r.json();
+        } catch (e) { /* fall back to the copy we already hold */ }
+        fillSessionForm(s);
+        // Open "More details" when something in it is already filled in.
+        if (more) more.open = !!(s.mirrored || s.video_ref || s.notes
+            || (s.gestures || []).length || (s.tags || []).length);
+    } else {
+        if (more) more.open = false;
+        // Prefill participant code / arm / labeler from the most recent session
+        // and bump the take number, so a repeat session is one edit. Only fills
+        // empty fields.
+        try {
+            const r = await fetch('/api/sessions');
+            if (r.ok) {
+                const last = (await r.json())[0];
+                if (last) {
+                    const w = document.getElementById('sess-wearer');
+                    if (w && !w.value) w.value = OMParticipant.codeOf(last);
+                    const a = document.getElementById('sess-arm');
+                    if (a && !a.value && last.arm) a.value = last.arm;
+                    const l = document.getElementById('sess-labeler');
+                    if (l && !l.value && last.labeler_source) l.value = last.labeler_source;
+                    const t = document.getElementById('sess-take');
+                    if (t && !t.value && typeof last.take === 'number') t.value = last.take + 1;
+                }
             }
-        }
-    } catch (e) { /* prefill is best-effort */ }
+        } catch (e) { /* prefill is best-effort */ }
+    }
+    const w = document.getElementById('sess-wearer');
+    if (w && w._refreshWarning) w._refreshWarning();
     document.getElementById('sess-name').focus();
 }
 function closeSessionModal() {
     sessionModal.classList.remove('open');
     sessionModal.setAttribute('aria-hidden', 'true');
+    sessionEditId = null;
 }
 sessionModal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeSessionModal));
 document.addEventListener('keydown', (e) => {
@@ -1370,15 +1448,19 @@ document.addEventListener('keydown', (e) => {
 
 sessionForm.onsubmit = async (e) => {
     e.preventDefault();
+    showSessionError('');
     const takeRaw = parseInt(document.getElementById('sess-take').value, 10);
+    const code = document.getElementById('sess-wearer').value.trim();
+    // One participant code, sent under both keys. The server keeps the two in
+    // step (wearer drives the model guard, subject is what capture meta uses).
     const body = {
         name:     document.getElementById('sess-name').value.trim(),
-        subject:  document.getElementById('sess-subject').value.trim(),
+        subject:  code,
+        wearer:   code,
         arm:      document.getElementById('sess-arm').value || null,
         gestures: document.getElementById('sess-gestures').value.split(',').map(s=>s.trim()).filter(Boolean),
         tags:     document.getElementById('sess-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
         notes:    document.getElementById('sess-notes').value,
-        wearer:   document.getElementById('sess-wearer').value.trim(),
         take:     Number.isFinite(takeRaw) ? takeRaw : null,
         labeler_source: document.getElementById('sess-labeler').value || '',
         video_ref: document.getElementById('sess-video').value.trim(),
@@ -1388,18 +1470,36 @@ sessionForm.onsubmit = async (e) => {
     const mirroredHand = (document.getElementById('sess-mirrored') || {}).value || '';
     body.mirrored = !!mirroredHand;
     body.labeled_hand = mirroredHand || null;
+    const editing = sessionEditId;
+    const submitBtn = document.getElementById('sess-submit');
+    submitBtn.disabled = true;
     try {
-        const r = await fetch('/api/sessions', {
-            method: 'POST',
+        const r = await fetch(editing ? '/api/sessions/' + encodeURIComponent(editing) : '/api/sessions', {
+            method: editing ? 'PUT' : 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body),
         });
         if (!r.ok) throw new Error(await readError(r));
-        // Clear the form for next time
+        const saved = await r.json();
         sessionForm.reset();
         closeSessionModal();
-    } catch (e) {
-        alert('Could not start session: ' + e.message);
+        if (editing) {
+            // Show the new name/code everywhere now, without a reload: the card,
+            // the chip, the typeahead and the capture rows that name the session.
+            if (activeSession && activeSession.id === saved.id) {
+                activeSession = saved;
+                _activeSessionSig = null;
+                renderActiveSession();
+            }
+            await refreshPastSessions();
+            refreshCaptures();
+            refreshModels();
+        }
+    } catch (err) {
+        showSessionError((editing ? 'Could not save the session: ' : 'Could not start the session: ')
+            + (err.message || err));
+    } finally {
+        submitBtn.disabled = false;
     }
 };
 
@@ -2040,14 +2140,14 @@ function renderCaptureMetaSummary(meta) {
     if (!meta) return '<span class="cap-meta-summary empty">— click edit to annotate</span>';
     const parts = [];
     if (meta.arm) {
-        const cls = meta.arm === 'left' ? 'arm-left' : 'arm-right';
+        const cls = 'arm-' + (['left', 'right', 'both'].includes(meta.arm) ? meta.arm : 'right');
         parts.push(`<span class="${cls}">${escapeHtml(meta.arm)}</span>`);
     }
     if (meta.gesture) {
         parts.push(`<span class="gesture">${escapeHtml(meta.gesture)}</span>`);
     }
     if (meta.subject) {
-        parts.push(escapeHtml(meta.subject));
+        parts.push(`<span class="participant-code" title="Participant code">${escapeHtml(meta.subject)}</span>`);
     }
     const inline = parts.join(' · ');
     const tagBits = (meta.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
@@ -2069,6 +2169,14 @@ const metaGestureEl = document.getElementById('meta-gesture');
 const metaTagsEl    = document.getElementById('meta-tags');
 const metaNotesEl   = document.getElementById('meta-notes');
 const metaAutoEl    = document.getElementById('meta-auto');
+const metaErrorEl   = document.getElementById('meta-error');
+
+function showMetaError(msg) {
+    if (!metaErrorEl) return;
+    metaErrorEl.textContent = msg || '';
+    metaErrorEl.hidden = !msg;
+}
+wireParticipantWarning(metaSubjectEl, document.getElementById('meta-subject-warn'));
 
 let editingCaptureName = null;
 
@@ -2079,10 +2187,12 @@ async function openMetaModal(name) {
     // doesn't show stale values from the previous capture briefly.
     metaArmEl.value = '';
     metaSubjectEl.value = '';
+    if (metaSubjectEl._refreshWarning) metaSubjectEl._refreshWarning();
     metaGestureEl.value = '';
     metaTagsEl.value = '';
     metaNotesEl.value = '';
     metaAutoEl.textContent = '(loading...)';
+    showMetaError('');
     metaModal.classList.add('open');
     metaModal.setAttribute('aria-hidden', 'false');
 
@@ -2092,6 +2202,7 @@ async function openMetaModal(name) {
         const meta = await r.json();
         metaArmEl.value     = meta.arm || '';
         metaSubjectEl.value = meta.subject || '';
+        if (metaSubjectEl._refreshWarning) metaSubjectEl._refreshWarning();
         metaGestureEl.value = meta.gesture || '';
         metaTagsEl.value    = Array.isArray(meta.tags) ? meta.tags.join(', ') : '';
         metaNotesEl.value   = meta.notes || '';
@@ -2143,7 +2254,7 @@ metaForm.onsubmit = async (e) => {
         closeMetaModal();
         await refreshCaptures();   // re-render the row summary
     } catch (err) {
-        alert('Save failed: ' + (err.message || err));
+        showMetaError('Could not save: ' + (err.message || err));
     }
 };
 

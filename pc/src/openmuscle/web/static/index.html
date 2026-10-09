@@ -10,6 +10,7 @@
          the OBS /stream view loads the same file so its heatmaps match ours. -->
     <script src="/static/heatmap-color.js?v=1"></script>
     <script src="/static/guide.js?v=1"></script>
+    <script src="/static/participant.js?v=1"></script>
     <!-- Three.js for the quest_hand 3D viewer. Same CDN + version the VR
          client uses. hand-viewer.js is an ES module exposing window.OMHandViewer;
          the plain app.js drives it from handleTick. -->
@@ -475,7 +476,9 @@
         <span>Open-Muscle · FlexGrid Studio · <a href="https://github.com/Open-Muscle">github</a></span>
     </footer>
 
-    <!-- ===== Session-start modal (unchanged) ===== -->
+    <!-- ===== Session modal (start a new session, or edit one) =====
+         Four everyday fields, then "More details". The same form serves both:
+         app.js switches the title and button text and prefills it for Edit. -->
     <div id="session-modal" class="modal" aria-hidden="true">
         <div class="modal-backdrop" data-close="1"></div>
         <div class="modal-content" role="dialog" aria-labelledby="session-modal-title">
@@ -485,72 +488,77 @@
             </header>
             <form id="session-form">
                 <div class="form-row">
-                    <label for="sess-name">Name</label>
-                    <input id="sess-name" type="text" placeholder="e.g. morning-left-arm-baseline">
+                    <label for="sess-name">Session name</label>
+                    <input id="sess-name" type="text" placeholder="optional, e.g. morning-baseline">
+                </div>
+                <div class="form-row">
+                    <label for="sess-wearer">Participant code</label>
+                    <div class="form-field">
+                        <input id="sess-wearer" type="text" autocomplete="off"
+                               placeholder="P01 (a code, not a name)" aria-describedby="sess-wearer-help">
+                        <div id="sess-wearer-help" class="form-hint">Please do not type names. Keep the key that links codes to people somewhere else.</div>
+                        <div id="sess-wearer-warn" class="form-hint warn" role="status" hidden></div>
+                    </div>
                 </div>
                 <div class="form-row">
                     <label for="sess-arm">Arm</label>
                     <select id="sess-arm">
-                        <option value="">(unspecified)</option>
-                        <option value="left">left</option>
-                        <option value="right">right</option>
-                        <option value="both">both</option>
+                        <option value="">Not set</option>
+                        <option value="left">Left arm</option>
+                        <option value="right">Right arm</option>
+                        <option value="both">Both arms</option>
                     </select>
                 </div>
                 <div class="form-row">
-                    <label for="sess-wearer">Wearer</label>
-                    <input id="sess-wearer" type="text" placeholder="who's wearing the band(s), e.g. W01">
-                </div>
-                <div class="form-row">
-                    <label for="sess-take">Take #</label>
-                    <input id="sess-take" type="number" min="1" step="1" placeholder="auto (last + 1)">
-                </div>
-                <div class="form-row">
-                    <label for="sess-labeler">Labeler source</label>
+                    <label for="sess-labeler">Finger data from</label>
                     <select id="sess-labeler">
-                        <option value="">(decide at record)</option>
-                        <option value="vr">VR (Quest hand / forearm)</option>
-                        <option value="lask5">LASK5 finger-labeler</option>
-                        <option value="both">both (VR + LASK5)</option>
-                        <option value="webcam">webcam hand</option>
-                        <option value="gamepad">gamepad</option>
+                        <option value="">Decide when I record</option>
+                        <option value="webcam">Webcam</option>
+                        <option value="lask5">LASK5 finger labeler (optional hardware)</option>
+                        <option value="vr">VR headset hand tracking</option>
+                        <option value="both">VR headset and LASK5</option>
+                        <option value="gamepad">Gamepad</option>
                     </select>
                 </div>
-                <!-- Mirrored training: the labeler watches one hand while a band
-                     is on the other limb and the wearer moves both sides together
-                     (used when the hand to be predicted cannot be measured).
-                     Captures in a mirrored session are tagged mirror:true. -->
-                <div class="form-row">
-                    <label for="sess-mirrored">Mirrored</label>
-                    <select id="sess-mirrored">
-                        <option value="">no (labels come from the banded arm's own hand)</option>
-                        <option value="left">yes, labels measured on the LEFT hand</option>
-                        <option value="right">yes, labels measured on the RIGHT hand</option>
-                    </select>
-                </div>
-                <div class="form-row">
-                    <label for="sess-subject">Subject</label>
-                    <input id="sess-subject" type="text" placeholder="e.g. S001 / self">
-                </div>
-                <div class="form-row">
-                    <label for="sess-gestures">Planned gestures</label>
-                    <input id="sess-gestures" type="text" placeholder="comma-separated, e.g. open hand, fist, pinch, point, OK sign">
-                </div>
-                <div class="form-row">
-                    <label for="sess-video">Video ref</label>
-                    <input id="sess-video" type="text" placeholder="headset / screen video filename or note (optional)">
-                </div>
-                <div class="form-row">
-                    <label for="sess-tags">Tags</label>
-                    <input id="sess-tags" type="text" placeholder="comma-separated">
-                </div>
-                <div class="form-row">
-                    <label for="sess-notes">Notes</label>
-                    <textarea id="sess-notes" rows="3" placeholder="What's this session for? Anything future-you should know."></textarea>
-                </div>
+                <details class="more-details" id="sess-more">
+                    <summary>More details</summary>
+                    <div class="form-row">
+                        <label for="sess-take">Take number</label>
+                        <input id="sess-take" type="number" min="1" step="1" placeholder="automatic (last + 1)">
+                    </div>
+                    <!-- Mirrored training: the labeler watches one hand while a band
+                         is on the other limb and the wearer moves both sides together
+                         (used when the hand to be predicted cannot be measured).
+                         Captures in a mirrored session are tagged mirror:true. -->
+                    <div class="form-row">
+                        <label for="sess-mirrored">Mirrored</label>
+                        <select id="sess-mirrored">
+                            <option value="">No, the labels come from the banded arm's own hand</option>
+                            <option value="left">Yes, labels measured on the left hand</option>
+                            <option value="right">Yes, labels measured on the right hand</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label for="sess-gestures">Planned gestures</label>
+                        <input id="sess-gestures" type="text" placeholder="separate with commas, e.g. open hand, fist, pinch">
+                    </div>
+                    <div class="form-row">
+                        <label for="sess-video">Video note</label>
+                        <input id="sess-video" type="text" placeholder="file name or note for a headset or screen video (optional)">
+                    </div>
+                    <div class="form-row">
+                        <label for="sess-tags">Tags</label>
+                        <input id="sess-tags" type="text" placeholder="separate with commas">
+                    </div>
+                    <div class="form-row">
+                        <label for="sess-notes">Notes</label>
+                        <textarea id="sess-notes" rows="3" placeholder="What is this session for? Anything worth remembering later."></textarea>
+                    </div>
+                </details>
+                <div id="sess-error" class="form-error" role="alert" hidden></div>
                 <div class="form-actions">
                     <button type="button" class="modal-close" data-close="1">Cancel</button>
-                    <button type="submit" class="primary">Start session</button>
+                    <button type="submit" class="primary" id="sess-submit">Start session</button>
                 </div>
             </form>
         </div>
@@ -600,12 +608,17 @@
                         <option value="">(unspecified)</option>
                         <option value="left">left</option>
                         <option value="right">right</option>
+                        <option value="both">both</option>
                     </select>
                 </div>
                 <div class="form-row">
-                    <label for="meta-subject">Subject</label>
-                    <input id="meta-subject" name="subject" type="text"
-                           placeholder="e.g. S001 / self">
+                    <label for="meta-subject">Participant code</label>
+                    <div class="form-field">
+                        <input id="meta-subject" name="subject" type="text" autocomplete="off"
+                               placeholder="P01 (a code, not a name)" aria-describedby="meta-subject-help">
+                        <div id="meta-subject-help" class="form-hint">Please do not type names. Keep the key that links codes to people somewhere else.</div>
+                        <div id="meta-subject-warn" class="form-hint warn" role="status" hidden></div>
+                    </div>
                 </div>
                 <div class="form-row">
                     <label for="meta-gesture">Gesture / motion</label>
@@ -626,6 +639,7 @@
                     <label>Auto (recording-time)</label>
                     <pre id="meta-auto" class="meta-readonly"></pre>
                 </div>
+                <div id="meta-error" class="form-error" role="alert" hidden></div>
                 <div class="form-actions">
                     <button type="button" class="modal-close" data-close="1">Cancel</button>
                     <button type="submit" class="primary">Save</button>
