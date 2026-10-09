@@ -670,8 +670,8 @@ def assets_fetch(data_dir, with_nosimd, force):
         click.echo(f"Done. {len(got)} file(s) downloaded and checked.")
     else:
         click.echo("Done. Everything was already in place and correct.")
-    click.echo("Restart `openmuscle web` if it is running, then reload the page: the camera "
-               "page should say 'tracker: ready (local)'.")
+    click.echo("If `openmuscle web` is running, just reload the page in your browser (no "
+               "restart needed): the camera page should say 'tracker: ready (local)'.")
 
 
 @assets.command("status")

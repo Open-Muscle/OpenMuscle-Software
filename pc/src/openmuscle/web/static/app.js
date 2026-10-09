@@ -1,4 +1,4 @@
-// OpenMuscle Web UI — live heatmap, recording, capture management.
+// OpenMuscle Web UI: live heatmap, recording, capture management.
 // Single-page vanilla JS. No bundler, no framework.
 
 const wsStatus    = document.getElementById('ws-status');
@@ -158,7 +158,7 @@ document.querySelectorAll('[data-storage-copy]').forEach(btn => {
 // Per-user pick preferences that survive a refresh
 const STORE_SENSOR = 'om.sensor_device_id';
 const STORE_LABEL  = 'om.label_device_id';
-const STORE_HAND   = 'om.hand_target';      // last successfully-applied "host:port" — auto-restored on next launch
+const STORE_HAND   = 'om.hand_target';      // last successfully-applied "host:port", auto-restored on next launch
 const STORE_LABEL_SOURCE = 'om.label_source';   // vr | lask5 | none (Record plan input)
 const STORE_LABEL_SOURCE_USER = 'om.label_source_user';   // '1' once the user picks one
 
@@ -238,7 +238,7 @@ function handleTick(msg) {
     renderRecording();
     renderRecordPlan();
     // LASK5: render whichever LASK device is currently streaming.
-    // (We don't require it to be the "selected" device — operators usually
+    // (We don't require it to be the "selected" device; operators usually
     // want to see the FlexGrid heatmap and the LASK pistons at the same time.)
     const lask = lastDevices.find(d => d.device_type === 'lask5');
     renderLask(lask);
@@ -841,7 +841,7 @@ function formatUptime(s) {
 
 // ---------- heatmap ----------
 
-// Heatmap color/range tunables — user can adjust to taste later.
+// Heatmap color/range tunables; user can adjust to taste later.
 const HEATMAP_NOISE_GATE = 8;       // below this, treat as "untouched"
 const HEATMAP_VMAX_DEFAULT = 2000;  // ADC value that maps to peak color
 let heatmapVmax = HEATMAP_VMAX_DEFAULT;
@@ -944,7 +944,7 @@ function drawHeatmapInto(dev, canvasEl, labelEl) {
     const cellW = w / cols;
     const cellH = h / rows;
 
-    // Solid background — cells fully overdraw it.
+    // Solid background; cells fully overdraw it.
     cx.fillStyle = '#1a1f2b';
     cx.fillRect(0, 0, w, h);
 
@@ -953,7 +953,7 @@ function drawHeatmapInto(dev, canvasEl, labelEl) {
             const v = matrix[c][r];
             cx.fillStyle = pressureColor(v, heatmapVmax);
             cx.fillRect(c * cellW, r * cellH, cellW - 1, cellH - 1);
-            // Show numeric value once it's above the noise gate — useful for
+            // Show numeric value once it's above the noise gate; useful for
             // seeing exactly how much "bleed" a neighbor cell has.
             if (v >= 50) {
                 const t = v / heatmapVmax;
@@ -1191,7 +1191,7 @@ function renderActiveSession() {
         }
     } else if (_activeSessionSig !== 'NONE') {
         _activeSessionSig = 'NONE';
-        activeSessionArea.innerHTML = '<div class="session-empty">No active session — recordings won\'t be grouped. Click "New session" to start one.</div>';
+        activeSessionArea.innerHTML = '<div class="session-empty">No active session: recordings won\'t be grouped. Click "New session" to start one.</div>';
         sessionStartBtn.disabled = false;
         sessionStartBtn.title = '';
     }
@@ -1329,7 +1329,7 @@ linkAddBtn.onclick = async () => {
 };
 
 async function removeCaptureFromSession(sessionId, captureName) {
-    if (!confirm(`Remove ${captureName} from this session?\n(The capture file itself stays — just the link is cleared.)`)) return;
+    if (!confirm(`Remove ${captureName} from this session?\n(The capture file itself stays; just the link is cleared.)`)) return;
     try {
         const r = await fetch(
             `/api/sessions/${encodeURIComponent(sessionId)}/captures/${encodeURIComponent(captureName)}`,
@@ -2513,7 +2513,7 @@ function renderCaptures(list) {
 // Render the compact meta column on a capture row. Stays empty (italic
 // 'no meta') until the user fills it in via the edit modal.
 function renderCaptureMetaSummary(meta) {
-    if (!meta) return '<span class="cap-meta-summary empty">— click edit to annotate</span>';
+    if (!meta) return '<span class="cap-meta-summary empty">click edit to annotate</span>';
     const parts = [];
     if (meta.arm) {
         const cls = 'arm-' + (['left', 'right', 'both'].includes(meta.arm) ? meta.arm : 'right');
@@ -2530,7 +2530,7 @@ function renderCaptureMetaSummary(meta) {
     const noteFlag = meta.has_notes ? ' <span class="tag">📝 notes</span>' : '';
     const body = (inline || tagBits || noteFlag)
         ? `${inline}${tagBits ? ' ' + tagBits : ''}${noteFlag}`
-        : '<span class="empty">— click edit to annotate</span>';
+        : '<span class="empty">click edit to annotate</span>';
     return `<span class="cap-meta-summary">${body}</span>`;
 }
 
@@ -3482,7 +3482,7 @@ inferHandInput.addEventListener('keydown', (e) => {
 // the operator can see at a glance whether the model is over- or under-
 // shooting each finger.
 //
-// CLOSE_THRESHOLD picked at 0.05 (5% of the 0..1 scale) — below that, the
+// CLOSE_THRESHOLD picked at 0.05 (5% of the 0..1 scale); below that, the
 // difference is below the noise floor of the LASK5 measurement itself.
 const RESIDUAL_CLOSE_THRESHOLD = 0.05;
 

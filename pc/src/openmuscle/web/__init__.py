@@ -1,1 +1,1 @@
-"""Web UI for OpenMuscle — live heatmap, recording, and capture management."""
+"""Web UI for OpenMuscle: live heatmap, recording, and capture management."""
