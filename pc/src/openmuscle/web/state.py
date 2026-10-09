@@ -72,6 +72,7 @@ from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.discovery import DiscoveryManager
 from openmuscle.forearm import forearm_roll, joints_from_flat
 from openmuscle import hand_angles
+from openmuscle import take_limits
 from openmuscle.quality import (
     CellActivityTracker, LabelActivityTracker, evaluate_take, quality_of,
     scan_capture_csv, summarize_take, worst_band, LABEL_IDLE_FRACTION,
@@ -1304,6 +1305,9 @@ class AppState:
                 # Server-side verdict (good | check | bad + plain reasons) so
                 # the dashboard shows exactly what will be saved with the take.
                 "quality": evaluate_take(dict(live_q, live=True)),
+                # How long a take should be (take_limits.py), so the live status
+                # can tell the operator how long to keep recording.
+                "limits": take_limits.as_dict(),
             }
         return {
             "type": "tick",
@@ -1961,7 +1965,7 @@ class AppState:
                     rec.path.name, rec.label_width_mismatch_count,
                     rec.locked_label_count))
         # Persist final stats into the meta sidecar so list_captures() can
-        # surface rows/duration for the dashboard's capture filters and junk
+        # surface rows/duration for the dashboard's capture filters and short-take
         # detection without re-reading every CSV.
         # write_capture_meta shallow-merges the "auto" dict, so adding the
         # new "final" key leaves the seeded auto.* fields intact.
@@ -1982,6 +1986,8 @@ class AppState:
             self.log_buffer.warn("meta",
                 "could not persist final stats for {}: {}".format(
                     rec.path.name, e))
+        short = take_limits.is_too_short(rows=rec.row_count,
+                                         duration_s=round(rec.duration_s, 1))
         result = {
             "filename": rec.path.name,
             "rows": rec.row_count,
@@ -1999,6 +2005,13 @@ class AppState:
             "quality": {"verdict": quality["verdict"],
                         "reasons": quality["reasons"],
                         "flags": quality["flags"]},
+            # Short takes are saved and listed, never dropped; the UI tags them
+            # and keeps them out of the one-click Train selection.
+            "too_short": short,
+            "short_note": (take_limits.short_note(rec.row_count,
+                                                  round(rec.duration_s, 1))
+                           if short else None),
+            "limits": take_limits.as_dict(),
             "flat_cells": qstats["flat_cells"],
             "cells_total": qstats["cells_total"],
             "sidecars": {
@@ -2043,9 +2056,13 @@ class AppState:
                     "session_id": (meta.get("auto") or {}).get("session_id"),
                 }
             # Final stats written by stop_recording(); legacy captures lack
-            # them and return nulls (the dashboard falls back to size_bytes
-            # for junk detection).
+            # them and return nulls (too_short falls back to size_bytes).
             fin = ((meta or {}).get("auto") or {}).get("final") or {}
+            # Below the shared minimum take length (take_limits.py); legacy
+            # takes without stored stats are judged by file size.
+            short = take_limits.is_too_short(
+                rows=fin.get("rows"), duration_s=fin.get("duration_s"),
+                size_bytes=stat.st_size)
             out.append({
                 "name": p.name,
                 "size_bytes": stat.st_size,
@@ -2061,6 +2078,10 @@ class AppState:
                 "created_ms": meta.get("created_ms") if meta else None,
                 "rows": fin.get("rows"),
                 "duration_s": fin.get("duration_s"),
+                "too_short": short,
+                "short_note": (take_limits.short_note(fin.get("rows"),
+                                                      fin.get("duration_s"))
+                               if short else None),
                 # {verdict: good|check|bad, reasons, flags}; None for takes
                 # recorded before quality was persisted (see capture_quality).
                 "quality": quality_of(fin),
@@ -2704,6 +2725,7 @@ class AppState:
 
         found = []
         bad_captures = []
+        short_captures = []
         for name in capture_names:
             p = self.capture_path(name)
             if p is None:
@@ -2719,6 +2741,17 @@ class AppState:
                 self.log_buffer.warn("training", "quality check failed for {}: {}".format(name, e))
             if q and q.get("verdict") == "bad":
                 bad_captures.append({"name": name, "reasons": q.get("reasons") or []})
+            # Short takes are trained on too (the operator chose them), but
+            # reported so the UI can say they add little.
+            fin = ((self.read_capture_meta(name) or {}).get("auto") or {}).get("final") or {}
+            if take_limits.is_too_short(rows=fin.get("rows"),
+                                        duration_s=fin.get("duration_s"),
+                                        size_bytes=p.stat().st_size):
+                short_captures.append(name)
+        if short_captures:
+            self.log_buffer.warn("training", "training includes {} take(s) shorter than {} s: {}".format(
+                len(short_captures), int(take_limits.MIN_TAKE_SECONDS),
+                ", ".join(short_captures)))
         if bad_captures:
             self.log_buffer.warn("training", "training includes {} bad take(s): {}".format(
                 len(bad_captures), ", ".join(b["name"] for b in bad_captures)))
@@ -2862,6 +2895,8 @@ class AppState:
             "captures": list(capture_names),
             # Selected takes whose quality verdict is "bad" ({name, reasons}).
             "bad_captures": bad_captures,
+            # Selected takes below the minimum length (take_limits.py).
+            "short_captures": short_captures,
         }
 
     def _autoload_role_models(self) -> None:

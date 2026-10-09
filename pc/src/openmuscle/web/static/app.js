@@ -1234,7 +1234,7 @@ function renderPastSessions() {
     }
     pastSessionsList.innerHTML = pastSessions.map(s => {
         const dur = (s.ended_at && s.started_at) ? Math.floor(s.ended_at - s.started_at) : null;
-        const armBit = s.arm ? escapeHtml(OMParticipant.armText(s.arm)) : '—';
+        const armBit = s.arm ? escapeHtml(OMParticipant.armText(s.arm)) : 'no arm set';
         const captureList = Array.isArray(s.captures) ? s.captures : [];
         const captureCount = s.capture_count != null ? s.capture_count : captureList.length;
         const isOpen = expandedSessions.has(s.id);
@@ -1260,7 +1260,7 @@ function renderPastSessions() {
                 <div>
                     <span class="session-caret">${caret}</span>
                     <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                    <span class="session-meta-line">${armBit} · <span title="Participant code">${escapeHtml(OMParticipant.codeOf(s) || '—')}</span> · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                    <span class="session-meta-line">${armBit} · <span title="Participant code">${escapeHtml(OMParticipant.codeOf(s) || 'no code')}</span> · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
                 </div>
                 <div class="session-actions">
                     <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
@@ -1516,6 +1516,34 @@ async function endSession() {
 
 // ---------- recording UI ----------
 
+// The status block is rebuilt only when what it shows changes (the timer ticks
+// once a second, the verdict now and then), and the Details disclosure keeps
+// its open/closed state across rebuilds so a click on it is never lost.
+let _recStatusSig = null;
+let _recDetailsOpen = false;
+
+function setRecStatusHtml(sigParts, build) {
+    const sig = JSON.stringify([sigParts, _recDetailsOpen]);
+    if (sig === _recStatusSig) return;
+    _recStatusSig = sig;
+    recordStatus.innerHTML = build();
+    const d = recordStatus.querySelector('details.rec-details');
+    if (d) d.addEventListener('toggle', () => { _recDetailsOpen = d.open; });
+}
+
+function recSentencesHtml(st) {
+    return (st.sentences || [])
+        .map(t => `<div class="rec-sentence">${escapeHtml(t)}</div>`).join('')
+        + (st.hint ? `<div class="rec-hint">${escapeHtml(st.hint)}</div>` : '');
+}
+
+function recDetailsHtml(st) {
+    return `<details class="rec-details"${_recDetailsOpen ? ' open' : ''}>
+        <summary>Details</summary>
+        ${(st.details || []).map(t => `<div>${escapeHtml(t)}</div>`).join('')}
+    </details>`;
+}
+
 function renderRecording() {
     if (recordingState) {
         recordBtn.textContent = '■ Stop';
@@ -1523,51 +1551,31 @@ function renderRecording() {
         if (recordMultibandBtn) recordMultibandBtn.disabled = true;
 
         const r = recordingState;
-        const rate = (r.match_rate ?? 0);
-        const ratePct = (rate * 100).toFixed(1);
-        let rateCls = 'match-rate-good';
-        if (rate < 0.5)      rateCls = 'match-rate-bad';
-        else if (rate < 0.9) rateCls = 'match-rate-warn';
-
-        const label  = r.label_device_id  || '(none)';
-        // Multi-band: show every tagged band; single-source: just the sensor.
-        const sensorsMap = r.sensors || {};
-        const sensorLine = Object.keys(sensorsMap).length > 1
-            ? 'bands: <b>' + Object.entries(sensorsMap)
-                .map(([id, role]) => `${escapeHtml(role)}:${escapeHtml(id)}`).join(', ') + '</b>'
-            : `sensor: <b>${escapeHtml(r.sensor_device_id || '?')}</b>`;
-
-        // At-a-glance capture-quality verdict so a bad take is caught in real time
-        // (data-capture quality is goal #1). The verdict and its
-        // plain reasons come from the server (quality.py), the same code that
-        // persists the final verdict with the take, so they cannot drift.
-        const seen = r.sensor_frames_seen ?? 0;
-        const q = r.quality || { verdict: 'good', reasons: [] };
-        const vCls = QUALITY_CAP_CLS[q.verdict] || 'cap-good';
-        const verdict = (QUALITY_WORD[q.verdict] || 'Good').toUpperCase();
-        const reasonLines = qualityReasonsHtml(q);
-
+        // The verdict, its flags and the length limits come from the server
+        // (quality.py, take_limits.py); OMRecStatus (rec-status.js) turns them
+        // into the big timer, one plain sentence per problem, and the counters
+        // that sit under "Details".
+        const st = OMRecStatus.live(r);
         const nameLine = r.name_adjusted
             ? `<div class="cap-warn-line">Saving as ${escapeHtml(r.filename)} (that name was already used or had characters a file name cannot hold; your earlier take is untouched)</div>`
             : '';
-        recordStatus.innerHTML = `
-            <div class="cap-verdict ${vCls}">capture: ${verdict}</div>
-            ${nameLine}
-            <div>${escapeHtml(r.filename)} · ${r.rows} paired rows · ${r.duration_s}s · win ${r.window_ms ?? 100}ms</div>
-            <div>${sensorLine} &nbsp; label: <b>${escapeHtml(label)}</b></div>
-            <div>matched: ${r.matched ?? 0} / ${seen}
-                 (<span class="${rateCls}">${ratePct}%</span>)
-                 · unpaired sensor: ${r.unpaired_sensor ?? 0}
-                 · label pkts: ${r.label_packets_seen ?? 0}</div>
-            ${reasonLines}
-        `;
+        setRecStatusHtml(['live', st, r.name_adjusted ? r.filename : ''], () => `
+            <div class="rec-live">
+                <div class="rec-timer" aria-label="Recording time">${escapeHtml(st.timer)}</div>
+                <div class="rec-live-text">
+                    <div class="cap-verdict ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}">${escapeHtml(st.headline)}</div>
+                    ${nameLine}
+                    ${recSentencesHtml(st)}
+                </div>
+            </div>
+            ${recDetailsHtml(st)}`);
     } else {
         recordBtn.textContent = '● Record';
         recordBtn.classList.remove('recording');
         if (recordMultibandBtn) recordMultibandBtn.disabled = false;
         // Keep the post-stop result card (verdict + next-take actions) up
         // until the operator acts on it; the next start clears the flag.
-        if (!_postStopCard) recordStatus.textContent = '';
+        if (!_postStopCard) { recordStatus.textContent = ''; _recStatusSig = null; }
     }
 }
 
@@ -1716,25 +1724,30 @@ let _postStopCard = false;
 
 function showPostStopCard(result) {
     // The verdict is computed server-side at stop and persisted with the take
-    // (quality.py); this card just shows what was saved.
-    const rate = result.match_rate ?? 0;
-    const q = result.quality || { verdict: 'good', reasons: [] };
-    const vCls = QUALITY_CAP_CLS[q.verdict] || 'cap-good';
-    const verdict = (QUALITY_WORD[q.verdict] || 'Good').toUpperCase();
-    const flatLine = qualityReasonsHtml(q);
+    // (quality.py); this card just shows what was saved, in plain words.
+    const st = OMRecStatus.saved(result);
     const sessionBit = activeSession
-        ? ` · linked to ${escapeHtml(activeSession.name || activeSession.id)}`
-        : ' · no session (ungrouped)';
+        ? `Linked to ${escapeHtml(activeSession.name || activeSession.id)}.`
+        : 'Not part of a session.';
+    _recStatusSig = null;
     recordStatus.innerHTML = `
-        <div class="cap-verdict ${vCls}">saved: ${verdict}</div>
-        <div>${escapeHtml(result.filename || '?')} · ${result.rows ?? 0} rows · ${result.duration_s ?? 0}s
-             · match ${(rate * 100).toFixed(1)}%${sessionBit}</div>
-        ${flatLine}
+        <div class="rec-live">
+            <div class="rec-timer" aria-label="Length of the saved take">${escapeHtml(st.timer)}</div>
+            <div class="rec-live-text">
+                <div class="cap-verdict ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}">${escapeHtml(st.headline)}</div>
+                ${recSentencesHtml(st)}
+                <div class="rec-hint">${sessionBit}</div>
+            </div>
+        </div>
+        ${recDetailsHtml(st)}
         <div class="rec-next-actions">
             <button class="link" id="rec-next-take">● Record next take</button>
-            <button class="link" id="rec-go-train">⚙ Go train</button>
+            <button class="link" id="rec-show-file" title="Show this take in your file manager">📂 Show file</button>
+            <button class="link" id="rec-go-train"${st.tooShort ? ' title="Too short to train on, so it is not ticked for you"' : ''}>⚙ Go to Train</button>
         </div>`;
     _postStopCard = true;
+    const showBtn = document.getElementById('rec-show-file');
+    if (showBtn) showBtn.onclick = () => revealCaptureFolder(result.filename);
     const nextBtn = document.getElementById('rec-next-take');
     if (nextBtn) nextBtn.onclick = async () => {
         // Re-arm with a suggested take name; the next click on Record starts.
@@ -1757,8 +1770,9 @@ function showPostStopCard(result) {
     };
     const goTrain = document.getElementById('rec-go-train');
     if (goTrain) goTrain.onclick = () => {
-        // Pre-check the fresh capture so Train is one click away.
-        if (result.filename) {
+        // Pre-check the fresh capture so Train is one click away, unless it
+        // is too short to train on (it stays in the list, just not ticked).
+        if (result.filename && !result.too_short) {
             selectedCaptures.add(result.filename);
             updateSelectionStatus();
         }
@@ -1811,8 +1825,9 @@ async function refreshCaptures() {
 // ---------- captures filter bar ----------
 //
 // Session / date / label-source / hands filters compose with AND; within a
-// chip group an empty selection passes all, multiple picks OR together. Junk
-// takes (too short to train on) hide by default. Replaces the old binary
+// chip group an empty selection passes all, multiple picks OR together. Short
+// takes (under the minimum length, see take_limits.py) are tagged "too short"
+// and stay visible unless the user hides them. Replaces the old binary
 // "active session vs show all" view.
 
 const capFilter = {
@@ -1820,12 +1835,12 @@ const capFilter = {
     days: null,               // null | 1 | 7
     labels: new Set(),        // subset of {'quest','lask5'}
     hands: new Set(),         // subset of {1,2}
-    showJunk: false,
+    showShort: true,
 };
 
 const capFilterSession = document.getElementById('cap-filter-session');
-const capFilterJunk    = document.getElementById('cap-filter-junk');
-const capJunkCount     = document.getElementById('cap-junk-count');
+const capFilterShort   = document.getElementById('cap-filter-short');
+const capShortCount    = document.getElementById('cap-short-count');
 
 // Recording-time epoch ms for date logic + display. Falls back to file mtime
 // for legacy captures; created_ms is preferred because cloud-sync
@@ -1834,13 +1849,49 @@ function captureTimeMs(c) {
     return (c.created_ms != null) ? c.created_ms : c.mtime * 1000;
 }
 
-// Junk = not enough paired rows / seconds to train on. rows/duration_s are
-// the new backend fields; size is the fallback for pre-field captures.
-function captureIsJunk(c) {
-    if (c.rows != null && c.rows < 200) return true;
-    if (c.duration_s != null && c.duration_s < 10) return true;
-    if (c.rows == null && c.size_bytes < 51200) return true;
-    return false;
+// Too short to train on: decided by the server from the take's rows and
+// length (take_limits.py), with file size as the fallback for old takes.
+function captureIsShort(c) {
+    return !!c.too_short;
+}
+
+// Plain words for the filters currently narrowing the list, for the
+// "nothing matches" message.
+function describeCaptureFilters() {
+    const parts = [];
+    if (capFilter.session === '__active__') parts.push('the active session only');
+    else if (capFilter.session === '__none__') parts.push('takes that are not in a session');
+    else if (capFilter.session !== '__all__') {
+        const sess = [activeSession, ...pastSessions].find(x => x && x.id === capFilter.session);
+        parts.push('session ' + (sess ? (sess.name || sess.id) : capFilter.session));
+    }
+    if (capFilter.days === 1) parts.push('recorded today');
+    else if (capFilter.days != null) parts.push(`recorded in the last ${capFilter.days} days`);
+    if (capFilter.labels.size) {
+        const names = { quest: 'VR headset', lask5: 'LASK5', webcam: 'webcam' };
+        parts.push('finger data from ' + [...capFilter.labels].map(l => names[l] || l).join(' or '));
+    }
+    if (capFilter.hands.size) {
+        parts.push([...capFilter.hands].sort().map(h => h + (h === 1 ? ' band' : ' bands')).join(' or '));
+    }
+    return parts;
+}
+
+function clearCaptureFilters() {
+    capFilter.days = null;
+    capFilter.labels.clear();
+    capFilter.hands.clear();
+    capFilter.showShort = true;
+    if (capFilterShort) capFilterShort.checked = true;
+    document.querySelectorAll('#cap-filter-date .filter-chip').forEach(b =>
+        b.classList.toggle('on', !b.dataset.days));
+    document.querySelectorAll('#cap-filter-label .filter-chip, #cap-filter-hands .filter-chip').forEach(b =>
+        b.classList.remove('on'));
+    if (capFilterSession && capSessionCombo) {
+        capFilterSession.value = 'All sessions';
+        capSessionCombo.resolve();
+    }
+    renderCaptures(_lastCapturesList);
 }
 
 function applyCaptureFilters(list) {
@@ -2017,8 +2068,8 @@ document.querySelectorAll('#cap-filter-hands .filter-chip').forEach(btn => {
         renderCaptures(_lastCapturesList);
     };
 });
-if (capFilterJunk) capFilterJunk.onchange = () => {
-    capFilter.showJunk = capFilterJunk.checked;
+if (capFilterShort) capFilterShort.onchange = () => {
+    capFilter.showShort = capFilterShort.checked;
     renderCaptures(_lastCapturesList);
 };
 
@@ -2037,25 +2088,26 @@ function renderCaptures(list) {
     }
 
     const filtered = applyCaptureFilters(list);
-    const junkCount = filtered.filter(captureIsJunk).length;
-    const visible = capFilter.showJunk ? filtered : filtered.filter(c => !captureIsJunk(c));
-    if (capJunkCount) capJunkCount.textContent =
-        (!capFilter.showJunk && junkCount) ? `(${junkCount} junk hidden)` : '';
+    const shortCount = filtered.filter(captureIsShort).length;
+    const visible = capFilter.showShort ? filtered : filtered.filter(c => !captureIsShort(c));
+    const shortHidden = capFilter.showShort ? 0 : shortCount;
+    if (capShortCount) capShortCount.textContent =
+        shortHidden ? `(${shortHidden} hidden)` : '';
 
     const sig = JSON.stringify([
         capFilter.session, capFilter.days, [...capFilter.labels],
-        [...capFilter.hands], capFilter.showJunk,
+        [...capFilter.hands], capFilter.showShort,
         activeSession ? activeSession.id : null,
         // meta rides along so an edit re-renders even though mtime is unchanged
         visible.map(c => [c.name, c.mtime, c.session_id || '', c.hands,
                           c.label_source || '', c.rows, c.duration_s, c.meta,
-                          c.quality]),
+                          c.quality, c.too_short, c.short_note]),
     ]);
     if (sig === _capturesSig) { updateSelectionStatus(); return; }
     _capturesSig = sig;
 
     if (!list.length) {
-        capturesBody.innerHTML = '<tr class="empty"><td colspan="7">No captures saved yet.</td></tr>';
+        capturesBody.innerHTML = '<tr class="empty"><td colspan="7">Nothing recorded yet. Press Record to make your first take.</td></tr>';
         updateSelectionStatus();
         return;
     }
@@ -2065,10 +2117,10 @@ function renderCaptures(list) {
         const kb = (c.size_bytes / 1024).toFixed(1);
         const checked = selectedCaptures.has(c.name) ? 'checked' : '';
         const metaCell = renderCaptureMetaSummary(c.meta);
-        const junk = captureIsJunk(c);
-        const trClass = junk ? ' class="junk-row"' : '';
-        const junkTag = junk
-            ? ' <span class="tag" title="too few rows / too short to train on">junk</span>' : '';
+        const short = captureIsShort(c);
+        const trClass = short ? ' class="short-row"' : '';
+        const shortTag = short
+            ? ` <span class="tag tag-short" title="${escapeHtml(c.short_note || 'Too short to train on.')}">too short</span>` : '';
         // 1H/2H badge: was this take one band or a true two-hand capture?
         // (backend list_captures counts left+right roles in the CSV.)
         const hands = c.hands === 2
@@ -2077,7 +2129,7 @@ function renderCaptures(list) {
                 ? '<span class="hands-badge h1" title="single-band capture">1H</span>' : '');
         return `<tr${trClass} data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
-            <td>${hands} ${escapeHtml(c.name)}${junkTag}</td>
+            <td>${hands} ${escapeHtml(c.name)}${shortTag}</td>
             <td>${renderQualityCell(c)}</td>
             <td>${metaCell}</td>
             <td>${kb} KB</td>
@@ -2090,9 +2142,33 @@ function renderCaptures(list) {
             </td>
         </tr>`;
     }).join('');
-    const emptyFiltered = (!visible.length)
-        ? '<tr class="empty"><td colspan="7">No captures match the current filters.</td></tr>' : '';
-    capturesBody.innerHTML = emptyFiltered + rows;
+    // Never an unexplained empty table: say which filters are on, and how many
+    // short takes are tucked away, with a way back in one click.
+    let notice = '';
+    if (!visible.length) {
+        const active = describeCaptureFilters();
+        const why = active.length ? ' Filters on: ' + active.join(', ') + '.' : '';
+        const hid = shortHidden
+            ? ` ${shortHidden} short take${shortHidden === 1 ? ' is' : 's are'} hidden.` : '';
+        notice = `<tr class="empty"><td colspan="7">No takes to show.${escapeHtml(why)}${escapeHtml(hid)} `
+            + (shortHidden ? '<button class="link" data-show-short>Show them</button> ' : '')
+            + (active.length ? '<button class="link" data-clear-filters>Clear filters</button>' : '')
+            + '</td></tr>';
+    } else if (shortHidden) {
+        notice = `<tr class="empty"><td colspan="7">${shortHidden} short take${shortHidden === 1 ? ' is' : 's are'} hidden. `
+            + '<button class="link" data-show-short>Show them</button></td></tr>';
+    }
+    capturesBody.innerHTML = notice + rows;
+    capturesBody.querySelectorAll('button[data-show-short]').forEach(btn => {
+        btn.onclick = () => {
+            capFilter.showShort = true;
+            if (capFilterShort) capFilterShort.checked = true;
+            renderCaptures(_lastCapturesList);
+        };
+    });
+    capturesBody.querySelectorAll('button[data-clear-filters]').forEach(btn => {
+        btn.onclick = clearCaptureFilters;
+    });
     capturesBody.querySelectorAll('button[data-del]').forEach(btn => {
         btn.onclick = async () => {
             const name = btn.dataset.del;

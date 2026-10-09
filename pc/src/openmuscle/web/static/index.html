@@ -11,6 +11,7 @@
     <script src="/static/heatmap-color.js?v=1"></script>
     <script src="/static/guide.js?v=1"></script>
     <script src="/static/participant.js?v=1"></script>
+    <script src="/static/rec-status.js?v=1"></script>
     <!-- Three.js for the quest_hand 3D viewer. Same CDN + version the VR
          client uses. hand-viewer.js is an ES module exposing window.OMHandViewer;
          the plain app.js drives it from handleTick. -->
@@ -326,8 +327,8 @@
                         </div>
                     </div>
                     <!-- Filter bar: compose session /
-                         date / label-source / hands filters with AND; junk
-                         takes hidden by default. app.js applyCaptureFilters(). -->
+                         date / label-source / hands filters with AND; short
+                         takes tagged "too short" (hideable). app.js applyCaptureFilters(). -->
                     <div id="captures-filterbar" class="filter-bar">
                         <!-- Typeahead session picker (was a <select>; same id
                              kept so app.js/CSS churn stays minimal). Empty
@@ -349,8 +350,8 @@
                             <button class="filter-chip" data-hands="1">1H</button>
                             <button class="filter-chip" data-hands="2">2H</button>
                         </div>
-                        <label class="filter-junk"><input type="checkbox" id="cap-filter-junk"> show junk
-                            <span id="cap-junk-count" class="sel-status"></span></label>
+                        <label class="filter-short"><input type="checkbox" id="cap-filter-short" checked> show short takes
+                            <span id="cap-short-count" class="sel-status"></span></label>
                     </div>
                     <table id="captures-table">
                         <thead>
