@@ -78,9 +78,11 @@ You only do this once per headset. The CA stays trusted across Horizon OS update
 
 ### 3. Start the server with HTTPS
 
-`openmuscle web` AUTO-LOADS the TLS pair when it's configured, so you do NOT have
-to pass `--ssl-*` every time. To configure it once for any directory, drop the
-mkcert pair into `~/.openmuscle/` (on Windows: `C:\Users\<you>\.openmuscle\`):
+`openmuscle web --vr` finds the TLS pair for you, so you do NOT have to pass
+`--ssl-*` every time (`--vr` also listens on the LAN so the headset can reach the
+PC). A plain `openmuscle web` stays on http://localhost and never touches the
+certificates. To configure the pair once for any directory, drop the mkcert pair
+into `~/.openmuscle/` (on Windows: `C:\Users\<you>\.openmuscle\`):
 
 ```powershell
 mkdir $HOME\.openmuscle -Force
@@ -90,24 +92,24 @@ copy vr-cert.pem,vr-key.pem $HOME\.openmuscle\
 Then, from anywhere:
 
 ```powershell
-openmuscle web
+openmuscle web --vr
 ```
 
-You'll see:
+Along with the usual banner (address, data folder, "leave this window open") you'll see:
 
 ```
-OpenMuscle web UI: https://localhost:8000
-Listening for devices on UDP 3141
 TLS: cert=...\vr-cert.pem  key=...\vr-key.pem  (from ~/.openmuscle/)
+     Your browser may warn about the certificate on this computer; ...
 WebXR URL for the Quest: https://<your-LAN-ip>:8000/vr?mode=ar&arm=both
 ```
 
 Search order (first match wins): explicit `--ssl-certfile/--ssl-keyfile` →
 `OPENMUSCLE_SSL_CERTFILE`/`OPENMUSCLE_SSL_KEYFILE` env vars → `~/.openmuscle/` →
 the current directory (`vr-cert.pem` + `vr-key.pem`). If NO pair is found,
-`openmuscle web` serves plain HTTP and prints a notice telling you WebXR needs
-HTTPS and how to fix it. `start-vr-https.bat` (which passes the flags explicitly
-from `pc/`) still works too.
+`openmuscle web --vr` serves plain HTTP and prints a notice telling you WebXR
+needs HTTPS and how to fix it. `start-vr-https.bat` (which passes the flags
+explicitly from `pc/`) still works too. Explicit `--ssl-certfile/--ssl-keyfile`
+also opens the LAN, so the headset can connect.
 
 ## Per-session flow
 
@@ -126,7 +128,7 @@ from `pc/`) still works too.
    - **Pinch gesture**: pinch index + thumb on the captured hand and hold for ~1 second. A yellow ring on the index tip fills during the hold; release triggers the toggle.
 9. Do your gesture set. For the first FlexGrid V3 training run we focus on **index / middle / ring / pinky finger curls** — the thumb is driven by intrinsic hand muscles the FlexGrid can't see, so it's excluded.
 10. **Stop recording** the same way.
-11. Take the headset off. The capture is in `data/raw/merged/`:
+11. Take the headset off. The capture is in `~/OpenMuscle/captures/` (the banner printed the exact path):
 
     ```
     capture_<ts>.csv                  # paired (sensor + 182 joint floats)
@@ -136,7 +138,7 @@ from `pc/`) still works too.
     capture_<ts>.meta.json            # auto.label_source="quest_hand" + your tags
     ```
 
-12. **Train**: in the desktop UI's Captures panel, tick your new capture(s) and hit **Train selected**. Or from CLI: `openmuscle train data/raw/merged/capture_<ts>.csv`.
+12. **Train**: in the desktop UI's Captures panel, tick your new capture(s) and hit **Train selected**. Or from CLI: `openmuscle train ~/OpenMuscle/captures/capture_<ts>.csv`.
 
 ## Troubleshooting
 

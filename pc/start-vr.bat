@@ -111,10 +111,11 @@ if errorlevel 1 (
 )
 
 REM --- 4. Start the server in its own window ---------------------------------
-REM cd into pc/ so openmuscle's default captures dir lands inside the repo.
+REM Recordings are saved under %USERPROFILE%\OpenMuscle, whatever folder this runs from.
+REM The Quest reaches the PC through `adb reverse`, so localhost-only is enough.
 echo Starting OpenMuscle web server on port %PORT%...
 pushd "%REPO%"
-start "OpenMuscle VR Server" cmd /k openmuscle web --port %PORT%
+start "OpenMuscle VR Server" cmd /k openmuscle web --port %PORT% --no-browser
 popd
 
 REM --- 5. Wait for the server to respond -------------------------------------
