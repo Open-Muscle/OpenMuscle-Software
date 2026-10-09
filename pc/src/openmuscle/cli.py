@@ -8,6 +8,9 @@ Usage:
     openmuscle simulate    Send synthetic or replayed sensor data
     openmuscle models      List trained models
     openmuscle web         Launch the browser-based UI (live + record + captures)
+
+Everything is saved under one folder, ~/OpenMuscle (override with OPENMUSCLE_HOME
+or `openmuscle web --data-dir`).
 """
 
 import click
@@ -65,16 +68,97 @@ def _lan_ip():
         return "<your-LAN-ip>"
 
 
+def _port_free(host, port):
+    """True when a TCP listener could bind host:port right now."""
+    import socket
+    import sys
+    bind_host = host if host not in ("", "localhost") else "127.0.0.1"
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if not sys.platform.startswith("win"):
+            # Same as uvicorn: a lingering TIME_WAIT must not read as "busy".
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((bind_host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _pick_port(host, port, explicit):
+    """Return a free HTTP port, never a traceback.
+
+    A port the user asked for with --port must be free (clear one-line error
+    otherwise). The default 8000 falls back to the next free port up to 8010 and
+    says so, e.g. when another OpenMuscle window is already running.
+    """
+    if _port_free(host, port):
+        return port
+    if explicit:
+        raise click.ClickException(
+            f"Port {port} is already in use. Is OpenMuscle already running in "
+            f"another window? Try http://localhost:{port} , or pick another "
+            f"port with --port.")
+    for alt in range(port + 1, port + 11):
+        if _port_free(host, alt):
+            click.echo(f"Port {port} is already in use (OpenMuscle may already be "
+                       f"running in another window), so using port {alt} instead.")
+            return alt
+    raise click.ClickException(
+        f"Ports {port} to {port + 10} are all in use. Close other programs or "
+        f"pick a port with --port.")
+
+
+def _echo_vr_help(port, tls_source, ssl_certfile, ssl_keyfile):
+    """The Quest / WebXR / mkcert guidance. Only shown with --vr or --ssl-*."""
+    if ssl_certfile:
+        click.echo(f"TLS: cert={ssl_certfile}  key={ssl_keyfile}  (from {tls_source})")
+        click.echo("     Your browser may warn about the certificate on this computer; "
+                   "the headset trusts it once the mkcert root CA is installed there.")
+        click.echo(f"WebXR URL for the Quest: https://{_lan_ip()}:{port}/vr?mode=ar&arm=both")
+        return
+    click.echo("")
+    click.echo("  --vr: no TLS certificate found, so serving plain HTTP.")
+    click.echo("      WebXR hand-tracking on the Quest over the LAN REQUIRES HTTPS.")
+    click.echo("      One-time fix: make a mkcert pair named vr-cert.pem + vr-key.pem")
+    click.echo("      and drop it in ~/.openmuscle/ (auto-loaded from anywhere). See")
+    click.echo("      docs/vr-setup.md. Or set OPENMUSCLE_SSL_CERTFILE/KEYFILE, or pass")
+    click.echo("      --ssl-certfile/--ssl-keyfile, or run from a folder holding the pair.")
+    click.echo(f"      Tethered alt (no cert): adb reverse tcp:{port} tcp:{port}  ->  "
+               f"http://localhost:{port}/vr")
+    click.echo("")
+
+
 @main.command()
-@click.option("--host", default="0.0.0.0", help="HTTP bind address")
-@click.option("--port", default=8000, help="HTTP port")
+@click.option("--host", default=None,
+              help="HTTP bind address. Default 127.0.0.1 (this computer only). "
+                   "Use --lan to share the page with other devices on your network.")
+@click.option("--lan", is_flag=True, default=False,
+              help="Listen on all network interfaces (0.0.0.0) so a phone or "
+                   "headset on the same Wi-Fi can open the page. Anyone on that "
+                   "network can reach it.")
+@click.option("--vr", is_flag=True, default=False,
+              help="Headset workflow: implies --lan, and serves https when a mkcert "
+                   "pair (vr-cert.pem + vr-key.pem) is found in ~/.openmuscle/, "
+                   "$OPENMUSCLE_SSL_CERTFILE/KEYFILE, or the current directory.")
+@click.option("--port", default=8000, help="HTTP port (default 8000; if that one is busy "
+                                           "the next free port is used)")
 @click.option("--udp-port", default=3141, help="UDP port for sensor/label data frames")
 @click.option("--announce-port", default=3140,
               help="UDP port for V4 discovery announce beacons (PROTOCOL.md v1.0 "
                    "splits beacons onto 3140; 3141 is data-only). The shared-3141 "
                    "type-tap stays as a fallback.")
+@click.option("--data-dir", default=None, type=click.Path(file_okay=False),
+              help="Folder for captures, sessions and models "
+                   "(default ~/OpenMuscle; env OPENMUSCLE_HOME also works).")
 @click.option("--captures-dir", default=None,
-              help="Directory to save captures (default: data/raw/merged)")
+              help="Directory to save captures (default: <data folder>/captures). "
+                   "Sessions are saved in a 'sessions' folder next to it.")
+@click.option("--no-browser", is_flag=True, default=False,
+              help="Do not open the page in your web browser automatically.")
+@click.option("--verbose", is_flag=True, default=False,
+              help="Show server request logs and low-level startup lines.")
 @click.option("--model", "model_path", default=None, type=click.Path(),
               help="Path to a trained model.pkl. When set, FlexGrid frames are run "
                    "through the model and predictions appear in the LASK Inference panel.")
@@ -92,10 +176,11 @@ def _lan_ip():
                    "outputs are forwarded over UDP as 'PC,a1,a2,a3,a4,a5'. "
                    "Default port if omitted: 3145.")
 @click.option("--ssl-certfile", default=None, type=click.Path(exists=True, dir_okay=False),
-              help="Path to TLS cert (PEM). Required for WebXR over LAN -- Quest "
-                   "Browser refuses hand-tracking on plain HTTP. Generate with "
+              help="Path to TLS cert (PEM); forces https. Needed for WebXR over LAN "
+                   "(Quest Browser refuses hand-tracking on plain HTTP). Generate with "
                    "`mkcert <host-ip> <hostname>` and install the mkcert root CA "
-                   "on the headset (Settings -> Security -> Install a certificate).")
+                   "on the headset (Settings -> Security -> Install a certificate). "
+                   "Or just use --vr if the pair is in ~/.openmuscle/.")
 @click.option("--ssl-keyfile", default=None, type=click.Path(exists=True, dir_okay=False),
               help="Path to TLS private key (PEM). Pair with --ssl-certfile.")
 @click.option("--debug", "debug", is_flag=True, default=False,
@@ -104,13 +189,36 @@ def _lan_ip():
                    "unlock the verbose debug dashboard (hardware health, raw packets, "
                    "per-session eval). The server is LAN-open + unauthenticated in this "
                    "mode -- lab bench / demo use only, not the internet.")
-def web(host, port, udp_port, announce_port, captures_dir, model_path, model_left,
-        model_right, hand, ssl_certfile, ssl_keyfile, debug):
-    """Launch the browser-based UI with live heatmap, recording, and captures."""
+@click.pass_context
+def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_dir,
+        no_browser, verbose, model_path, model_left, model_right, hand, ssl_certfile,
+        ssl_keyfile, debug):
+    """Launch the browser-based UI with live heatmap, recording, and captures.
+
+    Opens http://localhost:8000 in your browser and saves everything under
+    ~/OpenMuscle. Leave the window open; press Ctrl+C to stop.
+    """
+    from openmuscle import paths
     from openmuscle.web.app import serve
-    # Auto-load the mkcert TLS pair if it's configured, so plain `openmuscle web`
-    # serves HTTPS for the Quest without re-passing --ssl-* every time.
-    ssl_certfile, ssl_keyfile, tls_source = _resolve_tls(ssl_certfile, ssl_keyfile)
+
+    if data_dir:
+        paths.set_data_root(data_dir)
+    paths.ensure_data_dirs()
+
+    # Bind address: an explicit --host wins; --lan, --vr and --debug open the LAN;
+    # otherwise this computer only.
+    # Explicit --ssl-* also opens the LAN: that flag pair is the documented way to
+    # serve the headset, which can only reach the PC over the network.
+    if host is None:
+        host = "0.0.0.0" if (lan or vr or debug or ssl_certfile or ssl_keyfile) else "127.0.0.1"
+
+    # TLS is opt-in: explicit --ssl-* always forces https, --vr looks up the mkcert
+    # pair, and a plain `openmuscle web` stays http whatever certs happen to exist.
+    tls_source = None
+    if ssl_certfile or ssl_keyfile:
+        ssl_certfile, ssl_keyfile, tls_source = _resolve_tls(ssl_certfile, ssl_keyfile)
+    elif vr:
+        ssl_certfile, ssl_keyfile, tls_source = _resolve_tls(None, None)
     # mkcert produces a cert AND key; we need both or neither.
     if bool(ssl_certfile) != bool(ssl_keyfile):
         raise click.BadParameter("--ssl-certfile and --ssl-keyfile must be used together")
@@ -122,23 +230,38 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, model_lef
                        "devices connect without the mkcert root CA.")
         ssl_certfile = ssl_keyfile = None
         tls_source = None
+    vr_mode = bool(vr or ssl_certfile)
+
+    port_explicit = ctx.get_parameter_source("port").name == "COMMANDLINE"
+    port = _pick_port(host, port, port_explicit)
+
     scheme = "https" if ssl_certfile else "http"
-    click.echo(f"OpenMuscle web UI: {scheme}://{host if host != '0.0.0.0' else 'localhost'}:{port}")
-    click.echo(f"Listening for devices on UDP {udp_port}")
-    if ssl_certfile:
-        click.echo(f"TLS: cert={ssl_certfile}  key={ssl_keyfile}  (from {tls_source})")
-        click.echo(f"WebXR URL for the Quest: https://{_lan_ip()}:{port}/vr?mode=ar&arm=both")
-    else:
+    url = f"{scheme}://localhost:{port}"
+    captures_path = paths.absolute(captures_dir) if captures_dir else paths.captures_dir()
+
+    click.echo("OpenMuscle is running.")
+    click.echo("")
+    click.echo(f"  Open this address in your browser:  {url}"
+               + ("" if no_browser else "   (opening it for you)"))
+    click.echo(f"  Your data folder:                   {paths.data_root()}")
+    click.echo(f"  Recordings are saved in:            {captures_path}")
+    if host not in ("127.0.0.1", "localhost"):
+        click.echo(f"  Other devices on your network:      {scheme}://{_lan_ip()}:{port}")
+    click.echo("")
+    click.echo("  Leave this window open while you work. Close it or press Ctrl+C to stop.")
+    click.echo("  If your computer asks whether to allow OpenMuscle or Python through the")
+    click.echo("  firewall, choose Allow (Private networks).")
+    click.echo("")
+    click.echo("  Waiting for bands... make sure the bands and this computer are on the same Wi-Fi.")
+    hint = paths.legacy_hint()
+    if hint:
         click.echo("")
-        click.echo("  !!  No TLS certificate found -- serving plain HTTP.")
-        click.echo("      WebXR hand-tracking on the Quest over the LAN REQUIRES HTTPS.")
-        click.echo("      One-time fix: make a mkcert pair named vr-cert.pem + vr-key.pem")
-        click.echo("      and drop it in ~/.openmuscle/ (auto-loaded from anywhere). See")
-        click.echo("      docs/vr-setup.md. Or set OPENMUSCLE_SSL_CERTFILE/KEYFILE, or pass")
-        click.echo("      --ssl-certfile/--ssl-keyfile, or run from a folder holding the pair.")
-        click.echo(f"      Tethered alt (no cert): adb reverse tcp:{port} tcp:{port}  ->  "
-                   f"http://localhost:{port}/vr")
-        click.echo("")
+        click.echo("  " + hint)
+    click.echo("")
+    if verbose:
+        click.echo(f"Listening for devices on UDP {udp_port}")
+    if vr_mode:
+        _echo_vr_help(port, tls_source, ssl_certfile, ssl_keyfile)
     if model_path:
         click.echo(f"Inference model: {model_path}")
     if model_left:
@@ -164,11 +287,18 @@ def web(host, port, udp_port, announce_port, captures_dir, model_path, model_lef
         click.echo("  ==  Verbose dashboard unlocked; file-manager reveal disabled.")
         click.echo("  ============================================================")
         click.echo("")
-    serve(host=host, port=port, udp_port=udp_port, captures_dir=captures_dir,
+
+    def _device_line(_kind, message):
+        click.echo(message)
+
+    serve(host=host, port=port, udp_port=udp_port,
+          captures_dir=str(captures_path) if captures_dir else None,
           model_path=model_path, model_left=model_left, model_right=model_right,
           hand_target=hand_target,
           ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
-          announce_port=announce_port, debug=debug)
+          announce_port=announce_port, debug=debug,
+          open_browser_url=None if no_browser else url,
+          verbose=verbose, on_device_event=_device_line)
 
 
 @main.command()
@@ -252,7 +382,7 @@ def record(port, output, duration, role):
 @click.argument("data_paths", nargs=-1, required=True,
                 type=click.Path(exists=True, dir_okay=False))
 @click.option("--model-type", default="random_forest", help="Model type to train")
-@click.option("--output", "-o", default=None, help="Output model path (default: data/models/)")
+@click.option("--output", "-o", default=None, help="Output model path (default: the models folder under ~/OpenMuscle)")
 @click.option("--test-split", default=0.2, type=float, help="Test set fraction")
 @click.option("--trees", default=100, type=int, help="Number of trees (RandomForest)")
 @click.option("--role", default=None, type=click.Choice(["left", "right"]),
@@ -349,7 +479,7 @@ def models():
     registry = ModelRegistry()
     model_list = registry.list_models()
     if not model_list:
-        print("No models found in data/models/")
+        print(f"No models found in {registry.base_dir}")
         return
     for m in model_list:
         metrics = m.get("metrics", {})

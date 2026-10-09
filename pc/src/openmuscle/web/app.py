@@ -75,7 +75,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                announce_port: int = 3140,
                model_left: Optional[str] = None,
                model_right: Optional[str] = None,
-               debug: bool = False) -> FastAPI:
+               debug: bool = False,
+               on_device_event=None,
+               quiet: bool = False) -> FastAPI:
     state = AppState(
         udp_port=udp_port,
         captures_dir=captures_dir,
@@ -84,6 +86,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         discovery_announce_port=announce_port,
         model_left=model_left,
         model_right=model_right,
+        on_device_event=on_device_event,
+        quiet=quiet,
     )
 
     # Inbound label sockets (/ws/quest, /ws/gamepad) register here so the
@@ -316,6 +320,13 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         (plain-HTTP + LAN-open); the UI then shows a warning ribbon and the
         verbose panels (hardware health, raw-packet inspector, per-session eval)."""
         return {"debug": bool(getattr(app.state, "debug", False))}
+
+    @app.get("/api/storage")
+    async def get_storage():
+        """Where this server saves things, as absolute paths: the data root plus
+        captures / sessions / models / exports / logs, and a one-line
+        `legacy_hint` when the launch directory still holds older recordings."""
+        return state.storage_info()
 
     # ----- REST: native V4 discovery -----
 
@@ -899,7 +910,38 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     return app
 
 
-def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
+def _open_browser_when_up(host: str, port: int, url: str, wait_s: float = 30.0) -> None:
+    """Open `url` in the default browser exactly once, after the server answers.
+
+    Runs a daemon thread that polls the port (uvicorn binds after this call
+    returns) so the browser never lands on a connection-refused page. Gives up
+    quietly after wait_s; the console already prints the address."""
+    import socket
+    import threading
+    import time
+    import webbrowser
+
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "", "localhost", "::") else host
+
+    def _work():
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            try:
+                with socket.create_connection((probe_host, port), timeout=0.5):
+                    break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            return
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    threading.Thread(target=_work, name="om-open-browser", daemon=True).start()
+
+
+def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
           captures_dir: Optional[str] = None,
           model_path: Optional[str] = None,
           hand_target: Optional[tuple] = None,
@@ -908,8 +950,15 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
           announce_port: int = 3140,
           model_left: Optional[str] = None,
           model_right: Optional[str] = None,
-          debug: bool = False):
+          debug: bool = False,
+          open_browser_url: Optional[str] = None,
+          verbose: bool = False,
+          on_device_event=None):
     """Run the web UI server (blocks).
+
+    open_browser_url: when set, the default browser is opened to this address
+    once (after the server answers on its port). verbose restores uvicorn's
+    request/access logging; by default only warnings reach the console.
 
     Pass ssl_certfile + ssl_keyfile to serve HTTPS -- required for the
     WebXR /vr page since Quest Browser refuses hand-tracking on plain
@@ -926,11 +975,17 @@ def serve(host: str = "0.0.0.0", port: int = 8000, udp_port: int = 3141,
         model_left=model_left,
         model_right=model_right,
         debug=debug,
+        on_device_event=on_device_event,
+        quiet=not verbose,
     )
+    if open_browser_url:
+        _open_browser_when_up(host, port, open_browser_url)
     # timeout_graceful_shutdown bounds the wait: a single Ctrl+C exits within a
     # couple seconds even if a WebSocket (Quest / gamepad / another dashboard
     # tab) is still open, instead of hanging forever. Belt to the lifespan's
     # suspenders (which closes the /ws/live clients it tracks).
-    uvicorn.run(app, host=host, port=port, log_level="info",
+    uvicorn.run(app, host=host, port=port,
+                log_level="info" if verbose else "warning",
+                access_log=verbose,
                 ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
                 timeout_graceful_shutdown=3)

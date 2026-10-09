@@ -6,6 +6,8 @@ import pickle
 from datetime import datetime
 from pathlib import Path
 
+from openmuscle import paths
+
 
 class ModelRegistry:
     """Save, load, and list trained models with metadata.
@@ -15,8 +17,9 @@ class ModelRegistry:
         - metadata.json: training metrics, columns, date
     """
 
-    def __init__(self, base_dir: str = "data/models"):
-        self.base_dir = Path(base_dir)
+    def __init__(self, base_dir: str = None):
+        # Default: <data root>/models (see openmuscle.paths), never cwd-relative.
+        self.base_dir = Path(base_dir) if base_dir else paths.models_dir()
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, model, name: str, metrics: dict = None) -> Path:

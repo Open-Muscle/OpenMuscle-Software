@@ -81,9 +81,12 @@ echo Make sure the Quest has the mkcert root CA installed, otherwise
 echo the browser will warn "Your connection is not private" and refuse
 echo to enable WebXR. See the Cordless Setup wiki page.
 echo.
+echo Recordings are saved in %USERPROFILE%\OpenMuscle\captures
 echo Ctrl-C in this window stops the server.
 echo ============================================================
 echo.
 
 cd /d "%REPO%"
-openmuscle web --ssl-certfile vr-cert.pem --ssl-keyfile vr-key.pem
+REM --vr listens on the LAN so the headset can connect; the explicit cert pair
+REM below wins over any auto-detected one. --no-browser: the headset is the client.
+openmuscle web --vr --ssl-certfile vr-cert.pem --ssl-keyfile vr-key.pem --no-browser

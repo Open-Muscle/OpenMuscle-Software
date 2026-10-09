@@ -6,23 +6,36 @@ A single-page FastAPI app for live monitoring, recording, and (eventually) live 
 
 ```
 pip install -e .             # if not already (uses fastapi, uvicorn, pydantic)
-openmuscle web               # defaults: HTTP :8000, UDP :3141
-# then open http://localhost:8000
+openmuscle web               # http://localhost:8000 (this computer only), UDP :3141
+# your browser opens by itself; leave the window open, Ctrl+C stops it
 ```
+
+Everything you record is saved under `~/OpenMuscle` (`captures/`, `sessions/`,
+`models/`, `exports/`, `logs/`), whichever folder you start from. The banner and
+`GET /api/storage` show the exact absolute path.
 
 Options:
 ```
-openmuscle web --port 8000 --udp-port 3141 --captures-dir data/raw/merged
-openmuscle web --model data/models/random_forest_*/model.pkl   # live ML inference
+openmuscle web --lan                      # listen on 0.0.0.0 so a phone/headset on the Wi-Fi can connect
+openmuscle web --vr                       # headset: --lan plus https from the mkcert pair in ~/.openmuscle/
+openmuscle web --no-browser               # do not open the browser automatically
+openmuscle web --data-dir D:\OpenMuscle   # move the data root (or set OPENMUSCLE_HOME)
+openmuscle web --verbose                  # show request logs
+openmuscle web --port 8000 --udp-port 3141 --captures-dir /some/folder
+openmuscle web --model ~/OpenMuscle/models/random_forest_*/model.pkl   # live ML inference
 openmuscle web --model X --hand 10.0.0.55                      # also forward to robot hand
 openmuscle web --model X --hand 10.0.0.55:3145                 # custom hand port
 ```
 
-First-run on Windows: Defender will prompt for inbound UDP — click **Allow** on both Private and Public, or pre-add: `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3141" -Direction Inbound -Protocol UDP -LocalPort 3141 -Action Allow` (admin PowerShell).
+**Firewall.** The bands send UDP to this computer (port 3141 for data, 3140 for discovery beacons), so the first run may ask whether to allow Python through the firewall:
+
+- **Windows:** choose **Allow** for **Private networks**. To pre-add the rules instead (admin PowerShell): `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3140-3141" -Direction Inbound -Protocol UDP -LocalPort 3140,3141 -Action Allow`.
+- **macOS:** click **Allow** on "Do you want the application to accept incoming network connections?", and allow Local Network access if macOS asks.
+- **Linux:** if `ufw` is on, `sudo ufw allow 3140:3141/udp`.
 
 ## Debug mode (`--debug`)
 
-`openmuscle web --debug` serves plain HTTP on all interfaces (drops any auto-loaded mkcert cert) so the PC, phone, and Quest all connect with zero cert friction, and unlocks the extra troubleshooting surface. The frontend reads `GET /api/mode` on load; when debug is on it shows a red "LAN-open + unauthenticated" ribbon plus:
+`openmuscle web --debug` serves plain HTTP on all interfaces (drops any mkcert cert, even with `--vr`) so the PC, phone, and Quest all connect with zero cert friction, and unlocks the extra troubleshooting surface. The frontend reads `GET /api/mode` on load; when debug is on it shows a red "LAN-open + unauthenticated" ribbon plus:
 
 - **Debug panel** (per device): stream health (Hz, live/stale, packets, subscribe state), per-channel matrix stats (active/total, max, mean), IMU raw counts + the per-chip scale flag, forearm roll/palm-up for Quest devices, and a freeze-able raw-frame inspector (the selected device's live snapshot as JSON).
 - **Both flexgrid heatmaps at once**, side-by-side or stacked (a per-user toggle), so a two-hand session shows both forearms live.
@@ -44,7 +57,7 @@ Five panels, all live:
 | **Heatmap** | flexgrid matrix | Auto-detects shape (V1 16×4, V3 15×4, future ?×?). Color ramp goes black→purple→pink→orange→yellow, vmax auto-scales upward. Live `max=` and `vmax=` shown in the header. |
 | **LASK5 — Ground Truth** | LASK5 `data.values` + `data.joystick` | 4 vertical piston bars (pink) + mini joystick canvas with crosshair + raw X,Y. Empty-state "no device" if no LASK5 has streamed. |
 | **LASK Inference — Predicted** | `inference` slot in the WS snapshot | 4 blue piston bars + status line. Dimmed and "no model loaded" until the inference plug-in is wired up. |
-| **Record / Captures** | local filesystem | Start/stop recording. CSV lands in `--captures-dir` (default `data/raw/merged/`). Captures list refreshes every 5 s; download or delete inline. |
+| **Record / Captures** | local filesystem | Start/stop recording. CSV lands in `--captures-dir` (default `~/OpenMuscle/captures/`). Captures list refreshes every 5 s; download or delete inline. |
 
 ## Architecture
 
@@ -155,16 +168,16 @@ The typical workflow is: record several short sessions of different motions (ope
 **From the UI:**
 1. Make N recordings; each shows up in the Captures panel.
 2. Tick the checkboxes for the ones you want to include (or the header-row check-all).
-3. Hit **⚙ Train selected**. The captures are combined row-wise into one training set, an RF regressor is fit, the trained model lands in `data/models/random_forest_<timestamp>/`, and — if `activate: true`, the default — the engine is **hot-swapped to use the new model immediately**, no server restart.
+3. Hit **⚙ Train selected**. The captures are combined row-wise into one training set, an RF regressor is fit, the trained model lands in `~/OpenMuscle/models/random_forest_<timestamp>/`, and (if `activate: true`, the default) the engine is **hot-swapped to use the new model immediately**, no server restart.
 4. The new model appears in the **Models** panel below with R², MSE, feature/label counts. Click **use** on any other model to switch back.
 
 Training runs in `asyncio.to_thread()` so the WS broadcast and packet ingest keep flowing for other clients during the fit. On a typical RF with 100 trees + 50k rows + 60 features this is ~10-30s.
 
 **From the CLI:**
 ```
-openmuscle train data/raw/merged/session_a.csv \
-                 data/raw/merged/session_b.csv \
-                 data/raw/merged/session_c.csv
+openmuscle train ~/OpenMuscle/captures/session_a.csv \
+                 ~/OpenMuscle/captures/session_b.csv \
+                 ~/OpenMuscle/captures/session_c.csv
 ```
 
 Variadic positional args: the CLI concats the CSVs to a temp file (same `combine_csvs` helper the web uses), trains, and removes the temp. Single-file invocation still works (`openmuscle train one.csv`).
@@ -210,7 +223,7 @@ Loading a model (`POST /api/inference/model` or the Models panel's `use` button)
 
 ### Future: model hot-swap UI
 
-A dropdown in the UI that lists `data/models/*.pkl` and reloads `AppState.engine` on selection would be a clean follow-up — `InferenceEngine.__init__` already does all the work, so it's a single REST endpoint + a `<select>` in `app.js`.
+A dropdown in the UI that lists the `~/OpenMuscle/models` folders and reloads `AppState.engine` on selection would be a clean follow-up: `InferenceEngine.__init__` already does all the work, so it's a single REST endpoint + a `<select>` in `app.js`.
 
 ### Adding a new device type
 

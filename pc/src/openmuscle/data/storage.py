@@ -58,8 +58,10 @@ class CaptureWriter:
                  schema_version: str = "v1", with_imu: bool = False,
                  with_forearm: bool = False, with_canonical: bool = False):
         if output_path is None:
-            os.makedirs("data/raw/merged", exist_ok=True)
-            output_path = f"data/raw/merged/capture_{int(time.time())}.csv"
+            from openmuscle import paths
+            out_dir = paths.captures_dir()
+            os.makedirs(out_dir, exist_ok=True)
+            output_path = str(out_dir / f"capture_{int(time.time())}.csv")
 
         self.path = Path(output_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)

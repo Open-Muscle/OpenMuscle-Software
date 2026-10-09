@@ -14,9 +14,9 @@ from openmuscle.web.state import AppState
 
 
 def make_model_dir(base, name, role, n_features, n_labels=4, order=0):
-    """Fabricate a registry entry: data/models/<name>/model.pkl + metadata.json,
+    """Fabricate a registry entry: <data root>/models/<name>/model.pkl + metadata.json,
     the exact layout ModelRegistry.save produces (role inside metrics)."""
-    d = base / "data" / "models" / name
+    d = base / "models" / name
     d.mkdir(parents=True)
     model = DummyRegressor(strategy="constant", constant=[0.5] * n_labels)
     X = [[0.0] * n_features, [1.0] * n_features]
@@ -40,7 +40,7 @@ def make_state(tmp_path):
 
 class TestAutoRestore:
     def test_autoloads_newest_per_role(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
         make_model_dir(tmp_path, "random_forest_20260101_000000", "left", 60, order=0)
         newer_left = make_model_dir(tmp_path, "random_forest_20260102_000000", "left", 60, order=1)
         right = make_model_dir(tmp_path, "random_forest_20260102_000001", "right", 60, order=2)
@@ -55,7 +55,7 @@ class TestAutoRestore:
         assert s.inference_enabled is True
 
     def test_untagged_models_never_autoload(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
         # A stale pre-role model (no role in metrics) -- e.g. the 64-feature one.
         make_model_dir(tmp_path, "random_forest_20260101_000000", None, 64)
         s = make_state(tmp_path)
@@ -63,7 +63,7 @@ class TestAutoRestore:
         assert s.inference_enabled is False
 
     def test_no_models_dir_is_fine(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
         s = make_state(tmp_path)
         assert s.engines["left"] is None and s.engines["right"] is None
 
@@ -82,7 +82,7 @@ class TestFeatureGuard:
         assert InferenceEngine(str(path)).n_features == 60   # no band seen yet
 
     def test_set_model_role_guards_against_live_band(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
         stale = make_model_dir(tmp_path, "random_forest_20260101_000000", None, 64)
         s = make_state(tmp_path)
         # Simulate a live 15x4 V4 band tagged left.

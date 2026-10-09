@@ -31,7 +31,6 @@ Before any headset session, you can exercise the entire PC-side quest
 pipeline with the simulator. Two terminals:
 
 ```bash
-cd pc
 openmuscle web                              # terminal 1
 openmuscle simulate --device-type combo     # terminal 2
 ```
@@ -112,7 +111,7 @@ The deliberate-gesture workflow for building training data.
 - Each REC shows a rising row count + match rate in the header while recording.
 - Status strip after each STOP: `saved: capture_<ts>.csv (N rows, match X%)`. Match rate should be well above 0 if both FlexGrid and Quest are streaming.
 - TRAIN status: `trained: R2=<value> ... model loaded ... predict ON`.
-- On the PC, `pc/data/raw/merged/` has the capture CSVs + `.labels.schema.json` + `.meta.json` sidecars, and `pc/data/raw/sessions/` has the session JSON.
+- On the PC, `~/OpenMuscle/captures/` has the capture CSVs + `.labels.schema.json` + `.meta.json` sidecars, and `~/OpenMuscle/sessions/` has the session JSON.
 
 **Watch for:** match rate near 0 (Quest WebSocket not connected, or hands out of camera FOV during capture). Very low R2 is normal for a first small dataset; record more and retrain.
 
@@ -187,7 +186,7 @@ The two-band workflow: capture BOTH arms at once, train one model per hand, and 
 
 **Extra bring-up:** power BOTH FlexGrid bands (one per forearm) and wait for each to join Wi-Fi. If a band does not appear in the Devices/Sources panel (DHCP moved its IP, or its beacon is suppressed because another hub holds it), use the Sources panel **Scan subnet** to find it.
 
-1. **Start the server.** `cd pc` then `openmuscle web`. It auto-loads the mkcert TLS pair from `~/.openmuscle/` (see [`vr-setup.md`](vr-setup.md)) and prints the headset URL.
+1. **Start the server.** Run `openmuscle web --vr`. It listens on the LAN, loads the mkcert TLS pair from `~/.openmuscle/` (see [`vr-setup.md`](vr-setup.md)) and prints the headset URL.
 2. **Tag the bands.** In the PC desktop UI Sources panel, tag one band **left** and the other **right** (tag the LASK5/labeler too if you use one). The tag is which forearm each band is physically on.
 3. **Verify the tags BEFORE recording (the one step that matters most).** Squeeze each band in turn and watch the in-headset status panel + heatmaps: the band you squeeze should be the one whose heatmap lights up, on the side you expect. Both bands should show battery + a non-zero Hz + a green signal dot, and each shows an XYZ orientation gizmo that tilts as you rotate that forearm. If left/right are swapped here, re-tag now -- a swap trains the models backwards.
 4. **Open two-hand AR in the headset:** `/vr?mode=ar&arm=both`, or tap the **AR / Two-hand** preset button on the landing page (no typing in the headset). Hold up BOTH hands: you should see a heatmap per band side by side and joint spheres on both hands.
