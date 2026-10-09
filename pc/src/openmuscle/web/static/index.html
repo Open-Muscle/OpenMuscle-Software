@@ -298,6 +298,26 @@
                 <span class="stage-sub">captures become models · audit honestly · iterate</span>
             </header>
 
+            <!-- Where are my files: absolute folder paths, Open folder (only
+                 offered when this browser is on the same computer as the
+                 server), Copy path, and a low-disk-space warning. Filled by
+                 app.js from GET /api/storage. -->
+            <div id="storage-panel" class="storage-panel" aria-live="polite">
+                <div class="storage-row">
+                    <span class="storage-label">Recordings are saved in</span>
+                    <code class="storage-path" data-storage-path="captures">loading...</code>
+                    <button class="link" data-storage-open="captures" title="Open this folder in your file manager" hidden>Open folder</button>
+                    <button class="link" data-storage-copy="captures" title="Copy the folder path to the clipboard">Copy path</button>
+                </div>
+                <div class="storage-row">
+                    <span class="storage-label">Trained models are saved in</span>
+                    <code class="storage-path" data-storage-path="models">loading...</code>
+                    <button class="link" data-storage-open="models" title="Open this folder in your file manager" hidden>Open folder</button>
+                    <button class="link" data-storage-copy="models" title="Copy the folder path to the clipboard">Copy path</button>
+                </div>
+                <div id="storage-note" class="storage-note" hidden></div>
+            </div>
+
             <!-- Session block (full width) -->
             <div class="capture-session">
                 <div class="capture-session-head">
@@ -321,6 +341,7 @@
                         <h3>Captures</h3>
                         <div class="captures-actions">
                             <span id="captures-sel-status" class="sel-status">0 selected</span>
+                            <button id="captures-export-selected" class="link" disabled title="Pack the selected takes into one zip to send to someone">Export selected</button>
                             <button id="captures-open-folder" class="link" title="Open the captures folder in your file manager">📂 Open folder</button>
                         </div>
                     </div>
@@ -631,6 +652,45 @@
                     <button type="submit" class="primary">Save</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ===== Export modal: size, options, send-back guidance ===== -->
+    <div id="export-modal" class="modal" aria-hidden="true">
+        <div class="modal-backdrop" data-close="1"></div>
+        <div class="modal-content" role="dialog" aria-labelledby="export-modal-title">
+            <header class="modal-header">
+                <h3 id="export-modal-title">Export</h3>
+                <button type="button" class="modal-close" data-close="1" aria-label="Close">&times;</button>
+            </header>
+            <p id="export-what" class="export-what"></p>
+            <p class="export-help">
+                Packs the recordings into one zip file with a plain-language README
+                that explains every file. Trained models are never included.
+            </p>
+            <label class="export-opt">
+                <input type="checkbox" id="export-raw">
+                <span>Include full raw streams <em>(large, usually not needed)</em></span>
+            </label>
+            <label class="export-opt">
+                <input type="checkbox" id="export-notes">
+                <span>Include my notes</span>
+            </label>
+            <p class="export-note">
+                Notes and session names are included if you tick the box or type them
+                in the session, so please keep them free of names. Use a participant
+                code instead.
+            </p>
+            <div class="export-size">
+                Estimated size: <b id="export-size">...</b>
+                <span id="export-size-alt" class="export-size-alt"></span>
+            </div>
+            <div id="export-warn" class="export-warn" hidden></div>
+            <div id="export-result" class="export-result" hidden></div>
+            <div class="form-actions">
+                <button type="button" class="modal-close" data-close="1">Close</button>
+                <button type="button" id="export-go" class="primary">Download zip</button>
+            </div>
         </div>
     </div>
 

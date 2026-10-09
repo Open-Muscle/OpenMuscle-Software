@@ -7,6 +7,7 @@ Usage:
     openmuscle predict     Run real-time inference with visualization
     openmuscle simulate    Send synthetic or replayed sensor data
     openmuscle models      List trained models
+    openmuscle bundle      Pack a session into one zip to send to someone
     openmuscle web         Launch the browser-based UI (live + record + captures)
 
 Everything is saved under one folder, ~/OpenMuscle (override with OPENMUSCLE_HOME
@@ -588,3 +589,78 @@ def export(model, data, output):
     """Export predictions + ground truth to JSON for web visualization."""
     from openmuscle.ml.export import export_predictions
     export_predictions(model_path=model, data_path=data, output_path=output)
+
+
+@main.command()
+@click.argument("session", required=False)
+@click.option("--take", "takes", multiple=True, metavar="NAME",
+              help="Export this take (its CSV name) instead of a whole session. "
+                   "Repeat for several takes.")
+@click.option("--output", "-o", default=None, type=click.Path(dir_okay=False),
+              help="Where to write the zip (default: the exports folder under "
+                   "~/OpenMuscle, with a name built from the session id).")
+@click.option("--raw", is_flag=True, default=False,
+              help="Also include the raw .sensor.jsonl / .label.jsonl streams. "
+                   "Large, and only needed to re-process a take.")
+@click.option("--notes", is_flag=True, default=False,
+              help="Include the notes you typed on the session and its takes. "
+                   "Left out by default; check they hold no names first.")
+@click.option("--data-dir", default=None, type=click.Path(file_okay=False),
+              help="Data folder to read from (default ~/OpenMuscle).")
+@click.option("--captures-dir", default=None, type=click.Path(file_okay=False),
+              help="Read takes from this folder (sessions are looked up in a "
+                   "'sessions' folder next to it), as for `openmuscle web`.")
+def bundle(session, takes, output, raw, notes, data_dir, captures_dir):
+    """Pack a session (or chosen takes) into one zip to send to someone.
+
+    \b
+    SESSION is a session id or name, as shown in the Data stage. The zip holds a
+    plain-language README.txt, session.json, summary.csv (one row per take, with
+    the quality verdict) and each take's CSV and helper files. Raw streams,
+    notes and trained models are left out unless asked for (models never go in).
+
+    \b
+        openmuscle bundle 2026-05-16T08-42-13
+        openmuscle bundle "morning baseline" -o baseline.zip
+        openmuscle bundle --take left-take1.csv --take left-take2.csv
+
+    The dashboard's Export session button does the same thing.
+    """
+    from openmuscle import paths
+    from openmuscle.data import export_bundle as eb
+
+    if bool(session) == bool(takes):
+        raise click.UsageError("Give a session id or name, or one or more --take, not both.")
+    if data_dir:
+        paths.set_data_root(data_dir)
+    if captures_dir:
+        cap = paths.absolute(captures_dir)
+        sess_dir = cap.parent / "sessions"
+    else:
+        cap = paths.captures_dir()
+        sess_dir = paths.sessions_dir()
+
+    try:
+        session_id = None
+        if session:
+            session_id = eb.find_session(sess_dir, session)["id"]
+        out = (paths.absolute(output) if output
+               else eb.unique_path(paths.exports_dir(), eb.bundle_filename(session_id)))
+        report = eb.build_session_bundle(
+            cap, sess_dir, out, session_id=session_id,
+            capture_names=list(takes) or None, include_raw=raw, include_notes=notes)
+    except eb.BundleError as e:
+        raise click.ClickException(str(e))
+    except OSError as e:
+        raise click.ClickException(f"Could not write the zip: {e}")
+
+    mb = report.zip_bytes / (1024 * 1024)
+    click.echo(f"Saved {len(report.takes)} take(s) to {report.out_file}  ({mb:.1f} MB)")
+    for w in report.warnings:
+        click.echo(f"  Note: {w}")
+    if not notes:
+        click.echo("  Notes were left out. Add --notes to include them.")
+    if report.zip_bytes > eb.WARN_BYTES:
+        click.echo(f"  This is over {eb.WARN_BYTES // (1024 * 1024)} MB, which many email "
+                   "services reject. Leave out --raw, or export one session at a time.")
+    click.echo("  Attach it to an email, or share it with your usual file-sharing tool.")
