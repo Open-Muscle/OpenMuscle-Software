@@ -38,6 +38,28 @@ openmuscle web --model X --hand 10.0.0.55:3145                 # custom hand por
 **Keeping the computer awake.** While the server runs it asks the operating system not to sleep from inactivity (Windows `SetThreadExecutionState`, macOS `caffeinate`; nothing on Linux), so a recording is not cut off. Closing a laptop lid still puts it to sleep. `--no-keep-awake` turns this off.
 
 **Ports.** A second `openmuscle web` is detected and exits with one line. The UDP data port is opened exclusively (no address reuse), so a program that already holds it is reported rather than silently sharing it; the UI shows a bound/not-bound state for both UDP ports in `GET /api/discovery/status`.
+## Setting up a device (`/setup`)
+
+The **Set up a device** button in the top bar (and the empty state on the live view) opens a step-by-step page at `http://localhost:8000/setup` that puts a band, or the optional finger labeler, on your Wi-Fi. No terminal needed:
+
+1. **Get ready:** a 2.4 GHz Wi-Fi, its name and password, no sign-in page (phone hotspot help included).
+2. **Choose** band or labeler, with the exact text to look for on the device screen and how to get it into setup mode.
+3. **Join** the device's own `OM-...` network from this computer's Wi-Fi menu. The page notices when it is connected, shows the device id, and asks you to check it against the end of the code on the device screen.
+4. **Your Wi-Fi:** pick the name from the list the device sees (or type it), enter the password (Show/Hide), and send. "Remember for the next device" keeps the details in this browser tab only (`sessionStorage`; never `localStorage`, never on disk), so the second band needs no typing.
+5. **Finish:** reconnect this computer to your usual Wi-Fi; a checklist follows the restart and ends with "Band ... is online at <address>". After 60 seconds without the device it shows an ordered troubleshooting list (wrong password, 5 GHz or sign-in network, different network, firewall, router client isolation, add by address).
+
+The page only talks to this program, which relays to the device (a browser on the device's network cannot reach your home network at the same time). The relay routes are loopback only: any caller that is not this computer, even with `--lan` or `--debug`, gets 403, as does a browser Origin that is not `localhost`/`127.0.0.1`. The device address is limited to `192.168.4.0/24` (the device's own network). The Wi-Fi name and password travel only in the request body and are scrubbed from the log panel and the access log.
+
+| Route | What it does |
+|-------|--------------|
+| `GET /api/setup/probe[?host=]` | Is a device in setup mode answering? `{reachable, info:{id,dev,fw,state,last_wifi_error,ap_name}}` or `{reachable:false, reason, message}` |
+| `GET /api/setup/scan[?host=]` | Networks the device can see: `{supported, networks:[{ssid,rssi,auth}]}` |
+| `POST /api/setup/provision` | `{ssid, password, host?, expect_id?}` to `{ok:true, id, reboot_in_ms, wait_s, since}` or `{ok:false, code, message}` (409 `wrong_device` when `expect_id` does not match) |
+| `POST /api/setup/reprovision` | `{device_id}`: put an online device (address taken from discovery) back in setup mode |
+| `GET /api/setup/wait?device_id=&timeout=&since=` | Long-poll (max 30 s) for the device to show up on your network: `{found, device?, waited_s}` |
+| `GET /api/setup/wifi-hint` | `{ssid}`: the Wi-Fi this computer is on (`netsh`, `nmcli` or `networksetup`), or `null` |
+
+The troubleshooting list calls `GET /api/discovery/diagnose` when this version has it and shows a plain message when it does not.
 
 ## Debug mode (`--debug`)
 

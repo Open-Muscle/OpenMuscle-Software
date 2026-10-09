@@ -633,7 +633,7 @@ function renderAvailableSources(discovery) {
         // Everything discovered graduated to a band row (or nothing is
         // discovered at all); an empty list collapses via CSS :empty.
         list.innerHTML = discovery.length
-            ? '' : '<li class="empty">No V4 sources discovered yet…</li>';
+            ? '' : '<li class="empty">No devices found yet.</li>';
         return;
     }
     list.innerHTML = avail.map(d => {
@@ -862,7 +862,7 @@ function drawHeatmaps() {
     if (!flex.length) {
         if (grids._ids !== '') {
             parkImuViewer();   // innerHTML wipe would destroy the IMU canvas
-            grids.innerHTML = '<div class="heatmap-empty">Waiting for a flexgrid…</div>';
+            grids.innerHTML = '<div class="heatmap-empty">No devices found yet. <a href="/setup">Set up a device</a></div>';
             grids._ids = '';
             _bandCardsSig = null;
         }
