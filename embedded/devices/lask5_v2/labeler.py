@@ -32,8 +32,8 @@ class LASK5(BaseDevice):
     DEVICE_TYPE = "lask5"
     DEVICE_DEFAULTS = {
         "device_id": "lask5-01",
-        "wifi_ssid": "OpenMuscle",
-        "wifi_password": "3141592653",
+        "wifi_ssid": "",
+        "wifi_password": "",
         "udp_target_ip": "192.168.1.48",
         "udp_port": 3141,
         "scl_pin": 9,
@@ -156,7 +156,7 @@ class LASK5(BaseDevice):
         # gracefully if none is wired. SAFETY: both construction and init
         # are wrapped here because lask5-01 is the only live LASK5 unit
         # and an unhandled I2C exception at boot must not boot-loop the
-        # device (see brownout-recovery commit 3d02ee6 + overseer #0218).
+        # device (see brownout-recovery commit 3d02ee6).
         self.imu = None
         try:
             imu = _IMU(
@@ -323,7 +323,7 @@ class LASK5(BaseDevice):
         # after boot can connect.
         # Announce extras include imu chip + per-LSB scale when an IMU is
         # detected, so the hub can normalize data.imu raw counts to a common
-        # unit without having to read get_info first (overseer #0217).
+        # unit without having to read get_info first.
         announce_extras = {"pistons": 4, "joystick": True}
         if self.imu and self.imu.present:
             scale = self.imu.scale_dict()
@@ -435,7 +435,7 @@ class LASK5(BaseDevice):
         cmd server (see om_commands).
 
         BaseException catch: matches the FlexGridV4 sensor_loop hardening
-        (firmware board #0166). A BaseException (MemoryError, KeyboardInterrupt
+        A BaseException (MemoryError, KeyboardInterrupt
         from a dev tool, or asyncio internals raising one of these) used to
         propagate past `except Exception` and silently kill this task; once
         dead, label frames stopped flowing to subscribed hubs and the device
@@ -451,7 +451,7 @@ class LASK5(BaseDevice):
                         "x": self.joystick_x.read(),
                         "y": self.joystick_y.read(),
                     }
-                    # data.imu Option B (overseer #0168): ride IMU samples on
+                    # data.imu Option B: ride IMU samples on
                     # the label channel at the label rate. Raw counts so the
                     # hub normalizes with the chip's scale (advertised in
                     # announce.imu / get_info.imu). Inner try keeps a bad

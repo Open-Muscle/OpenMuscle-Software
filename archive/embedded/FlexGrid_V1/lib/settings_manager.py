@@ -7,7 +7,7 @@ class SettingsManager:
     # Define your default keys & values here
     DEFAULTS = {
         "wifi_ssid": "OpenMuscle",
-        "wifi_password": "3141592653",
+        "wifi_password": "YOUR_WIFI_PASSWORD",
         "udp_target_ip": "192.168.1.49",
         "udp_port": 3141
     }

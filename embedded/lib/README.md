@@ -33,7 +33,7 @@ class MySensor(SensorInterface):
 
 class MyDevice(BaseDevice):
     DEVICE_TYPE = "my_device"
-    DEVICE_DEFAULTS = {"wifi_ssid": "OpenMuscle", ...}
+    DEVICE_DEFAULTS = {"wifi_ssid": "", ...}
 
     def __init__(self):
         super().__init__()

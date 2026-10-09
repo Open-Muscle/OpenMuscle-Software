@@ -34,7 +34,7 @@ defaults = {
     'device_mac': False,
     'ledPIN': 8,
     'SSID':'OpenMuscle',
-    'Pass':'3141592653',
+    'Pass':'YOUR_WIFI_PASSWORD',
     'PCIP': '192.168.1.48',
     'mins': [0, 0, 0, 0],
     'maxes': [2500, 2500, 2500, 2500],

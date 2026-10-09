@@ -3,7 +3,7 @@ import time
 
 # Wi-Fi credentials
 SSID = "OpenMuscle"
-PASSWORD = "3141592653"
+PASSWORD = "YOUR_WIFI_PASSWORD"
 
 ap = network.WLAN(network.AP_IF)
 if ap.active():
@@ -69,7 +69,7 @@ def connect(ssid, password, timeout=1000):
     print("SSID repr:", repr(SSID))
     print("PASS repr:", repr(PASSWORD))
     print("PASS length:", len(PASSWORD))
-    wlan.connect(ssid, password, bssid=bytes.fromhex('b2bbfbbd16ac'))
+    wlan.connect(ssid, password, bssid=bytes.fromhex('000000000000'))
 
     # Wait up to `timeout` seconds
     for i in range(timeout):

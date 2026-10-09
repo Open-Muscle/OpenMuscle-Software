@@ -126,7 +126,7 @@ class Discovery:
         resolves); others do not. Either way the broadcast beacon is the
         reliable discovery path.
 
-        Audit-pass fix (board #0189): only mark _mdns_registered=True on
+        Audit-pass fix: only mark _mdns_registered=True on
         actual success so a Wi-Fi-down boot does not poison the flag
         permanently; announce_loop's Wi-Fi-reconnect path can then retry."""
         if self._mdns_registered:
@@ -147,9 +147,9 @@ class Discovery:
 
         Catches BaseException (except CancelledError) so an interrupt
         during sendto cannot silently kill the announce task. Matches the
-        FlexGridV4 hardening (firmware board #0166 WDT root-cause work).
+        FlexGridV4 hardening.
 
-        Re-registers mDNS on Wi-Fi reconnect (audit pass, board #0189):
+        Re-registers mDNS on Wi-Fi reconnect (audit pass):
         the sta.config(hostname=...) call only takes effect while STA is
         up, and after a flap the hostname binding can be lost. Tracks the
         connected edge per loop iter and re-fires register_mdns() on the

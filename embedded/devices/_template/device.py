@@ -32,8 +32,8 @@ class MyDevice(BaseDevice):
     DEVICE_TYPE = "my_device"       # Used in packet "type" field
     DEVICE_DEFAULTS = {
         "device_id": "my-device-01",
-        "wifi_ssid": "OpenMuscle",
-        "wifi_password": "3141592653",
+        "wifi_ssid": "",
+        "wifi_password": "",
         "udp_target_ip": "192.168.1.49",
         "udp_port": 3141,
         "scl_pin": 9,
