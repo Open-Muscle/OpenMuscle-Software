@@ -2563,7 +2563,7 @@ class AppState:
             if mp and cur and mp != cur:
                 issues.append({
                     "slot": slot, "kind": "participant", "blocking": True,
-                    "model": eng.name, "model_participant": mp,
+                    "model": getattr(eng, "name", ""), "model_participant": mp,
                     "current_participant": cur,
                     "message": "The {} was trained on participant '{}', but the "
                                "session is for '{}'. Predictions may be wrong.".format(
@@ -2586,7 +2586,7 @@ class AppState:
                                      or [x for v in ids.values() for x in v])))
                 issues.append({
                     "slot": role if eng is self.engines.get(role) else "shared",
-                    "kind": "band_unit", "blocking": True, "model": eng.name,
+                    "kind": "band_unit", "blocking": True, "model": getattr(eng, "name", ""),
                     "band": did, "role": role or None,
                     "message": "This model was trained with band {} on {}, but the "
                                "band now on {} is {}. Predictions may be wrong.".format(

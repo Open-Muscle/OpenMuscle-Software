@@ -140,6 +140,10 @@ def test_learnable_data_gives_a_green_or_amber_card_with_finger_bars(tmp_path, m
 
 # ------------------------------------------------------------ open folder
 
+import types
+_LOCAL = types.SimpleNamespace(client=types.SimpleNamespace(host="127.0.0.1"))
+
+
 def test_reveal_opens_a_model_folder_only_inside_the_models_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
     from openmuscle.web import app as app_module
@@ -154,14 +158,14 @@ def test_reveal_opens_a_model_folder_only_inside_the_models_dir(tmp_path, monkey
     model_dir = tmp_path / "models" / "random_forest_x"
     model_dir.mkdir(parents=True)
     (model_dir / "model.pkl").write_bytes(b"x")
-    out = asyncio.run(reveal(body_cls(model=str(model_dir))))
+    out = asyncio.run(reveal(request=_LOCAL, body=body_cls(model=str(model_dir))))
     assert Path(out["opened"]) == model_dir.resolve() and opened[-1][1] is False
     # a path to the pickle opens its folder
-    asyncio.run(reveal(body_cls(model=str(model_dir / "model.pkl"))))
+    asyncio.run(reveal(request=_LOCAL, body=body_cls(model=str(model_dir / "model.pkl"))))
     assert opened[-1][0] == model_dir.resolve()
 
     from fastapi import HTTPException
     for bad in (str(tmp_path), str(tmp_path / "models" / ".." / "captures"), "C:/Windows"):
         with pytest.raises(HTTPException) as ei:
-            asyncio.run(reveal(body_cls(model=bad)))
+            asyncio.run(reveal(request=_LOCAL, body=body_cls(model=bad)))
         assert ei.value.status_code == 404

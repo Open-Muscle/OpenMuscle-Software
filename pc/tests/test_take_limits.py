@@ -37,14 +37,14 @@ def _labeler(t, i):
                             receive_time=t)
 
 
-def _record(state, name, seconds, frames=80):
+def _record(state, name, seconds, frames=80, spacing=0.01):
     t0 = time.time()
     state._handle_packet(_band(t0, 0))
     state._handle_packet(_labeler(t0, 0))
     rec = state.start_recording(sensor_device_id="fg-1", label_device_id="lask5-1",
                                 filename=name)
     for i in range(frames):
-        t = t0 + 0.01 * (i + 1)
+        t = t0 + spacing * (i + 1)
         state._handle_packet(_labeler(t, i))
         state._handle_packet(_band(t + 0.001, i))
     rec.started_at -= seconds
@@ -125,7 +125,10 @@ def test_live_payload_carries_the_limits(tmp_path):
 def test_trainer_reports_short_takes(tmp_path):
     s = _state(tmp_path)
     _record(s, "six", seconds=6.0)
-    res = s.train_from_captures(["six.csv"], n_estimators=4, activate=False)
+    # A lone 6 s take is refused before training (too few samples), so train
+    # it together with a long take and check the short one is reported.
+    _record(s, "long", seconds=40.0, frames=400, spacing=0.1)   # 40 s of timestamps
+    res = s.train_from_captures(["six.csv", "long.csv"], n_estimators=4, activate=False)
     assert res["short_captures"] == ["six.csv"]
 
 
