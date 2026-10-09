@@ -106,11 +106,54 @@ The `_snapshot()` dict pushed to every connected browser is the contract:
 }
 ```
 
+## Where are my files, and sending them back
+
+The Data stage starts with the absolute folders recordings and models are saved
+in, each with **Copy path** and, when you are on the computer running
+OpenMuscle, **Open folder**. A warning appears when the drive has less than 1 GB
+free. Open folder is hidden for other devices on the network and under
+`--debug`, and the server refuses the call from them (403).
+
+To hand a session to someone, use **Export session** on the session card (or
+tick takes and use **Export selected**). The dialog shows the estimated size and
+saves one zip through the browser, which puts it in its download location
+(usually Downloads); a copy is also kept in `~/OpenMuscle/exports`. The same
+zip from the command line:
+
+```
+openmuscle bundle <session id or name>                  # -> ~/OpenMuscle/exports/openmuscle-session-<id>.zip
+openmuscle bundle "morning baseline" -o baseline.zip
+openmuscle bundle --take a.csv --take b.csv             # loose takes, no session
+openmuscle bundle <session> --raw --notes               # opt in to raw streams and notes
+```
+
+The zip holds `README.txt` (every file explained in plain words, units, how the
+quality verdict works), `session.json`, `summary.csv` (one row per take) and, in
+`takes/`, each take's CSV and `.meta.json` (plus `.labels.schema.json` when there
+is one). Compact by default: the raw `.sensor.jsonl` / `.label.jsonl` streams,
+your typed notes and trained models are left out (models are never included).
+Session names and, if you opt in, notes are free text: keep them free of names
+and use a participant code. Over about 20 MB many email services refuse the file;
+leave raw streams off or export one session at a time. The existing
+`openmuscle export` command (model predictions to JSON) is unchanged.
+
+A recording that is cut short (window closed, power cut) is still readable: rows
+are written to disk as they arrive, Ctrl+C and SIGTERM finish the take
+properly, and on the next start any take with no final summary has it rebuilt
+from the CSV (a half-written last row is dropped).
+
 ## REST endpoints
 
 | Method | Path | Body / response |
 |--------|------|-----------------|
 | GET | `/` | serves `static/index.html` |
+| GET | `/api/storage` | absolute `root`, `captures`, `sessions`, `models`, `exports`, `logs`; `free_bytes`, `low_space` (under 1 GB); `reveal_enabled` (true only for a caller on the server computer, never under `--debug`); `legacy_hint` |
+| POST | `/api/reveal` | body `{folder?: root\|captures\|sessions\|models\|exports\|logs, name?: capture}` opens that folder (or highlights the capture) in the file manager on the server computer. 403 for callers that are not local. |
+| GET | `/api/sessions/{id}/export?raw=0\|1&notes=0\|1` | downloads the session as a zip (`openmuscle-session-<id>.zip`); 404 unknown session, 409 while one of its takes is still recording |
+| GET | `/api/sessions/{id}/export/estimate?raw=&notes=` | `{takes, files, estimated_zip_bytes, compact_zip_bytes, with_raw_zip_bytes, warn_large, warn_over_bytes, warnings}` |
+| POST | `/api/sessions/{id}/export` | body `{raw?, notes?}` builds the same zip into the exports folder and returns `{out_file, filename, takes, files, zip_bytes, ...}` |
+| POST | `/api/export` | body `{captures: [...], raw?, notes?}` downloads loose takes as a zip; 404 for a missing take, 400 for a bad name |
+| POST | `/api/export/estimate` | same body, returns the size estimate |
 | GET | `/static/*` | static assets (no-cache headers in dev) |
 | WS  | `/ws/live` | server-pushes the `tick` snapshot above on every batch of packets |
 | GET | `/api/devices` | same `devices` array as in the tick |

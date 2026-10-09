@@ -53,6 +53,108 @@ if (openFolderBtn) {
     openFolderBtn.onclick = () => revealCaptureFolder(null);
 }
 
+// ---------- where are my files (Data stage) ----------
+// GET /api/storage gives the absolute folders. Open folder only appears when the
+// server says reveal_enabled (this browser is on the same computer as the
+// server, and --debug is off); the path itself is always shown, with Copy.
+
+const exportSelectedBtn = document.getElementById('captures-export-selected');
+let storageInfo = null;
+
+function fmtBytes(n) {
+    if (n == null || isNaN(n)) return '?';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return Math.max(1, Math.round(n / 1024)) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+    return (n / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
+async function copyText(text) {
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (e) { /* fall through to the textarea route */ }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function revealFolder(which) {
+    try {
+        const r = await fetch('/api/reveal', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({folder: which}),
+        });
+        if (!r.ok) throw new Error(await readError(r));
+    } catch (e) {
+        alert('Could not open the folder: ' + e.message +
+              (storageInfo && storageInfo[which] ? '\n\nIt is here:\n' + storageInfo[which] : ''));
+    }
+}
+
+function renderStorage() {
+    const panel = document.getElementById('storage-panel');
+    if (!panel || !storageInfo) return;
+    const can = !!storageInfo.reveal_enabled;
+    panel.querySelectorAll('[data-storage-path]').forEach(el => {
+        el.textContent = storageInfo[el.dataset.storagePath] || '';
+    });
+    panel.querySelectorAll('[data-storage-open]').forEach(btn => { btn.hidden = !can; });
+    const note = document.getElementById('storage-note');
+    if (!note) return;
+    const bits = [];
+    let warn = false;
+    if (storageInfo.low_space) {
+        warn = true;
+        bits.push(`Only ${fmtBytes(storageInfo.free_bytes)} free on this drive. ` +
+                  'Free up space before long recordings.');
+    } else if (storageInfo.free_bytes != null) {
+        bits.push(`${fmtBytes(storageInfo.free_bytes)} free on this drive.`);
+    }
+    if (storageInfo.legacy_hint) bits.push(storageInfo.legacy_hint);
+    if (!can) bits.push('Open folder is only available on the computer running OpenMuscle.');
+    note.textContent = bits.join(' ');
+    note.classList.toggle('warn', warn);
+    note.hidden = bits.length === 0;
+}
+
+async function loadStorage() {
+    try {
+        const r = await fetch('/api/storage');
+        if (!r.ok) return;
+        storageInfo = await r.json();
+        renderStorage();
+    } catch (e) { /* the panel keeps its placeholder */ }
+}
+
+document.querySelectorAll('[data-storage-open]').forEach(btn => {
+    btn.onclick = () => revealFolder(btn.dataset.storageOpen);
+});
+document.querySelectorAll('[data-storage-copy]').forEach(btn => {
+    btn.onclick = async () => {
+        const text = storageInfo && storageInfo[btn.dataset.storageCopy];
+        if (!text) return;
+        const ok = await copyText(text);
+        const was = btn.textContent;
+        btn.textContent = ok ? 'Copied' : 'Select the path and copy it';
+        setTimeout(() => { btn.textContent = was; }, 1800);
+    };
+});
+
 // Per-user pick preferences that survive a refresh
 const STORE_SENSOR = 'om.sensor_device_id';
 const STORE_LABEL  = 'om.label_device_id';
@@ -1055,6 +1157,7 @@ function renderActiveSession() {
                         </div>
                         <div class="session-actions">
                             <button class="link" id="active-session-add-btn" title="Retroactively add past captures to this session">＋ Add</button>
+                            <button class="link" id="active-session-export-btn" title="Pack this session into one zip to send to someone">Export session</button>
                             <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
                             <button class="link danger" id="session-end-btn">■ End session</button>
                         </div>
@@ -1066,6 +1169,8 @@ function renderActiveSession() {
             if (addBtn) addBtn.onclick = () => openLinkModal(activeSession);
             const editBtn = activeSessionArea.querySelector('button[data-edit-session]');
             if (editBtn) editBtn.onclick = () => openSessionModal(activeSession);
+            const exportBtn = document.getElementById('active-session-export-btn');
+            if (exportBtn) exportBtn.onclick = () => exportSession(activeSession);
             sessionStartBtn.disabled = true;
             sessionStartBtn.title = 'End the current session before starting a new one';
         } else {
@@ -1264,6 +1369,7 @@ function renderPastSessions() {
                 </div>
                 <div class="session-actions">
                     <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
+                    <button class="link" data-export-session="${escapeHtml(s.id)}" title="Pack this session into one zip to send to someone">Export session</button>
                     <button class="link" data-edit-session="${escapeHtml(s.id)}">edit</button>
                     <button class="link danger" data-delete-session="${escapeHtml(s.id)}">delete</button>
                 </div>
@@ -1327,6 +1433,13 @@ function renderPastSessions() {
             if (session) openSessionModal(session);
         };
     });
+    pastSessionsList.querySelectorAll('button[data-export-session]').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            const session = pastSessions.find(s => s.id === btn.dataset.exportSession);
+            if (session) exportSession(session);
+        };
+    });
     pastSessionsList.querySelectorAll('button[data-add-to-session]').forEach(btn => {
         btn.onclick = (e) => {
             e.stopPropagation();
@@ -1345,6 +1458,177 @@ pastSessionsToggle.onclick = () => {
 };
 
 sessionStartBtn.onclick = () => openSessionModal();
+
+// ---------- export a session or selected takes ----------
+// Opens a small dialog with the estimated size, the raw-streams and notes
+// options (both off), and send-back guidance; "Download zip" fetches the bundle
+// and hands it to the browser as a normal download.
+
+const exportModal   = document.getElementById('export-modal');
+const exportWhat    = document.getElementById('export-what');
+const exportRaw     = document.getElementById('export-raw');
+const exportNotes   = document.getElementById('export-notes');
+const exportSizeEl  = document.getElementById('export-size');
+const exportSizeAlt = document.getElementById('export-size-alt');
+const exportWarn    = document.getElementById('export-warn');
+const exportResult  = document.getElementById('export-result');
+const exportGo      = document.getElementById('export-go');
+let exportCtx = null;       // {sessionId, captures, title}
+let exportEstSeq = 0;       // drops estimate replies that arrive out of order
+let exportBusy = false;
+
+function exportEndpoint(kind) {
+    // kind: 'estimate' | 'download'
+    const raw = exportRaw.checked ? 1 : 0;
+    const notes = exportNotes.checked ? 1 : 0;
+    if (exportCtx.sessionId) {
+        const base = `/api/sessions/${encodeURIComponent(exportCtx.sessionId)}/export`;
+        return {url: `${base}${kind === 'estimate' ? '/estimate' : ''}?raw=${raw}&notes=${notes}`,
+                init: {method: 'GET'}};
+    }
+    return {
+        url: kind === 'estimate' ? '/api/export/estimate' : '/api/export',
+        init: {method: 'POST', headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify({captures: exportCtx.captures, raw: !!raw, notes: !!notes})},
+    };
+}
+
+function openExportModal(ctx) {
+    exportCtx = ctx;
+    exportRaw.checked = false;
+    exportNotes.checked = false;
+    exportWhat.textContent = ctx.title;
+    exportWarn.hidden = true;
+    exportResult.hidden = true;
+    exportResult.className = 'export-result';
+    exportGo.disabled = true;
+    exportGo.textContent = 'Download zip';
+    exportModal.classList.add('open');
+    exportModal.setAttribute('aria-hidden', 'false');
+    refreshExportEstimate();
+}
+
+function closeExportModal() {
+    exportModal.classList.remove('open');
+    exportModal.setAttribute('aria-hidden', 'true');
+    exportCtx = null;
+}
+
+function showExportWarning(est) {
+    const lines = [];
+    if (est && est.warn_large) {
+        lines.push(`This file is over about ${fmtBytes(est.warn_over_bytes)}, which many email ` +
+                   'services will not accept. ' +
+                   (exportRaw.checked
+                       ? 'Untick the raw streams option to make it much smaller, or export one session at a time.'
+                       : 'Try exporting one session at a time, or share it with a file-sharing tool instead of email.'));
+    }
+    ((est && est.warnings) || []).forEach(w => lines.push(w));
+    exportWarn.textContent = lines.join(' ');
+    exportWarn.hidden = lines.length === 0;
+}
+
+async function refreshExportEstimate() {
+    if (!exportCtx) return;
+    const seq = ++exportEstSeq;
+    exportSizeEl.textContent = '...';
+    exportSizeAlt.textContent = '';
+    exportResult.hidden = true;
+    try {
+        const {url, init} = exportEndpoint('estimate');
+        const r = await fetch(url, init);
+        if (!r.ok) throw new Error(await readError(r));
+        const est = await r.json();
+        if (seq !== exportEstSeq) return;
+        exportSizeEl.textContent = 'about ' + fmtBytes(est.estimated_zip_bytes);
+        const n = est.takes;
+        exportSizeAlt.textContent = `${n} take${n === 1 ? '' : 's'}` +
+            (est.with_raw_zip_bytes > est.compact_zip_bytes * 1.05
+                ? ` · without raw streams ${fmtBytes(est.compact_zip_bytes)}, with ${fmtBytes(est.with_raw_zip_bytes)}`
+                : '');
+        showExportWarning(est);
+        exportGo.disabled = exportBusy;
+    } catch (e) {
+        if (seq !== exportEstSeq) return;
+        exportSizeEl.textContent = 'unknown';
+        exportResult.className = 'export-result err';
+        exportResult.textContent = e.message || String(e);
+        exportResult.hidden = false;
+        exportGo.disabled = true;
+    }
+}
+
+function filenameFromResponse(r) {
+    const m = /filename="?([^";]+)"?/i.exec(r.headers.get('Content-Disposition') || '');
+    return m ? m[1] : 'openmuscle-export.zip';
+}
+
+async function runExport() {
+    if (!exportCtx || exportBusy) return;
+    exportBusy = true;
+    exportGo.disabled = true;
+    exportGo.textContent = 'Packing...';
+    exportResult.hidden = true;
+    try {
+        const {url, init} = exportEndpoint('download');
+        const r = await fetch(url, init);
+        if (!r.ok) throw new Error(await readError(r));
+        const filename = filenameFromResponse(r);
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 15000);
+        const kept = storageInfo && storageInfo.exports
+            ? ` A copy is also kept in ${storageInfo.exports}.` : '';
+        const big = blob.size > 20 * 1024 * 1024
+            ? ' This file is over about 20 MB, so email may reject it: leave raw streams off, export one session at a time, or use a file-sharing tool.'
+            : '';
+        exportResult.className = 'export-result ok';
+        exportResult.textContent =
+            `Saved ${filename} (${fmtBytes(blob.size)}) to your browser download location, usually your Downloads folder.` +
+            kept + ' Attach this file to an email, or share it using your usual file-sharing tool.' + big;
+        exportResult.hidden = false;
+    } catch (e) {
+        exportResult.className = 'export-result err';
+        exportResult.textContent = 'Export failed: ' + (e.message || e);
+        exportResult.hidden = false;
+    } finally {
+        exportBusy = false;
+        exportGo.textContent = 'Download zip again';
+        exportGo.disabled = false;
+    }
+}
+
+exportModal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeExportModal));
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && exportModal.classList.contains('open')) closeExportModal();
+});
+exportRaw.onchange = refreshExportEstimate;
+exportNotes.onchange = refreshExportEstimate;
+exportGo.onclick = runExport;
+
+function exportSession(session) {
+    const n = session.capture_count != null ? session.capture_count : (session.captures || []).length;
+    openExportModal({
+        sessionId: session.id,
+        title: `Export session ${session.name || session.id} (${n} take${n === 1 ? '' : 's'})`,
+    });
+}
+
+if (exportSelectedBtn) {
+    exportSelectedBtn.onclick = () => {
+        const names = [...selectedCaptures];
+        if (!names.length) return;
+        openExportModal({
+            captures: names,
+            title: `Export ${names.length} selected take${names.length === 1 ? '' : 's'}`,
+        });
+    };
+}
 
 // The one session form serves "Start new session" and "Edit session".
 // sessionEditId is the id being edited, or null for a new session.
@@ -2343,6 +2627,7 @@ function updateSelectionStatus() {
     const hiddenSel = [...selectedCaptures].filter(name => !visibleNames.has(name)).length;
     selStatus.textContent = `${n} selected` + (hiddenSel ? ` (${hiddenSel} filtered out)` : '');
     trainBtn.disabled = (n === 0);
+    if (exportSelectedBtn) exportSelectedBtn.disabled = (n === 0);
     // Check-all reflects VISIBLE rows only: checked when every visible row is
     // selected, indeterminate when some are.
     const visSel = boxes.filter(b => selectedCaptures.has(b.dataset.name)).length;
@@ -3407,6 +3692,8 @@ setInterval(refreshCaptures, 5000);
 setInterval(refreshModels, 10000);
 setInterval(refreshLogs, 2000);   // logs are the most "real-time" panel
 setInterval(refreshPastSessions, 15000);
+loadStorage();
+setInterval(loadStorage, 60000);   // free space changes while you record
 
 initDebugMode();
 connectWS();
