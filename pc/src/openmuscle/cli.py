@@ -8,10 +8,14 @@ Usage:
     openmuscle simulate    Send synthetic or replayed sensor data
     openmuscle models      List trained models
     openmuscle web         Launch the browser-based UI (live + record + captures)
+    openmuscle doctor      Check this computer and network, say what to fix
+    openmuscle firewall    Show (and, if you agree, add) the Windows firewall rule
 
 Everything is saved under one folder, ~/OpenMuscle (override with OPENMUSCLE_HOME
 or `openmuscle web --data-dir`).
 """
+
+import sys
 
 import click
 
@@ -29,7 +33,11 @@ def main():
 def receive(port, save_dir):
     """Listen for devices and display a live heatmap."""
     from openmuscle.viz.heatmap import run_heatmap
-    run_heatmap(port=port, save_dir=save_dir)
+    from openmuscle.receiver.udp_listener import ListenerBindError
+    try:
+        run_heatmap(port=port, save_dir=save_dir)
+    except ListenerBindError as e:
+        raise click.ClickException(str(e))
 
 
 def _resolve_tls(certfile, keyfile):
@@ -69,21 +77,26 @@ def _lan_ip():
 
 
 def _port_free(host, port):
-    """True when a TCP listener could bind host:port right now."""
-    import socket
-    import sys
-    bind_host = host if host not in ("", "localhost") else "127.0.0.1"
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    """True when a TCP listener could bind host:port right now (exclusive on
+    Windows, where a plain bind would let two servers share one port)."""
+    from openmuscle import netutil
+    return netutil.tcp_port_free(host, port)
+
+
+def _udp_port_status(port):
+    """(True, "") when the UDP port can be opened exclusively, else (False,
+    plain sentence)."""
+    from openmuscle import netutil
+    return netutil.udp_bind_check(port)
+
+
+def _start_listener(listener):
+    """Start a strict UDPListener; a busy port ends the command in one sentence."""
+    from openmuscle.receiver.udp_listener import ListenerBindError
     try:
-        if not sys.platform.startswith("win"):
-            # Same as uvicorn: a lingering TIME_WAIT must not read as "busy".
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((bind_host, port))
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+        listener.start()
+    except ListenerBindError as e:
+        raise click.ClickException(str(e))
 
 
 def _pick_port(host, port, explicit):
@@ -95,6 +108,12 @@ def _pick_port(host, port, explicit):
     """
     if _port_free(host, port):
         return port
+    from openmuscle import netutil
+    if netutil.find_running_instance(port):
+        raise click.ClickException(
+            f"OpenMuscle is already running at http://localhost:{port} , so open "
+            f"that address in your browser, or close that window before starting "
+            f"another.")
     if explicit:
         raise click.ClickException(
             f"Port {port} is already in use. Is OpenMuscle already running in "
@@ -159,6 +178,9 @@ def _echo_vr_help(port, tls_source, ssl_certfile, ssl_keyfile):
               help="Do not open the page in your web browser automatically.")
 @click.option("--verbose", is_flag=True, default=False,
               help="Show server request logs and low-level startup lines.")
+@click.option("--no-keep-awake", "no_keep_awake", is_flag=True, default=False,
+              help="Let the computer go to sleep as usual. By default it is kept "
+                   "awake while OpenMuscle runs, so a recording is not cut off.")
 @click.option("--model", "model_path", default=None, type=click.Path(),
               help="Path to a trained model.pkl. When set, FlexGrid frames are run "
                    "through the model and predictions appear in the LASK Inference panel.")
@@ -191,7 +213,7 @@ def _echo_vr_help(port, tls_source, ssl_certfile, ssl_keyfile):
                    "mode -- lab bench / demo use only, not the internet.")
 @click.pass_context
 def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_dir,
-        no_browser, verbose, model_path, model_left, model_right, hand, ssl_certfile,
+        no_browser, verbose, no_keep_awake, model_path, model_left, model_right, hand, ssl_certfile,
         ssl_keyfile, debug):
     """Launch the browser-based UI with live heatmap, recording, and captures.
 
@@ -199,7 +221,6 @@ def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_di
     ~/OpenMuscle. Leave the window open; press Ctrl+C to stop.
     """
     from openmuscle import paths
-    from openmuscle.web.app import serve
 
     if data_dir:
         paths.set_data_root(data_dir)
@@ -235,6 +256,21 @@ def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_di
     port_explicit = ctx.get_parameter_source("port").name == "COMMANDLINE"
     port = _pick_port(host, port, port_explicit)
 
+    # The data port must be ours alone: a second window sharing it would split
+    # the bands' frames between two recorders. Stop here, in one sentence, before
+    # the heavy imports and before anything is started.
+    ok, why = _udp_port_status(udp_port)
+    if not ok:
+        raise click.ClickException(
+            f"{why} Close the other OpenMuscle window, or start this one with "
+            f"--udp-port <another number>.")
+    ok, why = _udp_port_status(announce_port)
+    if not ok:
+        click.echo(f"Note: {why} Bands may take longer to appear; "
+                   f"'openmuscle doctor' explains.")
+
+    from openmuscle.web.app import ServerStartError, serve
+
     scheme = "https" if ssl_certfile else "http"
     url = f"{scheme}://localhost:{port}"
     captures_path = paths.absolute(captures_dir) if captures_dir else paths.captures_dir()
@@ -249,6 +285,9 @@ def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_di
         click.echo(f"  Other devices on your network:      {scheme}://{_lan_ip()}:{port}")
     click.echo("")
     click.echo("  Leave this window open while you work. Close it or press Ctrl+C to stop.")
+    if not no_keep_awake and sys.platform.startswith(("win", "darwin")):
+        click.echo("  Your computer is kept awake while this runs. Closing a laptop lid "
+                   "still puts it to sleep.")
     click.echo("  If your computer asks whether to allow OpenMuscle or Python through the")
     click.echo("  firewall, choose Allow (Private networks).")
     click.echo("")
@@ -291,14 +330,18 @@ def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_di
     def _device_line(_kind, message):
         click.echo(message)
 
-    serve(host=host, port=port, udp_port=udp_port,
-          captures_dir=str(captures_path) if captures_dir else None,
-          model_path=model_path, model_left=model_left, model_right=model_right,
-          hand_target=hand_target,
-          ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
-          announce_port=announce_port, debug=debug,
-          open_browser_url=None if no_browser else url,
-          verbose=verbose, on_device_event=_device_line)
+    try:
+        serve(host=host, port=port, udp_port=udp_port,
+              captures_dir=str(captures_path) if captures_dir else None,
+              model_path=model_path, model_left=model_left, model_right=model_right,
+              hand_target=hand_target,
+              ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
+              announce_port=announce_port, debug=debug,
+              open_browser_url=None if no_browser else url,
+              verbose=verbose, on_device_event=_device_line,
+              keep_awake=not no_keep_awake)
+    except ServerStartError as e:
+        raise click.ClickException(str(e))
 
 
 @main.command()
@@ -324,8 +367,8 @@ def record(port, output, duration, role):
     if role not in ("left", "right", "labeler"):
         raise click.BadParameter("--role must be left, right, or labeler")
 
-    listener = UDPListener(port=port)
-    listener.start()
+    listener = UDPListener(port=port, strict=True)
+    _start_listener(listener)
     matcher = TemporalMatcher(window_s=0.100)
 
     # The writer is created lazily on the first FlexGrid frame so its header uses
@@ -466,7 +509,11 @@ def train(data_paths, model_type, output, test_split, trees, role):
 def predict(model, port):
     """Run real-time inference with live visualization."""
     from openmuscle.ml.inference import run_inference
-    run_inference(model_path=model, port=port)
+    from openmuscle.receiver.udp_listener import ListenerBindError
+    try:
+        run_inference(model_path=model, port=port)
+    except ListenerBindError as e:
+        raise click.ClickException(str(e))
 
 
 @main.command()
@@ -588,3 +635,113 @@ def export(model, data, output):
     """Export predictions + ground truth to JSON for web visualization."""
     from openmuscle.ml.export import export_predictions
     export_predictions(model_path=model, data_path=data, output_path=output)
+
+
+@main.command()
+@click.option("--port", "http_port", default=8000, show_default=True,
+              help="HTTP port the web page uses.")
+@click.option("--udp-port", default=3141, show_default=True,
+              help="UDP port the bands send sensor data to.")
+@click.option("--announce-port", default=3140, show_default=True,
+              help="UDP port the bands announce themselves on.")
+@click.option("--report", "report_path", default=None, is_flag=False,
+              flag_value="openmuscle-report.txt", type=click.Path(dir_okay=False),
+              help="Also write a text report you can send to support (versions and "
+                   "these results; no Wi-Fi names, passwords or recordings). "
+                   "Optionally give a file name.")
+@click.option("--no-discover", is_flag=True, default=False,
+              help="Skip the quick search for bands on the network.")
+@click.pass_context
+def doctor(ctx, http_port, udp_port, announce_port, report_path, no_discover):
+    """Check this computer and network, and say what to fix.
+
+    Takes a few seconds and prints one PASS / WARN / FAIL line per check, with
+    the fix under anything that is not a PASS. Exit code 0 when nothing failed,
+    1 when something did. Run it when bands do not show up. Windows may ask
+    whether to allow Python through the firewall while it runs; choose Allow.
+    """
+    from openmuscle import doctor as dr
+    from openmuscle import netutil
+    explicit = ctx.get_parameter_source("http_port").name == "COMMANDLINE"
+    result = dr.run_doctor(http_port=http_port, udp_port=udp_port,
+                           announce_port=announce_port, http_explicit=explicit,
+                           redact=bool(report_path), discover=not no_discover)
+    click.echo(dr.format_text(result))
+    if report_path:
+        ssid = netutil.wifi_ssid()
+        dr.write_report_file(result, report_path, ssid=ssid)
+        click.echo("")
+        click.echo(f"Report written to {report_path} (no Wi-Fi names, passwords or "
+                   f"recordings inside).")
+    ctx.exit(0 if result["ok"] else 1)
+
+
+@main.command()
+@click.option("--public", is_flag=True, default=False,
+              help="Allow on Public networks too (use only if Windows has labelled "
+                   "your home network Public and you cannot change it).")
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Do not ask first; go straight to the administrator prompt.")
+@click.option("--remove", is_flag=True, default=False,
+              help="Remove the rule this command added.")
+@click.option("--print-only", is_flag=True, default=False,
+              help="Only print the rule and the exact command; change nothing.")
+def firewall(public, yes, remove, print_only):
+    """Show the Windows firewall rule OpenMuscle needs, and add it if you agree.
+
+    Bands send UDP to this computer (3141 sensor data, 3140 discovery). Windows
+    blocks that until a rule allows it. This command never changes anything by
+    itself: it prints the rule, asks, then opens the normal Windows administrator
+    prompt. On macOS and Linux it only prints what to allow.
+    """
+    from openmuscle import firewall as fw
+    from openmuscle import netutil
+    profiles = "any" if public else "private,domain"
+
+    if not netutil.IS_WINDOWS:
+        click.echo("This computer does not use the Windows firewall, so there is "
+                   "nothing to add here.")
+        click.echo("")
+        click.echo("If bands are not found, allow incoming UDP ports 3140 and 3141:")
+        click.echo("  Linux:  sudo ufw allow 3140:3141/udp")
+        click.echo("  macOS:  System Settings > Network > Firewall > Options, allow "
+                   "incoming connections for Python.")
+        return
+
+    if remove:
+        args = fw.remove_rule_args()
+        click.echo("This removes the OpenMuscle firewall rule:")
+        click.echo("  " + fw.command_text(args))
+    else:
+        args = fw.add_rule_args(profiles)
+        click.echo("OpenMuscle needs Windows to allow incoming UDP on ports 3140 and "
+                   "3141, so the bands can reach this computer.")
+        click.echo(f"The rule is called '{fw.RULE_NAME}' and applies to "
+                   f"{'every network type' if public else 'Private and Domain networks'}.")
+        click.echo("")
+        click.echo("The exact command (an administrator prompt):")
+        click.echo("  " + fw.command_text(args))
+        click.echo("or in PowerShell:")
+        click.echo("  " + fw.powershell_text("Any" if public else "Private,Domain"))
+    if print_only:
+        return
+    click.echo("")
+    if not yes and not click.confirm(
+            "Remove the rule now?" if remove else
+            "Add this rule now? Windows will ask for administrator permission",
+            default=False):
+        click.echo("Nothing was changed.")
+        return
+    if not fw.run_elevated(args):
+        raise click.ClickException(
+            "The rule was not changed (the administrator prompt was declined or "
+            "failed). You can run the command above yourself in an administrator "
+            "window.")
+    info = fw.inspect()
+    if remove:
+        click.echo("The OpenMuscle rule was removed.")
+    elif info.get("readable") and all(info["ports"].get(p) for p in fw.PORTS):
+        click.echo("Done. Windows now allows OpenMuscle on UDP 3140 and 3141.")
+    else:
+        click.echo("The rule was added, but it may not cover your current network "
+                   "type; run 'openmuscle doctor' to check.")

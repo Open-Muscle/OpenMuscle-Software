@@ -33,6 +33,7 @@ def run_web(tmp_path, monkeypatch):
     monkeypatch.chdir(cwd)
     # Keep the test independent of whatever may hold port 8000 on this machine.
     monkeypatch.setattr(cli, "_port_free", lambda host, port: True)
+    monkeypatch.setattr(cli, "_udp_port_status", lambda port: (True, ""))
     captured = {}
 
     import openmuscle.web.app as webapp

@@ -47,6 +47,7 @@ Defaults for a first run:
 | `--data-dir DIR` | Where captures, sessions and models are saved. Same as setting `OPENMUSCLE_HOME`. |
 | `--captures-dir DIR` | Save captures somewhere specific (sessions go in a `sessions` folder next to it). |
 | `--verbose` | Show server request logs and low-level startup lines. |
+| `--no-keep-awake` | Let the computer sleep as usual. By default the computer is kept awake while OpenMuscle runs, so a recording is not cut off (Windows and macOS; nothing is done on Linux). Closing a laptop lid still puts it to sleep: that is the operating system's lid setting and is not overridden. |
 
 TLS is opt-in: a plain `openmuscle web` stays on http even if you have certificates
 in `~/.openmuscle/`, and prints nothing about TLS, WebXR or adb.
@@ -88,6 +89,64 @@ openmuscle web --debug              # http://<lan-ip>:8000, all devices, verbose
 WebXR hand-tracking needs a secure context: either `openmuscle web --vr` with the
 mkcert pair in place (https over the LAN), or tether the Quest over USB with
 `adb reverse tcp:8000 tcp:8000` and open `http://localhost:8000/vr`.
+
+**Only one OpenMuscle at a time.** If OpenMuscle is already running, a second
+`openmuscle web` stops within a second with one line (`OpenMuscle is already running
+at http://localhost:8000 ...`) and exits with a non-zero code instead of starting a
+second server that would fight over the bands. The UDP data port (3141) is opened
+exclusively for the same reason: if another program holds it, `openmuscle web` says
+so and stops before anything starts. If only the discovery port (3140) is taken it
+prints a note and keeps going (bands can still be found with the search buttons).
+`GET /api/mode` includes `"app": "openmuscle"` so launchers can tell an OpenMuscle
+server from any other program on the port.
+
+### `openmuscle doctor`
+
+Checks this computer and network in a few seconds and says what to fix. One line per
+check, `PASS`, `WARN` or `FAIL`, with the fix under anything that is not a pass. The
+exit code is 0 when nothing failed and 1 otherwise, so it can sit in a launcher.
+
+```bash
+openmuscle doctor                       # the normal check
+openmuscle doctor --report              # also write openmuscle-report.txt to send to support
+openmuscle doctor --report my-pc.txt    # ... with a file name of your choice
+openmuscle doctor --port 8010 --udp-port 3141 --announce-port 3140
+openmuscle doctor --no-discover         # skip the quick search for bands
+```
+
+It checks: the Python version and installed packages, the browser page files, that
+the data folder can be written, the HTTP port (8000), the UDP data port (3141) and the
+UDP discovery port (3140), this computer's network address, the Wi-Fi network name,
+the Windows firewall rules and network type (Private or Public), internet access for
+the 3D hand viewer, a self-test sensor frame sent to this computer, and a quick
+"discover" broadcast to see which bands answer. It ends with the most likely reason a
+band is not showing up: firewall, different network, client isolation (a guest
+network or router setting that keeps devices apart), or the band being off.
+
+The report is a plain text file with versions and these results. It never contains
+Wi-Fi names, passwords or recordings. While it runs, Windows may ask whether to allow
+Python through the firewall; choose Allow. The same checks run inside the app:
+`GET /api/discovery/diagnose` returns them as JSON and `POST /api/support-report`
+writes a zip (report, results, recent log lines with file names and secrets removed)
+into `~/OpenMuscle/exports` and returns its path.
+
+### `openmuscle firewall`
+
+On Windows the bands cannot reach OpenMuscle until a firewall rule allows incoming UDP
+on ports 3140 and 3141 for your network type. This command prints the exact rule and
+the command behind it, asks, and only then opens the normal Windows administrator
+prompt. It never runs by itself.
+
+```bash
+openmuscle firewall                # show the rule, ask, then add it (Private and Domain networks)
+openmuscle firewall --print-only   # just print it
+openmuscle firewall --public       # also allow on Public networks
+openmuscle firewall --remove       # take the rule out again
+```
+
+The rule is `netsh advfirewall firewall add rule name="OpenMuscle UDP 3140-3141" dir=in
+action=allow protocol=UDP localport=3140,3141 profile=private,domain`. On macOS and
+Linux the command only explains what to allow.
 
 ### `openmuscle record`
 
