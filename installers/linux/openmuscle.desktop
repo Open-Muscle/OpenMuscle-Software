@@ -1,0 +1,14 @@
+[Desktop Entry]
+# Template: install.sh fills in the two @...@ values and writes the result to
+# ~/.local/share/applications/openmuscle.desktop.
+Type=Application
+Version=1.0
+Name=OpenMuscle
+GenericName=Forearm sensor recorder
+Comment=Record and view forearm pressure-sensor data (leave the terminal window open)
+Exec="@EXEC@"
+Icon=@ICON@
+Terminal=true
+Categories=Science;Education;
+Keywords=OpenMuscle;sensor;forearm;EMG;
+StartupNotify=false
