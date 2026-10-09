@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from openmuscle import paths as om_paths
 from openmuscle.data import export_bundle as eb
 from openmuscle import doctor, netutil
-from openmuscle.web.state import AppState
+from openmuscle.web.state import AppState, ModelGuardError, TrainDataError
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -707,6 +707,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # the captures folder is opened.
         name: Optional[str] = None
         folder: Optional[str] = None
+        # A model folder (as returned by /api/train): must sit inside the
+        # models folder. Wins over `name`.
+        model: Optional[str] = None
 
     @app.post("/api/reveal")
     async def reveal_in_folder(body: RevealBody, request: Request = None):
@@ -724,7 +727,19 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(
                 status_code=403,
                 detail="reveal is disabled in --debug mode (server is LAN-exposed)")
-        if body.name:
+        if body.model:
+            from openmuscle import paths as om_paths
+            try:
+                target = Path(body.model).resolve()
+                target.relative_to(om_paths.models_dir().resolve())
+            except (ValueError, OSError):
+                raise HTTPException(status_code=404, detail="Model folder not found")
+            if target.is_file():
+                target = target.parent
+            if not target.is_dir():
+                raise HTTPException(status_code=404, detail="Model folder not found")
+            select = False
+        elif body.name:
             p = state.capture_path(body.name)
             if p is None:
                 raise HTTPException(status_code=404, detail="Capture not found")
@@ -816,7 +831,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.post("/api/train")
     async def train_endpoint(body: TrainBody):
         if not body.captures:
-            raise HTTPException(status_code=400, detail="No captures specified")
+            raise HTTPException(status_code=400, detail="No recordings are selected. Tick at least one recording, then press Train.")
         try:
             # Training is CPU-bound (RandomForest fit). Run it in a worker
             # thread so the asyncio event loop / WS broadcast keeps flowing
@@ -831,10 +846,20 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 body.role,
                 body.holdout_captures,
             )
+        except TrainDataError as e:
+            # The recordings cannot be trained on: say why, in words. `checks`
+            # carries the full findings for clients that want to list them.
+            return JSONResponse(status_code=400,
+                                content={"detail": str(e), "checks": e.checks})
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Training failed: {e}")
+            # Never hand a library message ("n_samples=0", "Input y contains
+            # NaN") to the person at the screen; the raw text goes to the log.
+            from openmuscle.ml.checks import friendly_error
+            state.log_buffer.error("training", "training failed: {}: {}".format(
+                type(e).__name__, e))
+            raise HTTPException(status_code=500, detail=friendly_error(e))
         return result
 
     @app.get("/api/models")
@@ -856,6 +881,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "active": state.engine is not None,
             "enabled": state.inference_enabled,
             "model": state.engine.name if state.engine else None,
+            "guard": state.model_guard_issues(),
         }
 
     @app.post("/api/inference/model/{role}")
@@ -877,14 +903,24 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "active": eng is not None,
             "enabled": state.inference_enabled,
             "model": eng.name if eng else None,
+            "guard": state.model_guard_issues(),
         }
 
     class SetEnabledBody(BaseModel):
         enabled: bool
+        # The operator's explicit "continue anyway" after the model/participant
+        # or band-unit mismatch dialog.
+        force: bool = False
 
     @app.post("/api/inference/enabled")
     async def set_inference_enabled(body: SetEnabledBody):
-        state.set_inference_enabled(body.enabled)
+        try:
+            state.set_inference_enabled(body.enabled, force=body.force)
+        except ModelGuardError as e:
+            # 409: not started. The body carries the sentences for the dialog;
+            # the same call with force=true overrides.
+            return JSONResponse(status_code=409, content={
+                "detail": str(e), "issues": e.issues, "can_override": True})
         return {
             "enabled": state.inference_enabled,
             "model": state.engine.name if state.engine else None,

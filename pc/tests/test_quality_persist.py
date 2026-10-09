@@ -4,6 +4,7 @@ captures with no stored verdict are scored by a one-time CSV scan.
 
 Same AppState-without-listener harness as test_capture_list_fields.py."""
 
+import pytest
 import asyncio
 import shutil
 import time
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from openmuscle.protocol.schema import OpenMusclePacket, CURRENT_VERSION
 from openmuscle.web.state import AppState
+
+pytestmark = pytest.mark.usefixtures("tiny_training_ok")
 
 FIXTURE = Path(__file__).parent / "fixtures" / "capture_1779731309_dud.csv"
 

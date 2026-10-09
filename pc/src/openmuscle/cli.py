@@ -467,19 +467,51 @@ def train(data_paths, model_type, output, test_split, trees, role):
     from openmuscle.ml.verdict import describe_result
     from openmuscle.data.converter import combine_csvs
 
-    def _say(metrics, n_captures):
-        v = describe_result(metrics, n_captures=n_captures, hand_side=role)
+    from openmuscle.data.dataset import load_capture
+    from openmuscle.ml import checks as dcheck
+
+    def _say(metrics, n_captures, warns=()):
+        v = describe_result(metrics, n_captures=n_captures, hand_side=role,
+                            checks=[c for c in warns
+                                    if c["code"] not in ("single_capture", "nan_rows_dropped")])
         click.echo("")
         click.echo(v["headline"])
         click.echo(v["detail"])
         click.echo("Next: " + v["next_step"])
 
+    def _fit(path, n_captures, names):
+        """Check the data in plain words, then train; any data problem becomes a
+        one-line error instead of a traceback."""
+        try:
+            found = dcheck.check_training_data(
+                load_capture(path), role=role,
+                meta={"captures": names, "capture_meta": {}})
+        except Exception as e:
+            raise click.ClickException(dcheck.friendly_error(e))
+        stoppers = dcheck.blocks(found)
+        if stoppers:
+            raise click.ClickException(dcheck.join_messages(stoppers))
+        if any(c["code"] == "trained_each_side" for c in found) and role is None:
+            raise click.ClickException(
+                "The left and right recordings were made at different times, so they "
+                "cannot be trained together. Train each hand on its own: run this command "
+                "with --role left and the left file(s), then again with --role right "
+                "and the right file(s).")
+        warns = dcheck.warnings(found)
+        for c in warns:
+            click.echo("Note: " + c["message"])
+        try:
+            _model, metrics = train_model(
+                data_path=path, model_type=model_type, output=output,
+                test_split=test_split, n_estimators=trees, role=role,
+                extra_meta={"captures": names})
+        except ValueError as e:
+            raise click.ClickException(dcheck.friendly_error(e))
+        _say(metrics, n_captures, warns)
+
     if len(data_paths) == 1:
         # Single-CSV: train directly, no temp file dance.
-        _model, metrics = train_model(
-            data_path=data_paths[0], model_type=model_type, output=output,
-            test_split=test_split, n_estimators=trees, role=role)
-        _say(metrics, 1)
+        _fit(data_paths[0], 1, [os.path.basename(data_paths[0])])
         return
 
     # Multiple captures: concatenate to a temp file, train, clean up.
@@ -490,13 +522,10 @@ def train(data_paths, model_type, output, test_split, trees, role):
         n_rows = combine_csvs(list(data_paths), tmp_path,
                               capture_column="_capture")
         click.echo(f"Combined into {n_rows} rows -> {tmp_path}")
-        _model, metrics = train_model(
-            data_path=tmp_path, model_type=model_type, output=output,
-            test_split=test_split, n_estimators=trees, role=role)
-        _say(metrics, len(data_paths))
+        _fit(tmp_path, len(data_paths), [os.path.basename(p) for p in data_paths])
     except ValueError as e:
         # Mismatched-schema capture selection: fail loud + clean, not a traceback.
-        raise click.ClickException(str(e))
+        raise click.ClickException(dcheck.friendly_error(e))
     finally:
         try:
             os.unlink(tmp_path)
@@ -599,10 +628,11 @@ def models():
         metrics = m.get("metrics", {})
         v = describe_result(metrics, n_captures=len(m.get("captures") or []) or None,
                             hand_side=metrics.get("role"))
-        r2 = metrics.get("r2", "N/A")
-        mse = metrics.get("mse", "N/A")
-        print(f"  {m['name']}  created={m['created']}  {v['headline']}  "
-              f"(legacy R2={r2}  MSE={mse})  path={m.get('path', '')}")
+        hand = {"left": "left hand", "right": "right hand"}.get(
+            metrics.get("role"), "one band")
+        who = str(m.get("participant") or m.get("wearer") or "").strip().lower()             or "unknown participant"
+        print(f"  {m.get('dir') or m['name']}  {hand}  {who}  {v['headline']}")
+        print(f"      created {m['created']}   {m.get('path', '')}")
 
 
 @main.command()

@@ -23,6 +23,8 @@ from openmuscle.simulate.quest_hand import (
     finger_curls, flexgrid_matrix, hand_pose)
 from openmuscle.web.state import AppState, _flatten_quest_joint
 
+pytestmark = pytest.mark.usefixtures("tiny_training_ok")
+
 TREES = 12
 IDENTITY = [0.0, 0.0, 0.0, 1.0]
 

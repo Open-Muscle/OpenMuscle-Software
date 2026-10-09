@@ -19,11 +19,14 @@ Uses tiny synthetic schema-v2 CSVs (6 features, 2 labels, 4-tree forests) so
 the whole file runs in a few seconds.
 """
 
+import pytest
 import csv
 import json
 from pathlib import Path
 
 from openmuscle.web.state import AppState
+
+pytestmark = pytest.mark.usefixtures("tiny_training_ok")
 
 
 def _write_v2_csv(path, n=40, roles=("left", "right")):
@@ -151,7 +154,7 @@ def test_start_session_warns_on_wearer_mismatch(tmp_path, monkeypatch):
     session = s.start_session(name="a take", wearer="wearer-a")
     assert session["model_wearer_mismatch"] == ["left"]
     assert any(e["level"] == "WARN"
-               and "left-hand model was trained on wearer 'wearer-b'" in e["message"]
+               and "left-hand model was trained on participant 'wearer-b'" in e["message"]
                for e in s.log_buffer.entries())
     s.end_session()
 
@@ -162,5 +165,136 @@ def test_start_session_warns_on_wearer_mismatch(tmp_path, monkeypatch):
 
     # Unstamped model (no wearer in metadata): defensive no-op.
     s.engines["left"].metadata.pop("wearer", None)
+    s.engines["left"].metadata.pop("participant", None)
     session3 = s.start_session(name="anon model", wearer="wearer-a")
     assert session3["model_wearer_mismatch"] == []
+
+
+# ----------------------------------------------------------------------------
+# Participant and band-unit stamp + the guard that blocks
+# ----------------------------------------------------------------------------
+
+def _flex_dev(s, did, role):
+    from openmuscle.web.state import DeviceInfo
+    d = DeviceInfo(device_id=did, device_type="flexgrid")
+    d.rows, d.cols = 4, 15
+    s.devices[did] = d
+    s._role_by_device[did] = role
+
+
+def _train_left(s, session_wearer=None, name="take1.csv"):
+    s.active_session = ({"id": "s_g", "name": "g", "wearer": session_wearer}
+                        if session_wearer is not None else None)
+    res = s.train_from_captures([name], n_estimators=4, activate=True, role="left")
+    s.active_session = None
+    return res
+
+
+def test_train_stamps_participant_and_bands_without_a_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    s = _state(tmp_path, 53860)
+    _write_v2_csv(s.captures_dir / "take1.csv")
+    # no active session: the recording's own meta says who and what
+    s.write_capture_meta("take1.csv", {
+        "subject": "  P-07 ", "label_source": "webcam",
+        "roles": {"fg-left": "left", "fg-right": "right"},
+        "auto": {"session_wearer": "P-07"}})
+    res = _train_left(s)
+    meta = json.loads((Path(res["model_path"]).parent / "metadata.json").read_text())
+    assert meta["participant"] == "p-07"                      # normalised
+    assert meta["band_device_ids"] == {"left": ["fg-left"]}   # from the CSV rows
+    assert meta["label_source"] == "webcam"
+    assert "session_id" not in meta
+    assert res["provenance"]["participant"] == "p-07"
+    # the engine carries it, and /api/models lists it
+    assert s.engines["left"].metadata["participant"] == "p-07"
+    assert s.list_models()[0]["participant"] == "p-07"
+
+
+def test_participant_match_is_case_and_space_insensitive(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    s = _state(tmp_path, 53861)
+    _write_v2_csv(s.captures_dir / "take1.csv")
+    _train_left(s, session_wearer="P-07")
+    s.active_session = {"id": "s2", "name": "later", "wearer": "  p-07 "}
+    assert [i for i in s.model_guard_issues() if i["kind"] == "participant"] == []
+    s.active_session = {"id": "s3", "name": "other", "wearer": "P-08"}
+    issues = [i for i in s.model_guard_issues() if i["kind"] == "participant"]
+    assert len(issues) == 1 and issues[0]["blocking"] is True
+    assert issues[0]["slot"] == "left"
+    assert "p-07" in issues[0]["message"] and "p-08" in issues[0]["message"]
+
+
+def test_swapping_the_band_on_an_arm_blocks_prediction_until_confirmed(tmp_path, monkeypatch):
+    from openmuscle.web.state import ModelGuardError
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    s = _state(tmp_path, 53862)
+    _write_v2_csv(s.captures_dir / "take1.csv")
+    _train_left(s, session_wearer="P-07")                   # trained with band "fg-left"
+
+    _flex_dev(s, "fg-left", "left")                         # the same unit on the left arm
+    assert s.model_guard_issues() == []
+    s.set_inference_enabled(True)
+    assert s.inference_enabled is True
+    s.set_inference_enabled(False)
+
+    s.devices.clear()
+    _flex_dev(s, "fg-OTHER", "left")                        # a different unit now tagged left
+    issues = s.model_guard_issues()
+    assert [i["kind"] for i in issues] == ["band_unit"]
+    assert "fg-left" in issues[0]["message"] and "fg-OTHER" in issues[0]["message"]
+    assert "left" in issues[0]["message"]
+    with pytest.raises(ModelGuardError) as ei:
+        s.set_inference_enabled(True)                       # blocked
+    assert ei.value.issues and s.inference_enabled is False
+    # the snapshot carries the same issues for the amber banner
+    assert s._inference_snapshot()["guard"][0]["kind"] == "band_unit"
+    s.set_inference_enabled(True, force=True)               # explicit click
+    assert s.inference_enabled is True
+
+
+def test_models_with_no_stamp_are_unknown_not_blocked(tmp_path, monkeypatch):
+    from tests.test_model_persistence import make_model_dir
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    path = make_model_dir(tmp_path, "random_forest_20260101_000000", "left", 6)
+    s = _state(tmp_path, 53863)
+    s.set_model_role("left", str(path))
+    s.active_session = {"id": "s", "name": "n", "wearer": "P-01"}
+    _flex_dev(s, "fg-1", "left")
+    assert s.model_guard_issues() == []
+    s.set_inference_enabled(True)
+    assert s.list_models()[0]["participant"] == ""          # the table says 'unknown participant'
+
+
+def test_start_session_reports_the_guard_in_words(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    s = _state(tmp_path, 53864)
+    _write_v2_csv(s.captures_dir / "take1.csv")
+    _train_left(s, session_wearer="P-07")
+    session = s.start_session(name="next", wearer="P-09")
+    assert session["model_wearer_mismatch"] == ["left"]
+    assert any(i["kind"] == "participant" and "p-09" in i["message"]
+               for i in session["model_guard"])
+
+
+def test_http_enabled_returns_409_with_issues_then_accepts_force(tmp_path, monkeypatch):
+    import asyncio
+    from openmuscle.web.app import create_app
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    caps = tmp_path / "caps"
+    caps.mkdir()
+    app = create_app(udp_port=53865, captures_dir=str(caps))
+    s = app.state.app_state
+    _write_v2_csv(caps / "take1.csv")
+    _train_left(s, session_wearer="P-07")
+    s.active_session = {"id": "x", "name": "x", "wearer": "P-99"}
+    route = next(r.endpoint for r in app.routes
+                 if getattr(r, "path", None) == "/api/inference/enabled")
+    body_cls = route.__annotations__["body"]
+    resp = asyncio.run(route(body_cls(enabled=True)))
+    assert resp.status_code == 409
+    payload = json.loads(resp.body)
+    assert payload["can_override"] is True and payload["issues"]
+    assert "p-07" in payload["detail"]
+    ok = asyncio.run(route(body_cls(enabled=True, force=True)))
+    assert ok["enabled"] is True

@@ -52,6 +52,32 @@ QUEST_JOINT_CHANNEL_ORDER = ("px", "py", "pz", "rx", "ry", "rz", "rw")
 HAND_POSE_TYPES = ("quest_hand", "webcam_hand")
 
 
+class TrainDataError(RuntimeError):
+    """The selected recordings cannot be trained on. str(e) is a plain-language
+    sentence for the person at the screen (the /api/train 400 body); `checks`
+    carries the full list of findings from ml/checks.py when there are any.
+    Subclasses RuntimeError so older callers that caught that still work."""
+
+    def __init__(self, message, checks=None):
+        super().__init__(message)
+        self.checks = checks or []
+
+
+class ModelGuardError(RuntimeError):
+    """Starting prediction was refused because the loaded model does not match
+    who is wearing the bands or which band unit is on which arm. `issues` is
+    the list from AppState.model_guard_issues(); the caller may override."""
+
+    def __init__(self, message, issues):
+        super().__init__(message)
+        self.issues = issues
+
+
+# Pre-train warnings that are not worth repeating inside the result sentence
+# (the UI already shows them as their own notes).
+_QUIET_CHECKS = ("single_capture", "trained_each_side", "nan_rows_dropped")
+
+
 def _flatten_quest_joint(pos, rot):
     """Pack one joint's (pos, rot) into the canonical channel order.
 
@@ -490,9 +516,28 @@ class AppState:
         self.engines: dict = {"left": None, "right": None}
         self.engine_status: str = "no model loaded"
         self._role_by_device: dict = {}
+        # Which slot was loaded most recently (higher = newer). The router uses it
+        # so the model the operator activated LAST drives a band, whatever older
+        # models are still sitting in other slots (see _engine_for_role).
+        self._slot_seq: dict = {"shared": 0, "left": 0, "right": 0}
+        self._slot_counter: int = 0
+        # One-line "Restored the model from ..." note, shown until the operator
+        # presses Predict or loads a different model.
+        self.restored_banner: Optional[str] = None
+
+        # RESTART-SAFETY: <models>/active.json remembers exactly which models sat
+        # in the shared/left/right slots, so a restart (or crash) comes back with
+        # the operator's own selection, PAUSED, instead of guessing "newest on
+        # disk". Restored first so the --model* flags below, which are an
+        # explicit "run this", replace the same slots and win.
+        self._restore_active_models()
+
+        cli_ok = False
         if model_path:
             try:
                 self.engine = InferenceEngine(model_path)
+                self._bump_slot("shared")
+                cli_ok = True
                 self.engine_status = "loaded"
                 self.log_buffer.info("inference", "model loaded from CLI: {}".format(self.engine.name))
             except Exception as e:
@@ -504,6 +549,8 @@ class AppState:
                 continue
             try:
                 self.engines[_role] = InferenceEngine(_mp)
+                self._bump_slot(_role)
+                cli_ok = True
                 self.engine_status = "loaded"
                 self.log_buffer.info(
                     "inference", "{}-hand model loaded from CLI: {}".format(
@@ -513,18 +560,12 @@ class AppState:
                 self.log_buffer.error(
                     "inference", "{}-hand model load failed at startup: {}".format(_role, e))
 
-        # RESTART-SAFETY: the TRAIN BOTH models used to live only
-        # in memory and died with the server (a restart silently
-        # lost both hands' models). Auto-load the newest
-        # role-tagged model from the registry into any per-hand slot the CLI
-        # didn't fill, so a crash + restart comes back predicting.
-        self._autoload_role_models()
-
-        # Runtime on/off for inference. Defaults to True iff ANY model (single
-        # or per-role) was loaded at startup (CLI flag or auto-restore) -- if you
-        # launched `openmuscle web` bare with no models on disk, inference stays
-        # paused until you load + Resume.
-        self.inference_enabled: bool = self._has_any_engine()
+        # Runtime on/off for inference. Starts running only when a --model* flag
+        # asked for it; models restored from the last run start PAUSED (with a
+        # banner) so nothing drives a band before the operator has looked.
+        self.inference_enabled: bool = cli_ok
+        if cli_ok:
+            self.restored_banner = None
 
         # Forwarding socket to robot hand. Opened lazily.
         self.hand_target: Optional[tuple] = hand_target
@@ -1411,11 +1452,21 @@ class AppState:
     def _engine_for_role(self, role: str):
         """The model that should run a band tagged `role` (left/right).
 
-        Separate-model-per-hand: prefer the per-role engine; fall back to the
-        shared single engine so single-model mode (`--model`) is unchanged.
+        Separate-model-per-hand: use the per-role engine, or the shared single
+        engine when there is none (single-model mode, `--model`). When both are
+        loaded, whichever was activated last drives the band: a one-band shared
+        model trained after a two-band day must not lose to the stale left model
+        from yesterday.
         """
-        eng = self.engines.get(role) if role in ("left", "right") else None
-        return eng or self.engine
+        per = self.engines.get(role) if role in ("left", "right") else None
+        if per is None:
+            return self.engine
+        if self.engine is None:
+            return per
+        # Both a per-hand and a shared model are loaded: the one activated most
+        # recently wins (a tie keeps the per-hand model, the legacy behaviour).
+        return per if self._slot_seq.get(role, 0) >= self._slot_seq.get("shared", 0) \
+            else self.engine
 
     def _active_engines(self) -> list:
         """Distinct loaded engines (shared + per-role), de-duped by identity."""
@@ -1465,6 +1516,17 @@ class AppState:
                       if self.engines.get("right") else None),
         }
 
+        routing = self._routing()
+        extras = {
+            # Which model drives which band, in words ("Left band: ...").
+            "routing": routing["bands"],
+            "routing_text": routing["text"],
+            # Model/participant/band-unit mismatches (amber banner in the UI).
+            "guard": self.model_guard_issues() if self._has_any_engine() else [],
+            # "Restored the model from ..." until the operator acts on it.
+            "restored_banner": self.restored_banner,
+        }
+
         if not self._has_any_engine():
             return {
                 "available": False,
@@ -1474,6 +1536,7 @@ class AppState:
                 "status": self.engine_status,
                 "hand_target": hand_str,
                 "active_models": active_models,
+                **extras,
             }
 
         model_label = self._model_label()
@@ -1486,6 +1549,7 @@ class AppState:
                 "status": "paused",
                 "hand_target": hand_str,
                 "active_models": active_models,
+                **extras,
             }
 
         # Mark as stale if no frame has come through recently (e.g. FlexGrid
@@ -1521,7 +1585,26 @@ class AppState:
             "status": status,
             "hand_target": hand_str,
             "active_models": active_models,
+            **extras,
         }
+
+    def _routing(self) -> dict:
+        """Which model drives which connected band, as data and as one sentence."""
+        bands, bits = [], []
+        for did, dev in self.devices.items():
+            if dev.device_type != "flexgrid":
+                continue
+            role = self._role_by_device.get(did, "")
+            eng = self._engine_for_role(role)
+            slot = None
+            if eng is not None:
+                slot = role if eng is self.engines.get(role) else "shared"
+            bands.append({"device_id": did, "role": role or None,
+                          "model": eng.name if eng else None, "slot": slot})
+            who = "{} band".format(role.capitalize()) if role in ("left", "right") \
+                else "Band {}".format(did)
+            bits.append("{}: {}".format(who, eng.name if eng else "no model"))
+        return {"bands": bands, "text": " · ".join(bits)}
 
     # ----- recording -----
 
@@ -2413,27 +2496,24 @@ class AppState:
 
     def _model_wearer_mismatch(self, session_wearer) -> list:
         """Roles (left/right) whose loaded model was trained on a DIFFERENT
-        wearer than `session_wearer`. Each engine's metadata.json rides in as
-        InferenceEngine.metadata; train_from_captures stamps `wearer` there.
-        Empty list when nothing mismatches or nothing is stamped."""
+        participant than `session_wearer`. Each engine's metadata.json rides in as
+        InferenceEngine.metadata; train_from_captures stamps `participant` (and
+        the typed `wearer`) there. Empty list when nothing mismatches or nothing
+        is stamped."""
         mismatched = []
-        wearer = str(session_wearer or "").strip().lower()
+        wearer = self._norm_participant(session_wearer)
         if not wearer:
             return mismatched
         for r in ("left", "right"):
             eng = self.engines.get(r)
             if eng is None:
                 continue
-            try:
-                model_wearer = str(
-                    (eng.metadata or {}).get("wearer") or "").strip().lower()
-            except Exception:
-                model_wearer = ""
+            model_wearer = self._engine_participant(eng)
             if model_wearer and model_wearer != wearer:
                 mismatched.append(r)
                 self.log_buffer.warn("session",
-                    "{}-hand model was trained on wearer '{}' but this "
-                    "session's wearer is '{}'; retrain or pick a matching "
+                    "{}-hand model was trained on participant '{}' but this "
+                    "session's participant is '{}'; retrain or pick a matching "
                     "model".format(r, model_wearer, wearer))
         return mismatched
 
@@ -2447,6 +2527,71 @@ class AppState:
         `wearer` or `subject` (sometimes both); either one counts."""
         s = session or {}
         return str(s.get("wearer") or s.get("subject") or "").strip()
+    def _engine_participant(self, eng) -> str:
+        """The normalised participant code a model was trained on ('' = unknown)."""
+        try:
+            meta = eng.metadata or {}
+            return self._norm_participant(meta.get("participant") or meta.get("wearer"))
+        except Exception:
+            return ""
+
+    def _current_participant(self) -> str:
+        s = self.active_session or {}
+        return self._norm_participant(s.get("wearer") or s.get("subject"))
+
+    def model_guard_issues(self, participant: Optional[str] = None) -> list:
+        """Mismatches between the loaded models and what is in front of them now.
+
+        Two kinds, both `blocking` (starting prediction asks for an explicit
+        override):
+          participant  the model was trained on another participant code than
+                       `participant` (default: the active session's);
+          band_unit    the physical band now tagged left/right is not one of the
+                       band units the model was trained with.
+        Models stamped with no participant are NOT an issue here; the Models
+        table says 'unknown participant' for them. Case and spacing never matter.
+        """
+        issues = []
+        cur = self._norm_participant(participant) if participant is not None \
+            else self._current_participant()
+        slots = (("shared", self.engine), ("left", self.engines.get("left")),
+                 ("right", self.engines.get("right")))
+        for slot, eng in slots:
+            if eng is None:
+                continue
+            mp = self._engine_participant(eng)
+            if mp and cur and mp != cur:
+                issues.append({
+                    "slot": slot, "kind": "participant", "blocking": True,
+                    "model": eng.name, "model_participant": mp,
+                    "current_participant": cur,
+                    "message": "The {} was trained on participant '{}', but the "
+                               "session is for '{}'. Predictions may be wrong.".format(
+                                   "model" if slot == "shared" else slot + "-hand model",
+                                   mp, cur)})
+        for did, dev in self.devices.items():
+            if dev.device_type != "flexgrid":
+                continue
+            role = self._role_by_device.get(did, "")
+            eng = self._engine_for_role(role)
+            if eng is None:
+                continue
+            ids = (eng.metadata or {}).get("band_device_ids") or {}
+            pool = ids.get(role) or ids.get("any") or [d for v in ids.values() for d in v]
+            pool = {str(d).strip().lower() for d in pool}
+            if pool and did.strip().lower() not in pool:
+                where = "the {} arm".format(role) if role in ("left", "right") else "this arm"
+                trained = ", ".join(sorted(
+                    str(d) for d in (ids.get(role) or ids.get("any")
+                                     or [x for v in ids.values() for x in v])))
+                issues.append({
+                    "slot": role if eng is self.engines.get(role) else "shared",
+                    "kind": "band_unit", "blocking": True, "model": eng.name,
+                    "band": did, "role": role or None,
+                    "message": "This model was trained with band {} on {}, but the "
+                               "band now on {} is {}. Predictions may be wrong.".format(
+                                   trained, where, where, did)})
+        return issues
 
     def start_session(self, name: str = "", subject: str = "", arm: Optional[str] = None,
                       gestures: Optional[list] = None, notes: str = "",
@@ -2518,6 +2663,10 @@ class AppState:
         # produce no warning.
         session["model_wearer_mismatch"] = self._model_wearer_mismatch(
             session.get("wearer"))
+        # Same comparison in full sentences (participants and band units), for the
+        # session card.
+        session["model_guard"] = self.model_guard_issues(
+            participant=session.get("wearer") or session.get("subject"))
         self._write_session(session)
         self.active_session = session
         self.log_buffer.info("session",
@@ -2812,11 +2961,19 @@ class AppState:
         with one capture the chronological tail is held out after a ~1 s purge
         gap. The shipped model is then fit on every row. See ml/evaluate.py.
 
+        Before anything is fitted the selection goes through ml/checks.py: a
+        problem that would waste the run (too little data, a labeler that never
+        moved, a band that was not on the arm...) raises TrainDataError with a
+        plain message; softer problems come back as `checks` warnings.
+
         `role` (left/right) trains a SINGLE-ARM model per hand (separate-model-
         per-hand): only that role's rows from a two-hand capture are used, and on
         activate the model loads into self.engines[role] (not the shared engine).
         Call twice (left, right) to produce model_left + model_right. None = the
-        legacy single/pooled model into self.engine.
+        legacy single/pooled model into self.engine, except that a selection of
+        left-only files plus right-only files (recorded at different times) is
+        trained one hand at a time automatically (the result has per_hand=True
+        and a `results` dict keyed by side).
 
         Args:
             capture_names: list of CSV filenames (NOT full paths) inside
@@ -2828,28 +2985,31 @@ class AppState:
                            or the tail of a single capture).
             activate:      if True, the trained model is loaded into
                            self.engine immediately, so live inference uses
-                           it without restarting the server.
+                           it without restarting the server (still paused).
 
         Returns:
             {model_path, metrics: {r2, mse, curl_r2, per_finger, eval_method,
              ...}, verdict: {grade, headline, detail, next_step, ...},
-             active: bool}
+             checks: [warnings], active: bool}
 
         Raises:
-            RuntimeError on invalid capture or empty result.
+            TrainDataError (a RuntimeError) with a plain-language message.
         """
         # Import here to keep the FastAPI cold-start fast.
         import tempfile
         import os
         from openmuscle.ml.training import train_model
         from openmuscle.ml.verdict import describe_result
+        from openmuscle.ml import checks as dcheck
         from openmuscle.data.converter import combine_csvs
+        from openmuscle.data.dataset import load_capture
 
         if not capture_names:
-            raise RuntimeError("No captures selected")
+            raise TrainDataError("No recordings are selected. Tick at least one "
+                                 "recording in the list, then press Train.")
         role = (role or "").strip().lower() or None
         if role is not None and role not in ("left", "right"):
-            raise RuntimeError("role must be 'left', 'right', or omitted")
+            raise TrainDataError("The hand must be 'left' or 'right'.")
         self.log_buffer.info("training",
             "started: {} captures, model={}, trees={}, test_split={}{}".format(
                 len(capture_names), model_type, n_estimators, test_split,
@@ -2861,7 +3021,9 @@ class AppState:
         for name in capture_names:
             p = self.capture_path(name)
             if p is None:
-                raise RuntimeError(f"Capture not found: {name}")
+                raise TrainDataError(
+                    "The recording '{}' could not be found. It may have been deleted "
+                    "or renamed; refresh the list and pick it again.".format(name))
             found.append((name, p))
             # Bad takes are still trained on (the operator may know better), but
             # reported back so the UI can list them. Older takes are scored by
@@ -2893,7 +3055,19 @@ class AppState:
             meta = self.read_capture_meta(item[0]) or {}
             return meta.get("created_ms") or int(item[1].stat().st_mtime * 1000)
         found.sort(key=_recorded_ms)
+
+        # Left-only files plus right-only files (recorded at different times):
+        # there is no moment with both bands on, so train one model per hand
+        # instead of failing on the bilateral pivot.
+        if role is None and len(found) > 1:
+            plan = dcheck.plan_sides({n: dcheck.csv_roles(p) for n, p in found})
+            if plan:
+                return self._train_each_side(
+                    plan, found, model_type, n_estimators, test_split, activate,
+                    holdout_captures, bad_captures)
+
         paths = [str(p) for _n, p in found]
+        names = [n for n, _p in found]
 
         # Combine (or just use the single path directly)
         if len(paths) == 1:
@@ -2907,19 +3081,53 @@ class AppState:
                 combine_csvs(paths, combined_path, capture_column="_capture")
             except ValueError as e:
                 # Mismatched-schema capture selection is operator error, not a
-                # server fault -- surface it as a clean 400 (RuntimeError maps to
-                # 400 in /api/train) instead of a 500.
-                raise RuntimeError(str(e))
+                # server fault: say it in plain words (a 400), not as a stack of
+                # column names.
+                self.log_buffer.warn("training", "capture selection refused: {}".format(e))
+                try:
+                    os.unlink(combined_path)
+                except OSError:
+                    pass
+                raise TrainDataError(dcheck.friendly_error(e))
 
         try:
-            model, metrics = train_model(
-                data_path=combined_path,
-                model_type=model_type,
-                n_estimators=n_estimators,
-                test_split=test_split,
-                role=role,
-                holdout_captures=holdout_captures,
-            )
+            # ---- pre-train data checks (plain words, before any fitting) ----
+            try:
+                df = load_capture(combined_path)
+            except Exception as e:
+                self.log_buffer.warn("training", "could not read the selection: {}".format(e))
+                raise TrainDataError(
+                    "The selected recordings could not be read. They may be damaged "
+                    "or still being written; try another recording.")
+            check_meta = {"captures": names,
+                          "capture_meta": {n: self.read_capture_meta(n) for n in names}}
+            found_checks = dcheck.check_training_data(df, role=role, meta=check_meta)
+            stoppers = dcheck.blocks(found_checks)
+            if stoppers:
+                self.log_buffer.warn("training", "not trained: " + stoppers[0]["message"])
+                raise TrainDataError(dcheck.join_messages(stoppers), found_checks)
+            soft_checks = dcheck.warnings(found_checks)
+            provenance = self._training_provenance(names, df, role)
+            del df
+
+            try:
+                model, metrics = train_model(
+                    data_path=combined_path,
+                    model_type=model_type,
+                    n_estimators=n_estimators,
+                    test_split=test_split,
+                    role=role,
+                    holdout_captures=holdout_captures,
+                    extra_meta=provenance,
+                )
+            except TrainDataError:
+                raise
+            except (ValueError, KeyError, IndexError) as e:
+                # Whatever slipped past the checks (or sklearn raised itself) is
+                # still a data problem, not a server fault.
+                self.log_buffer.error("training", "fit refused: {}: {}".format(
+                    type(e).__name__, e))
+                raise TrainDataError(dcheck.friendly_error(e), soft_checks)
         finally:
             if cleanup:
                 try:
@@ -2927,9 +3135,8 @@ class AppState:
                 except OSError:
                     pass
 
-        # train_model() saved the model via ModelRegistry; find the most-
-        # recent registry dir (timestamp suffix monotonic) to get its path.
-        model_path = self._latest_registered_model_path()
+        # train_model() saved the model via ModelRegistry and told us where.
+        model_path = metrics.pop("saved_path", None) or self._latest_registered_model_path()
 
         # PC TRAIN TRAP: a role-less train on a two-hand
         # capture pivots to the bilateral Left||Right matrix (120 features for
@@ -2953,32 +3160,6 @@ class AppState:
                         metrics.get("n_features", 0)))
                 self.log_buffer.warn("training", warning)
 
-        # Session provenance stamp: merge session + source-capture fields into
-        # the fresh model dir's metadata.json so the Models panel can scope
-        # its list to the active session (35 historical models were burying
-        # the fresh ones). registry.list_models reads metadata.json
-        # wholesale, so /api/models carries these for free. Defensive: a
-        # stamp failure must never fail a finished training run.
-        if model_path:
-            try:
-                meta_path = Path(model_path).parent / "metadata.json"
-                with open(meta_path) as f:
-                    model_meta = json.load(f)
-                model_meta["captures"] = list(capture_names)
-                if self.active_session is not None:
-                    model_meta["session_id"] = self.active_session.get("id")
-                    model_meta["session_name"] = self.active_session.get("name")
-                    model_meta["wearer"] = self.active_session.get("wearer")
-                # train_model already stamps metrics.role; re-merge defensively
-                # so an older save path can't drop it (the auto-restore scan
-                # and the Models panel badges both read it from metrics).
-                model_meta.setdefault("metrics", {}).setdefault("role", role)
-                with open(meta_path, "w") as f:
-                    json.dump(model_meta, f, indent=2)
-            except Exception as e:
-                self.log_buffer.warn(
-                    "training", "model metadata stamp failed: {}".format(e))
-
         activated = False
         activate_error = None
         if activate and model_path:
@@ -2998,8 +3179,20 @@ class AppState:
                 self.engine_status = "trained but activate failed: {}".format(e)
                 self.log_buffer.error("training", "load-after-train failed: {}".format(e))
 
-        verdict = describe_result(metrics, n_captures=len(capture_names),
-                                  hand_side=role)
+        verdict = describe_result(
+            metrics, n_captures=len(capture_names), hand_side=role,
+            checks=[c for c in soft_checks if c["code"] not in _QUIET_CHECKS])
+        # A weak or not-working model must not take over a prediction that is
+        # already running. It stays loaded (and is the one "Start anyway" runs),
+        # but prediction is paused so the result card's wording is true.
+        paused_running = False
+        if (activated and verdict["grade"] in ("weak", "not_working")
+                and self.inference_enabled):
+            self.set_inference_enabled(False)
+            paused_running = True
+            self.log_buffer.warn("training",
+                "prediction paused: the new model scored {} ({})".format(
+                    verdict["grade"], verdict["headline"]))
         self.log_buffer.info("training",
             "done: rows={} held-out curl R²={} ({}) feats={}x{} model={} ({}) | {}".format(
                 metrics.get("n_rows", 0),
@@ -3014,10 +3207,16 @@ class AppState:
 
         return {
             "model_path": model_path,
+            "model_dir": str(Path(model_path).parent) if model_path else None,
             "metrics": metrics,
             # Plain-language reading of the held-out score (ml/verdict.py).
             "verdict": verdict,
+            # Warnings from the pre-train data checks (blocks raised instead).
+            "checks": soft_checks,
             "active": activated,
+            # True when a prediction that was running got paused because the new
+            # model is weak or not working.
+            "paused_running": paused_running,
             # Why activation failed (None when loaded). The UI must show this
             # loudly; "trained but not loaded" burned two capture sessions.
             "activate_error": activate_error,
@@ -3029,36 +3228,304 @@ class AppState:
             "bad_captures": bad_captures,
             # Selected takes below the minimum length (take_limits.py).
             "short_captures": short_captures,
+            # Who/what the model was trained on, as stamped into metadata.json.
+            "provenance": provenance,
         }
 
-    def _autoload_role_models(self) -> None:
-        """Fill empty per-hand engine slots from the newest role-tagged models on
-        disk (train_model stamps metrics.role into each model's metadata.json).
-        Called once at startup, after the CLI --model-left/--model-right flags
-        (which win). Restart-safety = demo-safety: a server
-        crash + restart comes back with both hands' models without retraining.
-        Untagged models (incl. the stale pre-role 64-feature ones) are never
-        auto-loaded; the newest-first scan means the last TRAIN BOTH wins."""
+    def _train_each_side(self, plan: dict, found: list, model_type, n_estimators,
+                         test_split, activate, holdout_captures, bad_captures) -> dict:
+        """Left files and right files recorded at different times: check both
+        sides first (so a problem on the second never leaves a half-done run),
+        then train and load one model per hand. The payload keeps the usual
+        top-level keys (worst verdict wins) and adds per_hand=True with the
+        full per-side results under `results`."""
+        from openmuscle.ml import checks as dcheck
+        from openmuscle.ml.verdict import GRADE_ORDER
+        order = [n for n, _p in found]
+        sides = {s: [n for n in order if n in set(plan[s])] for s in ("left", "right")}
+        self.log_buffer.info("training",
+            "left and right recordings were made separately: training one model per hand")
+        for side in ("left", "right"):
+            self._precheck(sides[side], side)
+        results = {}
+        for side in ("left", "right"):
+            hold = [h for h in (holdout_captures or []) if h in sides[side]] or None
+            results[side] = self.train_from_captures(
+                sides[side], model_type, n_estimators, test_split, activate,
+                side, hold)
+        merged_checks = [dcheck.each_side_note()]
+        for side in ("left", "right"):
+            for c in results[side]["checks"]:
+                c = dict(c)
+                c["message"] = "{} hand: {}".format(side.capitalize(), c["message"])
+                merged_checks.append(c)
+
+        def _rank(res):
+            g = res["verdict"]["grade"]
+            return GRADE_ORDER.index(g) if g in GRADE_ORDER else -1
+        worst = min(results.values(), key=_rank)
+        return {
+            "per_hand": True,
+            "results": results,
+            "model_path": results["left"]["model_path"],
+            "model_dir": results["left"]["model_dir"],
+            "metrics": results["left"]["metrics"],
+            "verdict": worst["verdict"],
+            "checks": merged_checks,
+            "active": all(r["active"] for r in results.values()),
+            "activate_error": next((r["activate_error"] for r in results.values()
+                                    if r["activate_error"]), None),
+            "warning": next((r["warning"] for r in results.values() if r["warning"]), None),
+            "role": None,
+            "captures": order,
+            "bad_captures": bad_captures,
+            "provenance": results["left"]["provenance"],
+        }
+
+    def _read_selection(self, names: list):
+        """The named captures as one DataFrame (with the `_capture` column when
+        there are several)."""
+        import tempfile
+        import os
+        from openmuscle.data.converter import combine_csvs
+        from openmuscle.data.dataset import load_capture
+        paths = [str(self.capture_path(n)) for n in names]
+        if len(paths) == 1:
+            return load_capture(paths[0])
+        fd, tmp = tempfile.mkstemp(prefix="om_combined_", suffix=".csv")
+        os.close(fd)
         try:
-            from openmuscle.ml.registry import ModelRegistry
-            entries = ModelRegistry().list_models()
-        except Exception as e:
-            self.log_buffer.warn("inference", "model auto-restore scan failed: {}".format(e))
-            return
-        for entry in reversed(entries):          # newest first (timestamped dirs)
-            role = (entry.get("metrics") or {}).get("role")
-            if role not in ("left", "right") or self.engines.get(role) is not None:
-                continue
-            path = entry.get("path")
+            combine_csvs(paths, tmp, capture_column="_capture")
+            return load_capture(tmp)
+        finally:
             try:
-                self.engines[role] = InferenceEngine(path)
-                self.engine_status = "loaded"
-                self.log_buffer.info(
-                    "inference", "{}-hand model auto-restored: {} (newest on disk)".format(
-                        role, self.engines[role].name))
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _precheck(self, names: list, role: str) -> list:
+        """Run the data checks for one hand's recordings; raise TrainDataError
+        (prefixed with the hand) when something blocks. Returns the warnings."""
+        from openmuscle.ml import checks as dcheck
+        try:
+            df = self._read_selection(names)
+        except ValueError as e:
+            raise TrainDataError(dcheck.friendly_error(e))
+        found_checks = dcheck.check_training_data(
+            df, role=role,
+            meta={"captures": names,
+                  "capture_meta": {n: self.read_capture_meta(n) for n in names}})
+        stoppers = dcheck.blocks(found_checks)
+        if stoppers:
+            raise TrainDataError(
+                "{} hand: {}".format(role.capitalize(), dcheck.join_messages(stoppers)),
+                found_checks)
+        return dcheck.warnings(found_checks)
+
+    @staticmethod
+    def _norm_participant(value) -> str:
+        """Participant codes compare case- and space-insensitively."""
+        return str(value or "").strip().lower()
+
+    def _training_provenance(self, names: list, df, role: Optional[str]) -> dict:
+        """What a model was trained on, stamped into its metadata.json:
+        participant code, the band units per side, firmware, label source and the
+        session. The active session wins for who wore the bands; with no session
+        running it falls back to what the recordings themselves say, so a model is
+        never 'unknown participant' just because the operator skipped the session
+        card."""
+        metas = {n: (self.read_capture_meta(n) or {}) for n in names}
+        session = self.active_session or {}
+        norm = self._norm_participant
+
+        people = []
+        for m in metas.values():
+            who = norm((m.get("auto") or {}).get("session_wearer") or m.get("subject"))
+            if who and who not in people:
+                people.append(who)
+        participant = norm(session.get("wearer") or session.get("subject"))
+        if not participant and len(people) == 1:
+            participant = people[0]
+
+        ids: dict = {}
+        try:
+            if "device_id" in df.columns and "role" in df.columns:
+                rows = df if role is None else df[df["role"].astype(str) == role]
+                for r, g in rows.groupby("role"):
+                    ids[str(r)] = sorted({str(d) for d in g["device_id"].dropna().unique()})
+            elif "device_id" in df.columns:
+                ids["any"] = sorted({str(d) for d in df["device_id"].dropna().unique()})
+        except Exception:
+            ids = {}
+        if not ids:
+            for m in metas.values():
+                for did, r in (m.get("roles") or {}).items():
+                    if role and r != role:
+                        continue
+                    bucket = ids.setdefault(r if r in ("left", "right") else "any", [])
+                    if did not in bucket:
+                        bucket.append(did)
+        all_ids = {d for v in ids.values() for d in v}
+        firmware = {}
+        try:
+            for d in self._session_context_snapshot().get("devices", []):
+                if d.get("device_id") in all_ids and d.get("fw"):
+                    firmware[d["device_id"]] = d["fw"]
+        except Exception:
+            pass
+        sources = []
+        for m in metas.values():
+            src = m.get("label_source")
+            if src and src not in sources:
+                sources.append(src)
+        if not sources and session.get("labeler_source"):
+            sources = [session["labeler_source"]]
+
+        out = {
+            "captures": list(names),
+            "participant": participant,
+            "band_device_ids": ids,
+            "firmware": firmware,
+            "label_source": "/".join(sources),
+        }
+        if len(people) > 1:
+            out["participants"] = people
+        # Session provenance stamp: the Models panel scopes its list to the
+        # active session with these (35 historical models were burying the fresh
+        # ones). registry.list_models reads metadata.json wholesale, so
+        # /api/models carries them for free.
+        if self.active_session is not None:
+            out["session_id"] = self.active_session.get("id")
+            out["session_name"] = self.active_session.get("name")
+            out["wearer"] = self.active_session.get("wearer")
+        return out
+
+    # ----- which models sit in which slot, across restarts -----
+
+    @staticmethod
+    def _cli_flag_given(*paths) -> bool:
+        return any(bool(p) for p in paths)
+
+    def _bump_slot(self, slot: str) -> None:
+        """Mark `slot` as the most recently loaded one."""
+        self._slot_counter += 1
+        self._slot_seq[slot] = self._slot_counter
+
+    def _slot_engine(self, slot: str):
+        return self.engine if slot == "shared" else self.engines.get(slot)
+
+    def _active_json_path(self) -> Path:
+        return om_paths.models_dir() / "active.json"
+
+    def _persist_active_slots(self) -> None:
+        """Write the exact shared/left/right model paths to <models>/active.json
+        (oldest activation first in `order`, so the same model wins after a
+        restart). Best effort: a read-only disk must not break loading a model."""
+        try:
+            slots = {s: (str(self._slot_engine(s).model_path)
+                         if self._slot_engine(s) is not None else None)
+                     for s in ("shared", "left", "right")}
+            order = sorted((s for s, v in slots.items() if v),
+                           key=lambda s: self._slot_seq.get(s, 0))
+            path = self._active_json_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            with open(tmp, "w") as f:
+                json.dump({"version": 1,
+                           "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                           "slots": slots, "order": order}, f, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:
+            self.log_buffer.warn("inference", "could not save the active model list: {}".format(e))
+
+    def _read_active_slots(self) -> Optional[dict]:
+        """<models>/active.json as {"slots", "order"}, or None when absent/unreadable."""
+        try:
+            with open(self._active_json_path()) as f:
+                data = json.load(f)
+            slots = data.get("slots") or {}
+            order = [s for s in (data.get("order") or ["shared", "left", "right"])
+                     if s in ("shared", "left", "right")]
+            return {"slots": slots, "order": order}
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            self.log_buffer.warn("inference", "active model list unreadable: {}".format(e))
+            return None
+
+    @staticmethod
+    def _model_when(eng) -> str:
+        """'2026-10-09 14:03' from a model's stamped creation time (or its folder)."""
+        from datetime import datetime
+        created = str((eng.metadata or {}).get("created") or "")
+        try:
+            return datetime.strptime(created[:15], "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return eng.name
+
+    def _restore_active_models(self) -> None:
+        """Bring back the models the operator had loaded last time, paused.
+
+        Source of truth is <models>/active.json (written whenever a slot changes),
+        so a one-band shared model survives a restart and an unrelated newer
+        model on disk is never picked up by accident. Folders from before
+        active.json existed fall back to the old rule: the newest role-tagged
+        model per hand. Untagged models (incl. stale pre-role ones) are never
+        guessed at."""
+        saved = self._read_active_slots()
+        restored = []                       # [(slot, engine)] in load order
+        if saved is not None:
+            for slot in saved["order"]:
+                path = saved["slots"].get(slot)
+                if not path:
+                    continue
+                try:
+                    eng = InferenceEngine(path)
+                except Exception as e:
+                    self.log_buffer.warn(
+                        "inference", "{} model from the last run not restored ({}): {}".format(
+                            slot, path, e))
+                    continue
+                restored.append((slot, eng))
+        else:
+            try:
+                from openmuscle.ml.registry import ModelRegistry
+                entries = ModelRegistry().list_models()
             except Exception as e:
-                self.log_buffer.error(
-                    "inference", "{}-hand auto-restore failed for {}: {}".format(role, path, e))
+                self.log_buffer.warn("inference", "model auto-restore scan failed: {}".format(e))
+                return
+            seen = set()
+            for entry in reversed(entries):          # newest first (timestamped dirs)
+                role = (entry.get("metrics") or {}).get("role")
+                if role not in ("left", "right") or role in seen:
+                    continue
+                try:
+                    restored.append((role, InferenceEngine(entry.get("path"))))
+                    seen.add(role)
+                except Exception as e:
+                    self.log_buffer.error(
+                        "inference", "{}-hand auto-restore failed for {}: {}".format(
+                            role, entry.get("path"), e))
+        if not restored:
+            return
+        parts = []
+        for slot, eng in restored:
+            if slot == "shared":
+                self.engine = eng
+            else:
+                self.engines[slot] = eng
+            self._bump_slot(slot)
+            who = self._engine_participant(eng)
+            parts.append("{} from {}, {}".format(
+                "model" if slot == "shared" else slot + "-hand model",
+                self._model_when(eng),
+                "trained on participant '{}'".format(who) if who
+                else "participant unknown"))
+            self.log_buffer.info("inference", "{} restored: {} (paused)".format(
+                "model" if slot == "shared" else slot + "-hand model", eng.name))
+        self.engine_status = "loaded"
+        self.restored_banner = ("Restored the " + " and the ".join(parts)
+                                + ". Prediction is paused; press Predict to run.")
 
     def _expected_features_for(self, role: Optional[str] = None) -> Optional[int]:
         """The live band cell count a model must match (rows*cols), for the
@@ -3094,7 +3561,7 @@ class AppState:
         unless the existing engine has a different one.
 
         Loading a model does NOT start running it. Inference stays paused
-        until the operator clicks ▶ Resume (or POSTs /api/inference/enabled
+        until the operator presses ▶ Predict (or POSTs /api/inference/enabled
         {enabled: true}). This was a deliberate change from the earlier
         "auto-start on load" behaviour, which surprised the operator by
         having the model start consuming CPU + driving the hand the moment
@@ -3114,6 +3581,9 @@ class AppState:
                                      expected_features=self._expected_features_for())
         self.engine = new_engine
         self.engine_status = "loaded"
+        self._bump_slot("shared")
+        self.restored_banner = None
+        self._persist_active_slots()
         # Drop the cached prediction -- it's from the OLD model, not relevant.
         self._last_inference_values = None
         self._last_inference_ts = 0.0
@@ -3141,21 +3611,36 @@ class AppState:
         self.engines[role] = InferenceEngine(
             model_path, expected_features=self._expected_features_for(role))
         self.engine_status = "loaded"
+        self._bump_slot(role)
+        self.restored_banner = None
+        self._persist_active_slots()
         self._last_inference_values = None
         self._last_inference_ts = 0.0
         self.log_buffer.info("inference", "{}-hand model loaded: {} (inference {})".format(
             role, self.engines[role].name,
             "running" if self.inference_enabled else "PAUSED -- click ▶ to start"))
 
-    def set_inference_enabled(self, enabled: bool) -> None:
+    def set_inference_enabled(self, enabled: bool, force: bool = False) -> None:
         """Toggle inference on/off. Doesn't unload the model -- pausing is
-        a soft state so the operator can resume without reloading."""
+        a soft state so the operator can resume without reloading.
+
+        Turning prediction ON is refused (ModelGuardError, with the issues) while
+        a loaded model was trained on a different participant or band unit than
+        what is in front of it now; `force=True` is the operator's explicit
+        "continue anyway"."""
         prev = self.inference_enabled
+        if enabled and not prev and not force:
+            blocking = [i for i in self.model_guard_issues() if i.get("blocking")]
+            if blocking:
+                raise ModelGuardError(" ".join(i["message"] for i in blocking[:2]),
+                                      blocking)
         self.inference_enabled = bool(enabled)
+        if self.inference_enabled:
+            self.restored_banner = None
         if prev != self.inference_enabled:
             self.log_buffer.info("inference",
                 "{} (model={})".format(
-                    "resumed" if self.inference_enabled else "paused",
+                    "started" if self.inference_enabled else "paused",
                     self.engine.name if self.engine else "none"))
         if not self.inference_enabled:
             # Clear the cached prediction so the panel shows "paused" cleanly
@@ -3214,6 +3699,10 @@ class AppState:
             slots = slot_by_path.get(entry.get("path"), [])
             entry["active"] = "shared" in slots
             entry["active_roles"] = slots
+            # Normalised participant code ('' = the model carries none, shown as
+            # 'unknown participant'), so the UI never re-derives it.
+            entry["participant"] = self._norm_participant(
+                entry.get("participant") or entry.get("wearer"))
             entry["verdict"] = describe_result(
                 entry.get("metrics") or {},
                 n_captures=len(entry.get("captures") or []) or None,

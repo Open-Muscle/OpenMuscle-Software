@@ -12,6 +12,7 @@
     <script src="/static/guide.js?v=1"></script>
     <script src="/static/participant.js?v=1"></script>
     <script src="/static/rec-status.js?v=1"></script>
+    <script src="/static/train-card.js?v=1"></script>
     <!-- Three.js for the quest_hand 3D viewer. Same CDN + version the VR
          client uses. hand-viewer.js is an ES module exposing window.OMHandViewer;
          the plain app.js drives it from handleTick. -->
@@ -88,6 +89,11 @@
         </div>
         <div id="record-status" class="rec-status"></div>
     </div>
+
+    <!-- Model notices: a restored model waiting to be started, a model that does
+         not match the participant or band units in front of it, and which model
+         drives which band. app.js renderModelBanner(). -->
+    <div id="model-banner" class="model-banner hidden" role="status"></div>
 
     <main class="studio">
 
@@ -414,9 +420,9 @@
                                type="text" list="session-datalist" placeholder="All sessions"
                                autocomplete="off" spellcheck="false">
                         <div class="chip-group" id="model-filter-role">
-                            <button class="filter-chip" data-role="left" title="left-hand models (trained on role=left rows)">L</button>
-                            <button class="filter-chip" data-role="right" title="right-hand models (trained on role=right rows)">R</button>
-                            <button class="filter-chip" data-role="pooled" title="models without a per-hand role tag (bilateral / legacy)">pooled</button>
+                            <button class="filter-chip" data-role="left" title="Models for the left band">L</button>
+                            <button class="filter-chip" data-role="right" title="Models for the right band">R</button>
+                            <button class="filter-chip" data-role="pooled" title="Models that are not tied to one band (older or pooled models)">pooled</button>
                         </div>
                         <!-- Wearer chips are data-driven: app.js fills this
                              from the distinct wearers present in the model
@@ -424,23 +430,32 @@
                              wearer stamp. -->
                         <div class="chip-group" id="model-filter-wearer"></div>
                     </div>
+                    <label class="models-details-toggle" title="Show the technical columns (features, error, raw score)">
+                        <input type="checkbox" id="models-details-toggle"> Show details
+                    </label>
                     <table id="models-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
-                                <th>Created</th>
-                                <th>R²</th>
-                                <th>MSE</th>
-                                <th>Features × Labels</th>
+                                <th>Model</th>
+                                <th>When</th>
+                                <th>Participant</th>
+                                <th>Bands</th>
+                                <th>Score</th>
+                                <th class="detail-col">Features × labels</th>
+                                <th class="detail-col">Error · raw score</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="models-body">
-                            <tr class="empty"><td colspan="6">No models trained yet.</td></tr>
+                            <tr class="empty"><td colspan="8">No models trained yet.</td></tr>
                         </tbody>
                     </table>
                 </div>
             </div>
+
+            <!-- Training outcome: the verdict card(s) replace the old one-line
+                 readout. app.js renderTrainResult() (cards from static/train-card.js). -->
+            <div id="train-result" class="train-result" aria-live="polite"></div>
 
             <!-- Past sessions: still collapsible per existing behaviour -->
             <button id="past-sessions-toggle" class="past-sessions-toggle">▸ Past sessions</button>

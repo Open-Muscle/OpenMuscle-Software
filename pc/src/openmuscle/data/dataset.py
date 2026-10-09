@@ -122,6 +122,17 @@ def _row_extras(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _drop_incomplete(X: pd.DataFrame, y: pd.DataFrame, extras: pd.DataFrame):
+    """Drop rows that have a missing sensor or label value (a labeler that lost
+    tracking leaves gaps). sklearn refuses NaN, and one gap should cost one row,
+    not the whole training run. Row alignment between X, y and extras is kept."""
+    keep = (X.notna().all(axis=1) & y.notna().all(axis=1)).to_numpy()
+    if keep.all():
+        return X, y, extras
+    return (X[keep].reset_index(drop=True), y[keep].reset_index(drop=True),
+            extras[keep].reset_index(drop=True))
+
+
 def load_training_frame(csv_path: str,
                         bilateral_window_ms: int = 50,
                         role: str = None
@@ -157,7 +168,7 @@ def load_training_frame(csv_path: str,
             raise ValueError(
                 f"No rows with role={role} in {csv_path} (found roles: {roles})")
         sensor_cols, label_cols = detect_columns(df)
-        return df[sensor_cols], df[label_cols], _row_extras(df)
+        return _drop_incomplete(df[sensor_cols], df[label_cols], _row_extras(df))
     if is_bilateral_v2(df):
         sensor_cols, label_cols = detect_columns(df)
         extra = (CAPTURE_COLUMN,) + CANONICAL_FLEX_COLS
@@ -176,9 +187,9 @@ def load_training_frame(csv_path: str,
             merged = _pivot_bilateral_frame(
                 df, window_ms=bilateral_window_ms, extra_cols=extra)
         X = merged[[c + "_L" for c in sensor_cols] + [c + "_R" for c in sensor_cols]]
-        return X, merged[label_cols], _row_extras(merged)
+        return _drop_incomplete(X, merged[label_cols], _row_extras(merged))
     sensor_cols, label_cols = detect_columns(df)
-    return df[sensor_cols], df[label_cols], _row_extras(df)
+    return _drop_incomplete(df[sensor_cols], df[label_cols], _row_extras(df))
 
 
 def load_training_data(csv_path: str,
