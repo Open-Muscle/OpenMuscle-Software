@@ -38,6 +38,10 @@
             <!-- Pop the compact OBS stream view in its own window (window-capture
                  it in OBS while playing a game with the bracelets). Display-only:
                  it reads /ws/live, never the local controller. -->
+            <!-- Step-by-step wizard that puts a band (or the optional labeler) on
+                 the user's Wi-Fi. A separate page (static/setup/), served at /setup. -->
+            <a href="/setup" class="setup-link"
+               title="Walk through connecting a new band to your Wi-Fi">Set up a device</a>
             <a href="/stream" target="_blank" rel="noopener" class="stream-link"
                title="Compact read-only view for OBS window capture">◱ stream view</a>
             <span id="ws-status" class="badge offline">disconnected</span>
@@ -114,7 +118,7 @@
                                 title="Switch the band rows between side-by-side and stacked (one above the other)">▤ Stack</button>
                     </div>
                     <div id="heatmap-grids" class="heatmap-grids">
-                        <div class="heatmap-empty">Waiting for a flexgrid…</div>
+                        <div class="heatmap-empty">No devices found yet. <a href="/setup">Set up a device</a></div>
                     </div>
 
                     <!-- Discovered-but-not-streaming V4 sources (no heatmap yet):
@@ -123,7 +127,7 @@
                          fills this; a source graduates to a band row above once
                          its matrix frames arrive. -->
                     <ul id="discovery-list" class="devices-compact discovery-compact available-sources">
-                        <li class="empty">No V4 sources discovered yet…</li>
+                        <li class="empty">No devices found yet.</li>
                     </ul>
 
                     <!-- Probe-by-IP + subnet scan, collapsed by default (same

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenMuscle: set up a device</title>
+    <link rel="stylesheet" href="/static/setup/setup.css?v=1">
+    <script src="/static/setup/wizard.js?v=1"></script>
+    <script defer src="/static/setup/setup.js?v=1"></script>
+</head>
+<body>
+    <header>
+        <h1>Set up a device</h1>
+        <a href="/" class="to-dashboard">Back to the live view</a>
+    </header>
+
+    <ol id="progress" class="progress" aria-label="Progress">
+        <li data-i="0">Get ready</li>
+        <li data-i="1">Choose</li>
+        <li data-i="2">Join</li>
+        <li data-i="3">Your Wi-Fi</li>
+        <li data-i="4">Finish</li>
+    </ol>
+
+    <main>
+        <section id="card" class="card" aria-live="polite">
+            <p>Loading...</p>
+        </section>
+        <noscript><p class="card">This page needs JavaScript. Please turn it on in your browser.</p></noscript>
+    </main>
+</body>
+</html>

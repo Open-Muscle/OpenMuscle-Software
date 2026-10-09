@@ -1,0 +1,98 @@
+/* Device setup wizard. Same palette as the webcam page. */
+:root {
+    --bg: #0b0d12; --bg-panel: #141821; --bg-soft: #1d2230;
+    --fg: #e7e9ee; --fg-dim: #9aa2b3; --fg-faint: #5d6575;
+    --accent: #6cf; --green: #2cd16a; --red: #ff5a6b; --orange: #ffa42c;
+    --border: #262c3d;
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px; line-height: 1.5;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header {
+    display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 18px; font-weight: 600; margin: 0; }
+.progress {
+    list-style: none; display: flex; gap: 6px; flex-wrap: wrap;
+    max-width: 720px; margin: 18px auto 0; padding: 0 20px;
+}
+.progress li {
+    flex: 1 1 90px; text-align: center; font-size: 13px; color: var(--fg-faint);
+    padding: 6px 4px; border-bottom: 3px solid var(--border);
+}
+.progress li.on { color: var(--fg); border-bottom-color: var(--accent); }
+.progress li.past { color: var(--fg-dim); border-bottom-color: var(--green); }
+main { max-width: 720px; margin: 0 auto; padding: 18px 20px 60px; }
+.card {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 22px 24px;
+}
+.card h2 { margin: 0 0 8px; font-size: 22px; }
+.card p { margin: 8px 0; }
+.dim { color: var(--fg-dim); }
+.small { font-size: 14px; }
+ul.checks { padding-left: 22px; margin: 10px 0; }
+ul.checks li { margin: 8px 0; }
+ol.how { padding-left: 24px; margin: 10px 0; }
+ol.how li { margin: 6px 0; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
+button, .btn {
+    font: inherit; cursor: pointer; border-radius: 8px; padding: 9px 18px;
+    border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #04121a; border-color: var(--accent); font-weight: 600; }
+button.link { background: none; border: none; color: var(--accent); padding: 4px 0; }
+button[disabled] { opacity: 0.5; cursor: default; }
+.kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 14px; }
+.kind {
+    text-align: left; padding: 16px; display: block; width: 100%;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft);
+}
+.kind strong { display: block; font-size: 18px; margin-bottom: 6px; }
+.kind span { display: block; color: var(--fg-dim); font-size: 14px; }
+.kind .icon { font-size: 30px; line-height: 1; margin-bottom: 8px; color: var(--accent); }
+details { margin: 12px 0; }
+summary { cursor: pointer; color: var(--accent); }
+.status {
+    display: flex; gap: 10px; align-items: center; margin: 16px 0;
+    padding: 12px 14px; border-radius: 8px; background: var(--bg-soft);
+    border: 1px solid var(--border);
+}
+.status.ok { border-color: rgba(44, 209, 106, 0.5); }
+.tick { width: 22px; height: 22px; border-radius: 50%; flex: none; border: 2px solid var(--fg-faint); position: relative; }
+.tick.on { background: var(--green); border-color: var(--green); }
+.tick.on::after {
+    content: ""; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px;
+    border: solid #04120a; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.tick.spin { border-top-color: var(--accent); animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.notice { background: rgba(255, 164, 44, 0.1); border: 1px solid rgba(255, 164, 44, 0.4); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.error { background: rgba(255, 90, 107, 0.1); border: 1px solid rgba(255, 90, 107, 0.45); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+label { display: block; margin-top: 16px; font-weight: 600; }
+.help { font-weight: 400; color: var(--fg-dim); font-size: 14px; margin: 2px 0 6px; }
+input[type=text], input[type=password], select {
+    font: inherit; width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; }
+.pw { display: flex; gap: 8px; }
+.pw input { flex: 1; }
+.check { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-weight: 400; }
+.check input { width: auto; }
+.trouble { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 16px; }
+.trouble ol { padding-left: 22px; }
+.trouble li { margin: 12px 0; }
+.trouble li strong { display: block; }
+.success { text-align: center; padding: 10px 0; }
+.success .big { font-size: 20px; font-weight: 600; margin: 8px 0; }
+.success .mark { width: 54px; height: 54px; margin: 0 auto 6px; }
+.success .mark.tick.on::after { left: 17px; top: 9px; width: 10px; height: 20px; border-width: 0 4px 4px 0; }
+.found-line { margin-top: 10px; color: var(--fg-dim); font-size: 14px; }
