@@ -9,6 +9,7 @@
          and BEFORE app.js so pressureColor delegates to the one shared ramp;
          the OBS /stream view loads the same file so its heatmaps match ours. -->
     <script src="/static/heatmap-color.js?v=1"></script>
+    <script src="/static/guide.js?v=1"></script>
     <!-- Three.js for the quest_hand 3D viewer. Same CDN + version the VR
          client uses. hand-viewer.js is an ES module exposing window.OMHandViewer;
          the plain app.js drives it from handleTick. -->
@@ -51,16 +52,16 @@
     <div id="control-bar">
         <div class="cb-group cb-record">
             <button id="record-btn" class="primary">● Record</button>
-            <label class="rec-pick"><span>Labels</span>
+            <label class="rec-pick"><span>Finger data from</span>
                 <select id="label-source-select">
-                    <option value="vr">VR hands (Quest)</option>
-                    <option value="lask5">LASK5 pistons</option>
-                    <option value="webcam">Webcam hand</option>
-                    <option value="none">none (sensor only)</option>
+                    <option value="lask5">Finger labeler (LASK5)</option>
+                    <option value="webcam">Webcam (camera watches your hand)</option>
+                    <option value="vr">VR headset hands (Meta Quest)</option>
+                    <option value="gamepad">Game controller</option>
+                    <option value="none">No labeler (bands only; cannot be used to train)</option>
                     <!-- Pluggable label-device seam: a new labeler is one new
-                         option value + one new branch in deriveRecordPlan(). -->
-                    <option value="keyboard" disabled>Keyboard (coming soon)</option>
-                    <option value="gamepad">Controller (gamepad)</option>
+                         option value + one new branch in deriveRecordPlan()
+                         (static/guide.js). -->
                 </select>
             </label>
             <input id="capture-name" type="text" placeholder="capture name (optional)">
