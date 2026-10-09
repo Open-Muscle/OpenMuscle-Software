@@ -1,8 +1,10 @@
-# OpenMuscle VR — setup & operation
+# OpenMuscle VR: setup and operation
 
-Wear FlexGrid + a Meta Quest 3S together. The headset's hand tracking becomes the ground-truth label source for training a muscle-signal → finger-pose model. The desktop OpenMuscle UI is unchanged; this guide just adds the VR companion.
+> **Optional.** The starter kit uses the computer's camera as the finger labeler and does not include a headset. This guide is for people who also have a Meta Quest and want its hand tracking as the labeler. Nothing here is needed for [getting-started.md](getting-started.md).
 
-Companion code: [`pc/src/openmuscle/web/static/vr/`](../pc/src/openmuscle/web/static/vr/) (client) and [`pc/src/openmuscle/web/app.py`](../pc/src/openmuscle/web/app.py) (server endpoints). The Quest is integrated as a synthetic device with `device_type: "quest_hand"` — see [`protocol.md`](protocol.md) for the wire format.
+Wear FlexGrid + a Meta Quest 3S together. The headset's hand tracking becomes the ground-truth label source for training a muscle-signal → finger-pose model. The desktop Studio is unchanged; this guide just adds the VR companion.
+
+Companion code: [`pc/src/openmuscle/web/static/vr/`](../pc/src/openmuscle/web/static/vr/) (client) and [`pc/src/openmuscle/web/app.py`](../pc/src/openmuscle/web/app.py) (server endpoints). The Quest is integrated as a synthetic device with `device_type: "quest_hand"`: see [`protocol.md`](protocol.md) for the wire format.
 
 ## Why HTTPS is non-optional
 
@@ -13,7 +15,7 @@ Quest Browser refuses to grant WebXR hand-tracking outside a secure context. You
 | **HTTPS over LAN** via mkcert | untethered, real use case | one-time cert install on the headset |
 | **`adb reverse` over USB** (localhost) | zero certs, fast for debugging | cable on the headset distorts natural arm motion |
 
-Day-to-day capture work should use HTTPS. The USB fallback is for proving the loop end-to-end before you've finished cert setup.
+Day-to-day capture work should use HTTPS. The USB fallback is for proving the loop end-to-end before you've finished cert setup. Plain `openmuscle web` (what the kit uses) is `http` on this computer only; it does not use HTTPS and does not open the network. Only `--vr`, or explicit `--ssl-certfile` and `--ssl-keyfile`, opens the network, and `--vr` serves HTTPS only when it finds the certificate pair.
 
 ## One-time setup
 
@@ -33,7 +35,7 @@ The two PEM files land in your current directory. Keep them next to the captures
 
 ### 2. Install the mkcert root CA on the Quest
 
-**Heads up:** this is the painful step. Meta's Horizon OS consumer shell **hides** the standard Android "Settings → Security → Install a certificate" path. The Settings panel you see when tapping the gear icon in VR is Meta's Horizon Settings, not AOSP Settings — different surface, no cert-install button. You have to launch the AOSP Settings activity via ADB.
+**Heads up:** this is the painful step. Meta's Horizon OS consumer shell **hides** the standard Android "Settings → Security → Install a certificate" path. The Settings panel you see when tapping the gear icon in VR is Meta's Horizon Settings, not AOSP Settings: a different surface, with no cert-install button. You have to launch the AOSP Settings activity via ADB.
 
 Procedure validated on Quest 3S, Horizon OS as of May 2026:
 
@@ -63,13 +65,13 @@ You only do this once per headset. The CA stays trusted across Horizon OS update
 **Fallback if you can't find the AOSP Settings panel in the app switcher:** open the headset's **Files** app, navigate to **Download/openmuscle-vr-rootCA.pem**, tap it. Some Horizon versions trigger the install dialog from the file-open intent directly.
 
 **Activities that work on Horizon OS** (useful for future Quest dev when standard menus are hidden):
-- `com.android.settings/.Settings$SecurityDashboardActivity` — security menu (the one you just used)
-- `com.android.settings/.Settings$TrustedCredentialsSettingsActivity` — view installed certs (for verifying yours is there)
-- `com.android.settings/.security.CredentialStorage` — direct install activity, but Horizon often suppresses its panel
+- `com.android.settings/.Settings$SecurityDashboardActivity`: security menu (the one you just used)
+- `com.android.settings/.Settings$TrustedCredentialsSettingsActivity`: view installed certs (for verifying yours is there)
+- `com.android.settings/.security.CredentialStorage`: direct install activity, but Horizon often suppresses its panel
 - `com.android.settings/.Settings$NetworkDashboardActivity`
 - `com.android.settings/.Settings$DevelopmentSettingsDashboardActivity`
 
-**Activities that DON'T exist on Horizon** (don't try — Error type 3):
+**Activities that DON'T exist on Horizon** (don't try them: Error type 3):
 - `com.android.settings/.Settings$SecuritySettingsActivity` (older Android name, removed)
 - `com.android.settings/.Settings$EncryptionAndCredentialActivity` (renamed)
 
@@ -113,8 +115,8 @@ also opens the LAN, so the headset can connect.
 
 ## Per-session flow
 
-1. **Boot FlexGrid** — it joins your Wi-Fi and starts streaming UDP to port 3141. Confirm in the desktop UI's Devices panel.
-2. **Open `/vr` in Quest Browser** at `https://<your-LAN-ip>:8000/vr`. (The desktop UI lives at `/`; the VR companion at `/vr`.)
+1. **Switch on the band(s).** They join your Wi-Fi ([wifi-setup.md](wifi-setup.md)) and stream to the computer. Confirm each band has a row with a live heatmap in the Studio.
+2. **Open `/vr` in Quest Browser** at `https://<your-LAN-ip>:8000/vr`. (The Studio lives at `/`; the VR companion at `/vr`.)
 3. The landing page runs three preflight checks. All three should be green checkmarks:
    - HTTPS / secure context
    - WebXR + immersive-vr supported
@@ -126,19 +128,19 @@ also opens the LAN, so the headset can connect.
 8. **Start recording**:
    - **Off-hand button**: tap the gray sphere below the heatmap with your other hand's index finger. It turns red.
    - **Pinch gesture**: pinch index + thumb on the captured hand and hold for ~1 second. A yellow ring on the index tip fills during the hold; release triggers the toggle.
-9. Do your gesture set. For the first FlexGrid V3 training run we focus on **index / middle / ring / pinky finger curls** — the thumb is driven by intrinsic hand muscles the FlexGrid can't see, so it's excluded.
+9. Do your gesture set. For a first training run, focus on **index / middle / ring / pinky finger curls**: the thumb is driven by intrinsic hand muscles the FlexGrid can't see, so it's excluded.
 10. **Stop recording** the same way.
 11. Take the headset off. The capture is in `~/OpenMuscle/captures/` (the banner printed the exact path):
 
     ```
-    capture_<ts>.csv                  # paired (sensor + 182 joint floats)
+    capture_<ts>.csv                  # paired (band cells + 175 joint values)
     capture_<ts>.sensor.jsonl         # raw FlexGrid packets
     capture_<ts>.label.jsonl          # raw Quest packets
     capture_<ts>.labels.schema.json   # column -> (joint, channel) map
     capture_<ts>.meta.json            # auto.label_source="quest_hand" + your tags
     ```
 
-12. **Train**: in the desktop UI's Captures panel, tick your new capture(s) and hit **Train selected**. Or from CLI: `openmuscle train ~/OpenMuscle/captures/capture_<ts>.csv`.
+12. **Train**: in the Studio's **Captures** list, tick your new take(s) and click **Train**. Or from CLI: `openmuscle train ~/OpenMuscle/captures/capture_<ts>.csv`.
 
 ## Troubleshooting
 
@@ -147,9 +149,9 @@ also opens the LAN, so the headset can connect.
 | "Enter VR" button stays disabled | Page opened in the in-headset Library panel, not Quest Browser | Open Quest Browser app explicitly; navigate to the URL |
 | "INSECURE (http:)" in the HTTPS checkmark | Reached the page over plain HTTP | Either switch to `https://` (LAN + mkcert) or use `adb reverse` + `http://localhost:8000/vr` |
 | Cert install on Quest fails silently | Quest doesn't have a screen-lock PIN | Settings → Security → Lock screen → set a PIN, then re-try CA install |
-| Heatmap stays "waiting for FlexGrid…" inside VR | FlexGrid not streaming, or wrong UDP port | Open the desktop UI; verify the device is in the Devices panel and packets > 0 |
-| `match_rate` is very low (< 30%) in recording header | Quest WS connection dropping, or sensor and label streams have wildly different rates | Check WS reconnect logs in the desktop UI's Log panel; try increasing `window_ms` via the recording start body if needed (default for Quest is 175 ms) |
-| Joints visible but no `quest-<arm>` device in the Devices panel | `/ws/quest` failed to connect (e.g. CORS, cert mismatch) | Check the Quest Browser dev-tools (chrome://inspect on a connected PC) for WS errors |
+| Heatmap stays "waiting for FlexGrid…" inside VR | FlexGrid not streaming, or wrong UDP port | Open the Studio; verify the band has a row with a live heatmap |
+| `match_rate` is very low (< 30%) in recording header | Quest WS connection dropping, or sensor and label streams have wildly different rates | Check the WebSocket reconnect messages under **Diagnostics and logs** in the Studio; try increasing `window_ms` via the recording start body if needed (default for Quest is 175 ms) |
+| Joints visible but the **LABEL** indicator in the Studio's top bar stays `--` | `/ws/quest` failed to connect (e.g. CORS, cert mismatch) | Check the Quest Browser dev-tools (chrome://inspect on a connected PC) for WS errors |
 
 ## Architecture, in one diagram
 
@@ -184,4 +186,4 @@ also opens the LAN, so the headset can connect.
                      └──────────────────────────┘
 ```
 
-The whole integration trick is that `ingest_quest_packet` synthesizes an `OpenMusclePacket` of type `quest_hand` in-process, then hands it to `_handle_packet` — the **same** function the UDP listener feeds into. From the recorder's view the Quest is just another device. Zero special-casing downstream.
+The whole integration trick is that `ingest_quest_packet` synthesizes an `OpenMusclePacket` of type `quest_hand` in-process, then hands it to `_handle_packet`, the **same** function the UDP listener feeds into. From the recorder's view the Quest is just another device. Zero special-casing downstream.

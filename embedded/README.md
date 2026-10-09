@@ -1,25 +1,41 @@
 # OpenMuscle Embedded Firmware
 
-This directory contains embedded firmware for all OpenMuscle devices, organized first by hardware type (e.g., LASK5, FlexGrid), and then by version (e.g., LASK5-V2, LASK5-V3).
+This folder holds the shared MicroPython library and the example device firmware that build on it. It is for people who want to read, change or extend the firmware.
 
-Each folder may include firmware written in different programming languages, such as MicroPython or C, depending on the specific implementation.
+**If you have a kit and only want to use the bands, you do not need this folder.** The FlexGrid V4 bands already have their firmware. Start with [docs/getting-started.md](../docs/getting-started.md).
 
-## 🗂 Directory Layout
+## Where the shipping firmware lives
 
-Example folder structure:
+The firmware that runs on the bands and the finger labeler is kept in its own repositories, so it can be versioned against fixed hardware:
 
-- 'LASK5/LASK5-V2/' – MicroPython firmware for LASK5 Version 2  
-- 'LASK5/LASK5-V3/' – C-based firmware under active development  
-- 'FlexGrid/FlexGrid-V0/' – MicroPython firmware for the 60-sensor FlexGrid  
-- 'SensorBand/OM12-V1/' – Legacy OM12 pressure band firmware
+| Device | Repository |
+|---|---|
+| FlexGrid V4 band (the kit) | [FlexGridV4-Firmware](https://github.com/Open-Muscle/FlexGridV4-Firmware): its README and BRINGUP guide explain flashing, setup mode, the status light and screens |
+| LASK5 finger labeler (optional) | [LASK5-Firmware](https://github.com/Open-Muscle/LASK5-Firmware) |
+| FlexGrid V3 band (previous revision) | [FlexGridV3-Firmware](https://github.com/Open-Muscle/FlexGridV3-Firmware) |
 
-Each subfolder contains relevant 'main.py', 'config', or '.c/.h' files along with device-specific instructions.
+Do not copy `devices/flexgrid_v1/` onto a V4 band. It is an earlier firmware for the first FlexGrid, kept as a worked example of the shared library.
 
-## 📜 Licensing & Contributions
+## What is here
 
-All embedded code is open source, licensed under MIT or CERN-OHL-S-2.0.  
-A detailed contributor guide will be added soon to explain how to submit firmware and be recognized in the repository.
+```
+embedded/
+    lib/                        Shared library (om_*.py): settings, network, display,
+                                packet building, menu, sensor base class, discovery,
+                                provisioning
+    devices/
+        flexgrid_v1/            Early FlexGrid firmware on the shared library
+        lask5_v2/               LASK5 V2 labeler on the shared library
+        openhand_v2/            OpenHand V2 robot hand
+        _template/              Starting point for a new device
+```
 
-## 📬 Contact
+Each device folder has a `boot.py`, a main module, and a `config/defaults.json`. The shared library is copied into the device's `/lib` folder.
 
-Questions or want to contribute? Visit [openmuscle.org](https://openmuscle.org) or file an issue on GitHub.
+## Building your own device
+
+Copy `devices/_template/`, implement your sensor, and upload the shared library and your device files with `mpremote`. [docs/adding-a-device.md](../docs/adding-a-device.md) walks through it, and the packet format is in [docs/protocol.md](../docs/protocol.md). The PC software finds devices that follow the protocol automatically.
+
+## Licensing and contributions
+
+All embedded code is open source, licensed under MIT or CERN-OHL-S-2.0. Questions or want to contribute? Visit [openmuscle.org](https://openmuscle.org) or file an issue on GitHub.
