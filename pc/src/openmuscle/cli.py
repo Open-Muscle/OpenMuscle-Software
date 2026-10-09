@@ -359,7 +359,7 @@ def predict(model, port):
                    "buries the signal, so a model trained on it is weak.")
 @click.option("--seed", default=1138, type=int,
               help="Rehearsal: random seed (same seed, same kit)")
-@click.option("--speed", default=1.0, type=float,
+@click.option("--speed", default=1.0, type=click.FloatRange(min=0, min_open=True),
               help="Rehearsal: run faster than real time (for tests)")
 @click.option("--duration", default=None, type=float,
               help="Rehearsal: stop after this many seconds (default: until Ctrl+C)")

@@ -36,7 +36,8 @@ def run_simulator(port: int = 3141, device_type: str = "flexgrid",
             (quest_hand/combo, and webcam/quest labels in rehearsal)
         web_scheme: "auto" (probe the port for TLS), "http" or "https". The
             WebSocket follows it (ws:// or wss://).
-        announce_port, bands, labeler, noise, seed, speed, duration, tag_roles:
+        duration: stop after this many seconds (rehearsal, quest_hand, combo)
+        announce_port, bands, labeler, noise, seed, speed, tag_roles:
             rehearsal only (see RehearsalConfig / RehearsalSimulator)
     """
     if device_type == "rehearsal":
@@ -63,7 +64,7 @@ def run_simulator(port: int = 3141, device_type: str = "flexgrid",
                        web_port=web_port, speed=1.0, web_scheme=web_scheme)
     elif device_type in ("quest_hand", "combo"):
         _generate_quest(sock, device_type, target_ip, port, web_port,
-                        web_scheme)
+                        web_scheme, duration=duration)
     else:
         _generate(sock, device_type, target_ip, port)
 
@@ -113,7 +114,8 @@ def _generate(sock, device_type: str, ip: str, port: int):
 
 
 def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
-                    web_port: int, web_scheme: str = "auto"):
+                    web_port: int, web_scheme: str = "auto",
+                    stop_event=None, duration: float = None):
     """Stream synthetic WebXR hand frames to /ws/quest, and for combo mode
     a correlated flexgrid device over UDP alongside.
 
@@ -121,13 +123,17 @@ def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
     real Quest client has; reusing the same ingest path means everything
     downstream (recorder, matcher, snapshot, both hand viewers) sees the
     simulator exactly as it would see a headset.
+
+    stop_event (a threading.Event) and duration (seconds) are optional ways to
+    end the stream without Ctrl+C; both are used by tests.
     """
     import random
-    from websockets.sync.client import connect
+    from openmuscle.simulate import net
     from openmuscle.simulate.quest_hand import finger_curls, hand_frame, \
         flexgrid_matrix
 
-    url = f"ws://{ip}:{web_port}/ws/quest"
+    scheme = net.resolve_scheme(web_scheme, ip, web_port)
+    url = net.ws_url(scheme, ip, web_port, "/ws/quest")
     print(f"Streaming synthetic quest_hand frames -> {url}")
     if device_type == "combo":
         print(f"  + correlated flexgrid UDP -> {ip}:{udp_port}")
@@ -136,11 +142,20 @@ def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
     rng = random.Random(1138)
     frame_num = 0
     t0 = time.time()
+
+    def done():
+        return ((stop_event is not None and stop_event.is_set())
+                or (duration is not None and time.time() - t0 >= duration))
+
     try:
-        while True:
+        while not done():
             try:
+                # Re-resolve each pass so a server restarted with or without
+                # TLS is followed.
+                scheme = net.resolve_scheme(web_scheme, ip, web_port)
+                url = net.ws_url(scheme, ip, web_port, "/ws/quest")
                 with net.ws_connect(scheme, ip, web_port, "/ws/quest") as ws:
-                    while True:
+                    while not done():
                         t = time.time() - t0
                         ws.send(json.dumps(hand_frame(t)))
                         frame_num += 1
@@ -168,7 +183,10 @@ def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
                 print(f"WebSocket to {url} dropped ({type(e).__name__}: {e}); "
                       f"retrying in 2s. Is `openmuscle web` running on port "
                       f"{web_port}?")
-                time.sleep(2)
+                if stop_event is not None:
+                    stop_event.wait(2)
+                else:
+                    time.sleep(2)
     except KeyboardInterrupt:
         print(f"\nStopped after {frame_num} hand frames")
 

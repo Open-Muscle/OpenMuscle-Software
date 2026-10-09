@@ -602,6 +602,43 @@ def test_legacy_quest_helper_speaks_wss(sandbox, tmp_path):
             net.ws_connect("http", "127.0.0.1", srv.http_port, "/ws/quest").close()
 
 
+@pytest.mark.parametrize("tls", [False, True])
+@pytest.mark.parametrize("device_type", ["quest_hand", "combo"])
+def test_legacy_quest_modes_stream_end_to_end(sandbox, tmp_path, tls, device_type):
+    """`--device-type quest_hand` / `combo` actually deliver frames: the hand
+    shows up over /ws/quest (wss:// for an HTTPS server) and, for combo, the
+    correlated flexgrid UDP device too."""
+    from openmuscle.simulate.transmitter import _generate_quest
+    with Server(tmp_path, tls) as srv:
+        stop = threading.Event()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        th = threading.Thread(
+            target=_generate_quest,
+            args=(sock, device_type, "127.0.0.1", srv.udp_port, srv.http_port,
+                  "auto"),
+            kwargs={"stop_event": stop}, daemon=True)
+        th.start()
+        try:
+            assert _wait(lambda: "quest-sim" in srv.state.devices, 20)
+            if device_type == "combo":
+                assert _wait(lambda: "flexgrid-sim" in srv.state.devices, 20)
+            else:
+                assert "flexgrid-sim" not in srv.state.devices
+        finally:
+            stop.set()
+            th.join(timeout=10)
+            sock.close()
+        assert not th.is_alive()
+
+
+def test_simulate_rejects_non_positive_speed():
+    for bad in ("0", "-1"):
+        res = CliRunner().invoke(main, ["simulate", "--device-type",
+                                        "rehearsal", "--speed", bad])
+        assert res.exit_code == 2, res.output
+        assert "--speed" in res.output
+
+
 def test_label_stream_failure_is_printed_not_silent(sandbox):
     logs = []
     sim = RehearsalSimulator(
