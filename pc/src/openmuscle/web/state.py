@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Optional
+from typing import IO, Callable, Optional
 
 import socket
+import threading
 
+from openmuscle import paths as om_paths
 from openmuscle.data.storage import CaptureWriter
 from openmuscle.protocol.schema import CURRENT_VERSION, OpenMusclePacket
 
@@ -304,11 +307,17 @@ class AppState:
                  enable_discovery: bool = True,
                  discovery_announce_port: int = 3140,
                  model_left: Optional[str] = None,
-                 model_right: Optional[str] = None):
+                 model_right: Optional[str] = None,
+                 on_device_event: Optional[Callable[[str, str], None]] = None,
+                 quiet: bool = False):
         """
         Args:
             udp_port: incoming device telemetry port (FlexGrid + LASK5)
-            captures_dir: where recorded CSVs go
+            captures_dir: where recorded CSVs go (default: <data root>/captures)
+            on_device_event: optional callback(kind, message) with kind "found"
+                        or "lost", fired once per device transition so the CLI
+                        can print "Found FlexGrid band at 192.168.1.23".
+            quiet: suppress the UDP listener's startup chatter on the console.
             enable_discovery: run native V4 discovery + auto-subscribe (replaces
                         the interim bridge_subscriber.py). Set False to bind the
                         UDP port only and rely on an external subscriber/bridge.
@@ -322,7 +331,8 @@ class AppState:
                          CSV-with-device-id format.
         """
         self.udp_port = udp_port
-        self.captures_dir = Path(captures_dir or Path("data/raw/merged"))
+        # Default: <data root>/captures (~/OpenMuscle/captures), never cwd-relative.
+        self.captures_dir = Path(captures_dir) if captures_dir else om_paths.captures_dir()
         self.captures_dir.mkdir(parents=True, exist_ok=True)
 
         # Log buffer: catches uvicorn/FastAPI/our own `logging` records into
@@ -342,10 +352,19 @@ class AppState:
         self.discovery: Optional[DiscoveryManager] = (
             DiscoveryManager(udp_port=udp_port,
                              announce_port=discovery_announce_port,
-                             auto_subscribe=True)
+                             auto_subscribe=True,
+                             on_event=self._on_discovery_event)
             if enable_discovery else None)
         announce_handler = self.discovery.on_announce if self.discovery else None
-        self.listener = UDPListener(port=udp_port, announce_handler=announce_handler)
+        self.listener = UDPListener(port=udp_port, announce_handler=announce_handler,
+                                    quiet=quiet)
+        # Console "found / lost band" lines (one per transition, see _note_found).
+        self.on_device_event = on_device_event
+        self._announced: set = set()
+        self._lost: set = set()
+        self._announce_lock = threading.Lock()
+        self._watch_stop = threading.Event()
+        self._watch_thread: Optional[threading.Thread] = None
         self.devices: dict[str, DeviceInfo] = {}
         self.recording: Optional[ActiveCapture] = None
         # At most one active session at a time. Recordings made while a
@@ -434,9 +453,81 @@ class AppState:
             # re-probes cached devices so we recover sources whose beacon is
             # silent (held by another hub) at startup.
             self.discovery.start()
+        self._watch_stop.clear()
+        self._watch_thread = threading.Thread(
+            target=self._watch_devices, name="om-device-watch", daemon=True)
+        self._watch_thread.start()
         self._started = True
 
+    # How long a band can be silent before the console says it was lost.
+    DEVICE_LOST_AFTER_S = 10.0
+
+    # Set in __init__; None on the bare AppState.__new__ test doubles, which
+    # then skip the console found/lost lines.
+    _announced: Optional[set] = None
+    _lost: Optional[set] = None
+
+    _DEVICE_NOUNS = {"flexgrid": "FlexGrid band", "lask5": "LASK5 labeler"}
+
+    def _device_noun(self, device_type: str) -> str:
+        return self._DEVICE_NOUNS.get(device_type, "{} device".format(device_type or "unknown"))
+
+    def _emit_device_event(self, kind: str, message: str) -> None:
+        self.log_buffer.info("devices", message)
+        if self.on_device_event is not None:
+            try:
+                self.on_device_event(kind, message)
+            except Exception:
+                pass
+
+    def _known_ip(self, device_id: str) -> str:
+        if self.discovery is None:
+            return ""
+        try:
+            for d in self.discovery.snapshot():
+                if d.get("device_id") == device_id:
+                    return d.get("ip") or ""
+        except Exception:
+            pass
+        return ""
+
+    def _note_found(self, device_id: str, device_type: str, ip: str = "") -> None:
+        """Print one "Found ..." line the first time a device shows up (from a
+        discovery beacon or its first data packet, whichever lands first), and
+        again if it comes back after a "Lost" line."""
+        with self._announce_lock:
+            if device_id in self._announced and device_id not in self._lost:
+                return
+            self._announced.add(device_id)
+            self._lost.discard(device_id)
+        ip = ip or self._known_ip(device_id)
+        where = " at {}".format(ip) if ip else " ({})".format(device_id)
+        self._emit_device_event(
+            "found", "Found {}{}".format(self._device_noun(device_type), where))
+
+    def _on_discovery_event(self, kind: str, dev) -> None:
+        if kind == "found":
+            self._note_found(dev.device_id, dev.device_type, dev.ip)
+
+    def _watch_devices(self) -> None:
+        """Daemon thread: say "Lost <band>" once when a streaming device goes
+        silent for DEVICE_LOST_AFTER_S seconds."""
+        while not self._watch_stop.wait(2.0):
+            self._check_lost(time.time())
+
+    def _check_lost(self, now: float) -> None:
+        for dev in list(self.devices.values()):
+            if (dev.device_id in self._lost or not dev.last_seen
+                    or now - dev.last_seen < self.DEVICE_LOST_AFTER_S):
+                continue
+            self._lost.add(dev.device_id)
+            ip = self._known_ip(dev.device_id)
+            where = " at {}".format(ip) if ip else " ({})".format(dev.device_id)
+            self._emit_device_event(
+                "lost", "Lost {}{}".format(self._device_noun(dev.device_type), where))
+
     def stop(self):
+        self._watch_stop.set()
         self.listener.stop()
         if self.discovery:
             self.discovery.stop()
@@ -482,6 +573,9 @@ class AppState:
             dev = DeviceInfo(device_id=pkt.device_id, device_type=pkt.device_type)
             self.devices[pkt.device_id] = dev
         dev.update(pkt, ("", 0))
+        if self._announced is not None and (
+                pkt.device_id not in self._announced or pkt.device_id in self._lost):
+            self._note_found(pkt.device_id, pkt.device_type)
 
         # Recording: dispatch this packet to the matcher/writer/sidecars.
         if self.recording is not None:
@@ -1884,6 +1978,25 @@ class AppState:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def storage_info(self) -> dict:
+        """Absolute paths of everything OpenMuscle writes (GET /api/storage).
+
+        `root` is the data root (~/OpenMuscle unless --data-dir / OPENMUSCLE_HOME
+        moved it). `captures` follows --captures-dir when that was given, and
+        `sessions` sits beside it exactly as sessions_dir resolves it.
+        `legacy_hint` is a one-line note when the current directory still holds
+        recordings from before the single data root, else None.
+        """
+        return {
+            "root": str(om_paths.data_root()),
+            "captures": os.path.abspath(str(self.captures_dir)),
+            "sessions": os.path.abspath(str(self.sessions_dir)),
+            "models": str(om_paths.models_dir()),
+            "exports": str(om_paths.exports_dir()),
+            "logs": str(om_paths.logs_dir()),
+            "legacy_hint": om_paths.legacy_hint(),
+        }
+
     def _session_path(self, session_id: str) -> Optional[Path]:
         """Whitelist-safe path inside sessions_dir."""
         if not session_id:
@@ -2544,7 +2657,7 @@ class AppState:
         return fallback
 
     def _latest_registered_model_path(self) -> Optional[str]:
-        """Find the most recent model.pkl under data/models/."""
+        """Find the most recent model.pkl in the models folder."""
         try:
             from openmuscle.ml.registry import ModelRegistry
             reg = ModelRegistry()

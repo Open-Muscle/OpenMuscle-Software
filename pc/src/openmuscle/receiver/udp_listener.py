@@ -19,7 +19,8 @@ class UDPListener:
     """
 
     def __init__(self, port: int = 3141, bind_ip: str = "0.0.0.0",
-                 announce_handler=None, rcvbuf: int = 4 * 1024 * 1024):
+                 announce_handler=None, rcvbuf: int = 4 * 1024 * 1024,
+                 quiet: bool = False):
         self.port = port
         self.bind_ip = bind_ip
         # Requested UDP receive-buffer size. The default OS buffer (~64-256 KB on
@@ -28,6 +29,9 @@ class UDPListener:
         # emitted 18-19 Hz, the receiver saw ~8 Hz). 4 MB absorbs the bursts; the
         # OS may clamp to its max (raise the registry/sysctl limit for more).
         self.rcvbuf = rcvbuf
+        # quiet: skip the "Listening on ..." startup line (the web server prints
+        # its own plain-language banner instead).
+        self.quiet = quiet
         self.packet_queue: Queue = Queue()
         # Optional callback(announce_dict, src_ip) for V4 discovery beacons.
         # When set, announce packets are routed here and NOT enqueued as sensor
@@ -55,7 +59,8 @@ class UDPListener:
         granted = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
         sock.settimeout(1.0)
         sock.bind((self.bind_ip, self.port))
-        print(f"Listening on {self.bind_ip}:{self.port} (rcvbuf={granted})")
+        if not self.quiet:
+            print(f"Listening on {self.bind_ip}:{self.port} (rcvbuf={granted})")
 
         while self._running:
             try:

@@ -1,0 +1,124 @@
+"""Where OpenMuscle keeps your files: one data root for everything.
+
+Captures, sessions, trained models, exports and logs all live under a single
+folder so the answer to "where did my recording go?" never depends on which
+directory the program was started from.
+
+Resolution order for the root (first match wins):
+  1. set_data_root(...), which the CLI calls for --data-dir
+  2. the OPENMUSCLE_HOME environment variable
+  3. ~/OpenMuscle   (the home folder itself, not Documents, which is often
+     synced to a cloud drive and does not suit large recordings)
+
+Layout:
+    <root>/captures   recorded CSVs plus their .meta.json / .labels sidecars
+    <root>/sessions   one JSON file per recording session
+    <root>/models     trained model folders
+    <root>/exports    prediction exports, shareable archives
+    <root>/logs       server logs
+"""
+
+import os
+from pathlib import Path
+from typing import List, Optional
+
+ENV_HOME = "OPENMUSCLE_HOME"
+SUBDIRS = ("captures", "sessions", "models", "exports", "logs")
+
+_override: Optional[Path] = None
+
+
+def set_data_root(path) -> None:
+    """Pin the data root for this process (used for --data-dir). None clears."""
+    global _override
+    _override = None if not path else _expand(path)
+
+
+def _expand(path) -> Path:
+    return Path(os.path.abspath(os.path.expanduser(str(path))))
+
+
+def data_root() -> Path:
+    """The absolute data root. Does not create anything."""
+    if _override is not None:
+        return _override
+    env = os.environ.get(ENV_HOME, "").strip()
+    if env:
+        return _expand(env)
+    return Path(os.path.abspath(os.path.join(os.path.expanduser("~"), "OpenMuscle")))
+
+
+def captures_dir() -> Path:
+    return data_root() / "captures"
+
+
+def sessions_dir() -> Path:
+    return data_root() / "sessions"
+
+
+def models_dir() -> Path:
+    return data_root() / "models"
+
+
+def exports_dir() -> Path:
+    return data_root() / "exports"
+
+
+def logs_dir() -> Path:
+    return data_root() / "logs"
+
+
+def ensure_data_dirs() -> Path:
+    """Create the root and every standard subfolder. Returns the root."""
+    root = data_root()
+    for name in SUBDIRS:
+        (root / name).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def absolute(path) -> Path:
+    """Absolute form of a user-supplied path (~ expanded, relative to cwd)."""
+    return _expand(path)
+
+
+def _has_files(folder: Path, pattern: str) -> bool:
+    try:
+        return folder.is_dir() and any(folder.glob(pattern))
+    except OSError:
+        return False
+
+
+def legacy_cwd_data(cwd: Optional[Path] = None) -> List[Path]:
+    """Older-style data folders found under the current directory.
+
+    Before the single data root, captures went to ./data/raw/merged, sessions to
+    ./data/raw/sessions and models to ./data/models relative to wherever the
+    program was started. Returns the ones that hold files and are not already
+    inside the data root, so the CLI can hint that they are no longer used.
+    """
+    cwd = Path(cwd) if cwd else Path.cwd()
+    root = data_root()
+    found = []
+    for rel, pattern in ((("data", "raw", "merged"), "*.csv"),
+                         (("data", "raw", "sessions"), "*.json"),
+                         (("data", "models"), "*/model.pkl")):
+        folder = cwd.joinpath(*rel)
+        if not _has_files(folder, pattern):
+            continue
+        try:
+            folder.resolve().relative_to(root.resolve())
+            continue                      # already inside the data root
+        except ValueError:
+            pass
+        found.append(folder)
+    return found
+
+
+def legacy_hint(cwd: Optional[Path] = None) -> Optional[str]:
+    """One-line hint when cwd holds older data, else None."""
+    found = legacy_cwd_data(cwd)
+    if not found:
+        return None
+    where = ", ".join(str(p) for p in found)
+    return ("Note: found older data in {} . OpenMuscle now saves to {} ; copy those "
+            "files into the matching subfolder there to see them.".format(where, data_root()))

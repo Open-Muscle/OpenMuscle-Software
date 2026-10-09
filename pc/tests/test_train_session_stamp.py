@@ -55,8 +55,8 @@ def _state(tmp_path, port):
 
 
 def test_train_stamps_session_provenance(tmp_path, monkeypatch):
-    # ModelRegistry writes to CWD-relative data/models; keep it in the sandbox.
-    monkeypatch.chdir(tmp_path)
+    # ModelRegistry writes under the data root; keep it in the sandbox.
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
     s = _state(tmp_path, 53880)
     _write_v2_csv(s.captures_dir / "take1.csv")
     s.active_session = {"id": "s_stamp01", "name": "stamp check",
@@ -93,7 +93,7 @@ def test_train_stamps_session_provenance(tmp_path, monkeypatch):
 
 
 def test_roleless_bilateral_train_warns(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
     s = _state(tmp_path, 53881)
     _write_v2_csv(s.captures_dir / "two_hand.csv")
 
@@ -119,7 +119,7 @@ def test_roleless_bilateral_train_warns(tmp_path, monkeypatch):
 
 
 def test_single_role_roleless_train_has_no_warning(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
     s = _state(tmp_path, 53882)
     _write_v2_csv(s.captures_dir / "one_hand.csv", roles=("left",))
 
@@ -137,7 +137,7 @@ def test_start_session_warns_on_wearer_mismatch(tmp_path, monkeypatch):
     as newest-on-disk right before a new wearer's session (cross-wearer
     inference measured ~47x worse). start_session must compare each loaded
     per-hand engine's stamped wearer against the session's and warn."""
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
     s = _state(tmp_path, 53883)
     _write_v2_csv(s.captures_dir / "take1.csv")
 

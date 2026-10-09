@@ -285,7 +285,11 @@ class DiscoveryManager:
 
     def __init__(self, pc_host=None, udp_port=DEFAULT_UDP_PORT,
                  announce_port=DEFAULT_ANNOUNCE_PORT,
-                 cache_path=None, auto_subscribe=True):
+                 cache_path=None, auto_subscribe=True, on_event=None):
+        # Optional callback(kind, device) fired from _upsert when a source is
+        # seen for the first time this run (kind == "found"). The web server
+        # uses it to print a plain "Found FlexGrid band at <ip>" console line.
+        self.on_event = on_event
         self.pc_host = pc_host or default_lan_ip()
         self.udp_port = udp_port              # data frames land here (3141)
         self.announce_port = announce_port    # dedicated beacon port (3140)
@@ -570,6 +574,11 @@ class DiscoveryManager:
                 existing.last_seen = dev.last_seen
                 target = existing
             already_subscribed = target.device_id in self._keepers
+        if existing is None and self.on_event is not None:
+            try:
+                self.on_event("found", target)
+            except Exception:
+                pass
         self._save_cache()
         if self.auto_subscribe and not already_subscribed:
             self.subscribe(target.device_id)
