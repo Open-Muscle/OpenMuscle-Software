@@ -142,7 +142,7 @@ def _quest_payload(joints, role, t_ms):
 
 def replay_capture(path, target_ip="127.0.0.1", udp_port=3141, web_port=8000,
                    speed=1.0, loop=False, stop_event=None, on_progress=None,
-                   quest_sink=None, quest_ws=True):
+                   quest_sink=None, quest_ws=True, web_scheme="auto"):
     """Replay `path` into the live server. Blocking; run on a background thread.
 
     Emits one FlexGrid UDP packet per row (the band's reconstructed matrix) and,
@@ -155,6 +155,8 @@ def replay_capture(path, target_ip="127.0.0.1", udp_port=3141, web_port=8000,
     same path AppState.ingest_quest_packet uses for a real headset); otherwise a
     /ws/quest WebSocket to web_port is opened (the CLI path). FlexGrid always
     goes over real UDP so the listener is exercised exactly as with hardware.
+    web_scheme ("auto" / "http" / "https") picks ws:// or wss:// for that
+    WebSocket, so an HTTPS server is reachable.
     """
     frames, info = parse_capture(path)
     if not frames:
@@ -174,9 +176,13 @@ def replay_capture(path, target_ip="127.0.0.1", udp_port=3141, web_port=8000,
             return
         if qid not in ws_conns:
             try:
-                from websockets.sync.client import connect
-                ws_conns[qid] = connect(f"ws://{target_ip}:{web_port}/ws/quest")
-            except Exception:
+                from openmuscle.simulate import net
+                scheme = net.resolve_scheme(web_scheme, target_ip, web_port)
+                ws_conns[qid] = net.ws_connect(scheme, target_ip, web_port,
+                                               "/ws/quest")
+            except Exception as e:
+                print(f"replay: quest WebSocket to {target_ip}:{web_port} "
+                      f"failed ({type(e).__name__}: {e}); hand frames skipped")
                 ws_conns[qid] = None
         ws = ws_conns[qid]
         if ws is not None:
