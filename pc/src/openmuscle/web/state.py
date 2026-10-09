@@ -68,7 +68,10 @@ from openmuscle.receiver.udp_listener import UDPListener
 from openmuscle.discovery import DiscoveryManager
 from openmuscle.forearm import forearm_roll, joints_from_flat
 from openmuscle import hand_angles
-from openmuscle.quality import CellActivityTracker
+from openmuscle.quality import (
+    CellActivityTracker, LabelActivityTracker, evaluate_take, quality_of,
+    scan_capture_csv, summarize_take, worst_band, LABEL_IDLE_FRACTION,
+)
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
 
@@ -273,6 +276,14 @@ class ActiveCapture:
     # Fed every written sensor row; the WS snapshot surfaces flat-cell counts so
     # the live verdict can flag a not-engaged band DURING the recording.
     activity: "CellActivityTracker" = field(default_factory=lambda: CellActivityTracker())
+    # The same engagement tracking per band (device_id -> tracker): a bilateral
+    # take is judged on its least-engaged band, not on the blended `activity`.
+    band_activity: dict = field(default_factory=dict)
+    # Label motion over the take (a labeler that never moves gives nothing to
+    # learn), and rows whose hand pose was padded/truncated or all zeros
+    # (tracking lost). Both feed the persisted quality verdict.
+    label_activity: "LabelActivityTracker" = field(default_factory=lambda: LabelActivityTracker())
+    hand_lost_rows: int = 0
     # Stats surfaced in the WS snapshot
     sensor_frames_seen: int = 0
     label_packets_seen: int = 0
@@ -784,10 +795,12 @@ class AppState:
         # client sends a fixed-length array every frame, so this rarely fires;
         # the mismatch counter surfaces it in the stop-recording stats + log
         # if it does.
+        hand_lost = False
         if rec.locked_label_count is not None and label_values:
             n = rec.locked_label_count
             if len(label_values) != n:
                 rec.label_width_mismatch_count += 1
+                hand_lost = True
                 if len(label_values) < n:
                     label_values = list(label_values) + [0.0] * (n - len(label_values))
                 else:
@@ -801,6 +814,19 @@ class AppState:
         flat = [mat[c][r] for r in range(rows) for c in range(cols)]
         # Engagement tracking (flat-cell dud detection, #0311.4).
         rec.activity.update(flat)
+        band_tr = rec.band_activity.get(pkt.device_id)
+        if band_tr is None:
+            band_tr = rec.band_activity[pkt.device_id] = CellActivityTracker()
+        band_tr.update(flat)
+        # Label side of the verdict: did the labeler move, did the hand drop out.
+        if label_values:
+            rec.label_activity.update(label_values)
+            if (matched_label is not None
+                    and matched_label.device_type in HAND_POSE_TYPES
+                    and not any(label_values)):
+                hand_lost = True
+        if hand_lost:
+            rec.hand_lost_rows += 1
         # Schema v2: one long row per sensor frame, tagged with the source's
         # role + device_id and a hub-arrival epoch-ms timestamp. Features are
         # already row-major (above); labels are the matched label vector.
@@ -1090,6 +1116,7 @@ class AppState:
         rec = None
         if self.recording:
             r = self.recording
+            live_q = self._quality_stats(r)
             rec = {
                 "filename": r.path.name,
                 "schema_version": "v2",
@@ -1119,9 +1146,12 @@ class AppState:
                 "label_width_mismatch": r.label_width_mismatch_count,
                 # Engagement (flat-cell dud detection, #0311.4): cells whose
                 # value range stayed under the noise floor for the whole take.
-                "flat_cells": r.activity.flat_cells(),
-                "cells_total": r.activity.n_cells,
-                "band_flat": r.activity.is_flat_take(),
+                "flat_cells": live_q["flat_cells"],
+                "cells_total": live_q["cells_total"],
+                "band_flat": live_q["band_flat"],
+                # Server-side verdict (good | check | bad + plain reasons) so
+                # the dashboard shows exactly what will be saved with the take.
+                "quality": evaluate_take(dict(live_q, live=True)),
             }
         return {
             "type": "tick",
@@ -1717,6 +1747,32 @@ class AppState:
             extra_sensors=[{"device_id": by_side["right"], "role": "right"}],
             side_labelers=side_labelers)
 
+    @staticmethod
+    def _quality_stats(rec: "ActiveCapture") -> dict:
+        """Raw take stats for the quality verdict, from a (live or just
+        stopped) recording. Persisted by stop_recording via summarize_take."""
+        band = worst_band(rec.band_activity)
+        n_cols = rec.label_activity.n_cols
+        moved = rec.label_activity.moved_cols()
+        rows = rec.row_count
+        return {
+            "rows": rows,
+            "duration_s": round(rec.duration_s, 1),
+            "has_labeler": bool(rec.label_device_id or rec.side_matchers),
+            "match_rate": round(rec.match_rate, 3),
+            "matched": rec.matched_count,
+            "sensor_frames_seen": rec.sensor_frames_seen,
+            "flat_cells": band["flat_cells"],
+            "cells_total": band["cells_total"],
+            "band_flat": band["band_flat"],
+            "label_cols": n_cols,
+            "label_cols_moved": moved,
+            "label_idle": bool(n_cols and moved / n_cols < LABEL_IDLE_FRACTION),
+            "label_width_mismatch": rec.label_width_mismatch_count,
+            "hand_lost_rows": rec.hand_lost_rows,
+            "hand_lost_frac": round(rec.hand_lost_rows / rows, 3) if rows else 0.0,
+        }
+
     def stop_recording(self) -> Optional[dict]:
         if self.recording is None:
             return None
@@ -1748,12 +1804,19 @@ class AppState:
         # detection (Tory's UI-overhaul ask) without re-reading every CSV.
         # write_capture_meta shallow-merges the "auto" dict, so adding the
         # new "final" key leaves the seeded auto.* fields intact.
+        # The quality verdict (good | check | bad + plain reasons) is computed
+        # once here and persisted with the numbers behind it, so it survives
+        # refreshes and restarts and the UI never recomputes it.
+        qstats = self._quality_stats(rec)
+        quality = summarize_take(qstats)
         try:
-            self.write_capture_meta(rec.path.name, {"auto": {"final": {
+            final = {
                 "rows": rec.row_count,
                 "duration_s": round(rec.duration_s, 1),
                 "match_rate": round(rec.match_rate, 3),
-            }}})
+            }
+            final.update(quality)
+            self.write_capture_meta(rec.path.name, {"auto": {"final": final}})
         except Exception as e:
             self.log_buffer.warn("meta",
                 "could not persist final stats for {}: {}".format(
@@ -1772,6 +1835,11 @@ class AppState:
             "label_packets_seen": rec.label_packets_seen,
             "label_width_mismatch": rec.label_width_mismatch_count,
             "match_rate": round(rec.match_rate, 3),
+            "quality": {"verdict": quality["verdict"],
+                        "reasons": quality["reasons"],
+                        "flags": quality["flags"]},
+            "flat_cells": qstats["flat_cells"],
+            "cells_total": qstats["cells_total"],
             "sidecars": {
                 "sensor": str(rec.path.with_suffix("")) + ".sensor.jsonl",
                 "label": (str(rec.path.with_suffix("")) + ".label.jsonl") if rec.label_jsonl else None,
@@ -1828,9 +1896,45 @@ class AppState:
                 "created_ms": meta.get("created_ms") if meta else None,
                 "rows": fin.get("rows"),
                 "duration_s": fin.get("duration_s"),
+                # {verdict: good|check|bad, reasons, flags}; None for takes
+                # recorded before quality was persisted (see capture_quality).
+                "quality": quality_of(fin),
                 "meta": meta_summary,
             })
         return out
+
+    def capture_quality(self, name: str, refresh: bool = False) -> Optional[dict]:
+        """Quality verdict for one capture: the persisted one if present, else
+        scan the CSV once (CellActivityTracker et al.) and cache it into the
+        meta sidecar. refresh=True forces a rescan. None if no such capture."""
+        p = self.capture_path(name)
+        if p is None:
+            return None
+        meta = self.read_capture_meta(p.name)
+        fin = ((meta or {}).get("auto") or {}).get("final") or {}
+        cached = quality_of(fin)
+        if cached is not None and not refresh:
+            return dict(cached, source="stored")
+        stats = scan_capture_csv(p, (meta or {}).get("label_source"))
+        # Keep the live-recorder pairing numbers if we have them: a scan cannot
+        # see them, but the stored values are still right.
+        for k in ("match_rate", "matched", "sensor_frames_seen",
+                  "label_width_mismatch"):
+            if fin.get(k) is not None:
+                stats[k] = fin[k]
+        summary = summarize_take(stats)
+        merged = dict(fin)
+        merged.update(summary)
+        if merged.get("rows") is None:
+            merged["rows"] = stats["rows"]
+        if merged.get("duration_s") is None:
+            merged["duration_s"] = stats["duration_s"]
+        merged["quality_source"] = "scan"
+        try:
+            self.write_capture_meta(p.name, {"auto": {"final": merged}})
+        except Exception as e:
+            self.log_buffer.warn("meta", "could not cache quality for {}: {}".format(p.name, e))
+        return dict(quality_of(merged), source="scan")
 
     def capture_path(self, name: str) -> Path | None:
         # Whitelist: only return paths inside captures_dir
@@ -2368,11 +2472,25 @@ class AppState:
                 ", role={}".format(role) if role else ""))
 
         paths = []
+        bad_captures = []
         for name in capture_names:
             p = self.capture_path(name)
             if p is None:
                 raise RuntimeError(f"Capture not found: {name}")
             paths.append(str(p))
+            # Bad takes are still trained on (the operator may know better), but
+            # reported back so the UI can list them. Older takes are scored by
+            # a one-time CSV scan that is cached into their meta.
+            try:
+                q = self.capture_quality(name)
+            except Exception as e:
+                q = None
+                self.log_buffer.warn("training", "quality check failed for {}: {}".format(name, e))
+            if q and q.get("verdict") == "bad":
+                bad_captures.append({"name": name, "reasons": q.get("reasons") or []})
+        if bad_captures:
+            self.log_buffer.warn("training", "training includes {} bad take(s): {}".format(
+                len(bad_captures), ", ".join(b["name"] for b in bad_captures)))
 
         # Combine (or just use the single path directly)
         if len(paths) == 1:
@@ -2497,6 +2615,8 @@ class AppState:
             "warning": warning,
             "role": role,
             "captures": list(capture_names),
+            # Selected takes whose quality verdict is "bad" ({name, reasons}).
+            "bad_captures": bad_captures,
         }
 
     def _autoload_role_models(self) -> None:

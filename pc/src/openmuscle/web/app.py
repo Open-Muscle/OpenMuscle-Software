@@ -596,6 +596,21 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(status_code=404, detail="Capture not found")
         return {"deleted": name}
 
+    # ----- REST: capture quality -----
+
+    @app.get("/api/captures/{name}/quality")
+    async def get_capture_quality(name: str, refresh: bool = False):
+        """Quality verdict {verdict: good|check|bad, reasons, flags} for one
+        capture. Takes recorded by this version already carry it (stored in the
+        meta sidecar at stop). For older takes the CSV is scanned once and the
+        result cached into the sidecar; ?refresh=true forces a rescan."""
+        if state.capture_path(name) is None:
+            raise HTTPException(status_code=404, detail="Capture not found")
+        q = await asyncio.to_thread(state.capture_quality, name, refresh)
+        if q is None:
+            raise HTTPException(status_code=404, detail="Capture not found")
+        return q
+
     # ----- REST: capture metadata sidecars -----
 
     @app.get("/api/captures/{name}/meta")

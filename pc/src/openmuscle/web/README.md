@@ -102,7 +102,8 @@ The `_snapshot()` dict pushed to every connected browser is the contract:
 | GET | `/api/recording` | `{recording, filename, sensor_device_id, label_device_id, window_ms, rows, duration_s, matched, unpaired_sensor, match_rate, ...}` or `{recording: false}` |
 | POST | `/api/recording` | body `{sensor_device_id?, label_device_id?, filename?, window_ms?}` — starts a paired capture. All fields optional. `sensor_device_id` defaults to first flexgrid; `label_device_id` defaults to first lask5. Pass `label_device_id: ""` to record sensor-only (no pairing). |
 | DELETE | `/api/recording` | stops the active capture, returns final stats + sidecar paths |
-| GET | `/api/captures` | list of `{name, size_bytes, mtime}` for files in `--captures-dir` |
+| GET | `/api/captures` | list of `{name, size_bytes, mtime, rows, duration_s, quality, ...}` for files in `--captures-dir`; `quality` is `{verdict, reasons, flags}` or null for takes not scored yet |
+| GET | `/api/captures/{name}/quality` | take quality `{verdict: good\|check\|bad, reasons[], flags[], source}`. Takes recorded by this version store it in the meta sidecar (`auto.final`) at stop; for older takes the CSV is scanned once and the result cached. `?refresh=true` rescans. The thresholds live in `openmuscle/quality.py`. |
 | GET | `/api/captures/{name}/download` | CSV file |
 | DELETE | `/api/captures/{name}` | remove the capture file + its `.sensor.jsonl` / `.label.jsonl` sidecars |
 | POST | `/api/train` | body `{captures: [name1, name2, ...], model_type?, n_estimators?, test_split?, activate?}` — combines the named captures into one training set, fits a model, optionally hot-swaps it into the live inference engine. Returns `{model_path, metrics, active, captures}`. |
