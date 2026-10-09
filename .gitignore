@@ -61,3 +61,8 @@ env/
 *.p12
 *.cer
 rootCA*.pem
+
+# Offline hand-tracker / three.js copies are downloaded by `openmuscle assets fetch`
+# into ~/OpenMuscle/assets; never commit the binaries if a copy lands in the tree.
+pc/src/openmuscle/web/static/vendor/
+hand_landmarker.task

@@ -43,7 +43,9 @@ const BLOCKED = [
     ['vr both hands, one missing', [band('flexgrid-a', 'left'), band('flexgrid-b', 'right'), quest('quest-left')], 'vr',
         'Both of your hands need to be visible to the headset. Open the OpenMuscle page on the Quest with both hands selected.'],
     ['webcam not streaming', [band('flexgrid-a', 'left')], 'webcam',
-        'The camera is not on. Open the camera page in a new tab (/webcam), press Start camera and hold your hand up.'],
+        'The camera is not on. Open the Camera panel on this page, press Start camera and hold your hand up.'],
+    ['webcam stopped sending', [band('flexgrid-a', 'left'), cam(6)], 'webcam',
+        'The camera has stopped sending hand data. Keep the camera window visible next to this one (side by side, not behind it), or use the Camera panel on this page, which keeps tracking while you record.'],
     ['gamepad not streaming', [band('flexgrid-a', 'left')], 'gamepad',
         'The game controller is not sending data. Plug it in and press any button.'],
     ['stale band, lask5', [band('flexgrid-a', 'left', 6), lask()], 'lask5',
@@ -132,6 +134,26 @@ test('webcam and gamepad paths', () => {
     const g = plan([band('flexgrid-a', 'left'), pad()], 'gamepad');
     assert.equal(g.mode, '1h-gamepad');
     assert.match(g.summary, /win 120ms/);
+});
+
+test('webcam: a stale hand is never picked when a fresh one is streaming', () => {
+    const stale = { device_id: 'webcam-left', device_type: 'webcam_hand', last_seen_age: 30, hz: 30 };
+    const fresh = { device_id: 'webcam-right', device_type: 'webcam_hand', last_seen_age: 0.1, hz: 28 };
+    const one = plan([band('flexgrid-a', 'left'), stale, fresh], 'webcam');
+    assert.equal(one.mode, '1h-webcam');
+    assert.equal(one.body.label_device_id, 'webcam-right');
+    const two = plan([band('flexgrid-a', 'left'), band('flexgrid-b', 'right'), stale, fresh], 'webcam');
+    assert.equal(two.body.label_device_id, 'webcam-right');
+});
+
+test('webcam: mirrored session takes the fastest fresh hand, not the one named for the band side', () => {
+    const left = { device_id: 'webcam-left', device_type: 'webcam_hand', last_seen_age: 0.1, hz: 12 };
+    const right = { device_id: 'webcam-right', device_type: 'webcam_hand', last_seen_age: 0.1, hz: 29 };
+    const devs = [band('flexgrid-a', 'left'), left, right];
+    // Not mirrored: the hand on the band's own side wins.
+    assert.equal(plan(devs, 'webcam').body.label_device_id, 'webcam-left');
+    // Mirrored: one hand labels the band whichever side it is, so use the best signal.
+    assert.equal(plan(devs, 'webcam', { mirrored: true }).body.label_device_id, 'webcam-right');
 });
 
 test('sensor only: ready text says it cannot be used to train', () => {

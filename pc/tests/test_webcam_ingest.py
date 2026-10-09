@@ -228,6 +228,49 @@ class TestAutoPickOrder:
             assert s._auto_pick_label() == "webcam-left"
 
 
+class TestAutoPickIgnoresStaleDevices:
+    """A label device that went quiet stays in the device list; it must not
+    beat the one that is streaming now (a closed camera tab, say)."""
+
+    def _age(self, state, device_id, seconds):
+        state.devices[device_id].last_seen -= seconds
+
+    def test_fresh_webcam_beats_older_stale_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.ingest_webcam_packet(_webcam_payload("left"))
+            self._age(s, "webcam-left", s.LABEL_FRESH_S + 5)
+            s.ingest_webcam_packet(_webcam_payload("right"))
+            assert s._auto_pick_label() == "webcam-right"
+
+    def test_fresh_lower_priority_type_beats_stale_higher_priority_type(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s._handle_packet(_lask5_packet())
+            self._age(s, "lask5-test", 60)
+            s.ingest_webcam_packet(_webcam_payload("left"))
+            assert s._auto_pick_label() == "webcam-left"
+
+    def test_most_recently_heard_wins_within_a_type(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.ingest_webcam_packet(_webcam_payload("left"))
+            s.ingest_webcam_packet(_webcam_payload("right"))
+            self._age(s, "webcam-right", 1.0)      # both still fresh, right is older
+            assert s._auto_pick_label() == "webcam-left"
+
+    def test_only_stale_devices_still_pick_the_best_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = _make_state(Path(d))
+            s.ingest_webcam_packet(_webcam_payload("left"))
+            self._age(s, "webcam-left", 60)
+            assert s._auto_pick_label() == "webcam-left"
+
+    def test_nothing_connected_picks_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            assert _make_state(Path(d))._auto_pick_label() is None
+
+
 class TestMirroredSession:
     def _capture_in_session(self, tmp, **session_kw):
         s = _make_state(tmp)

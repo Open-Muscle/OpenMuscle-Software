@@ -239,6 +239,24 @@ List all trained models in the registry.
 openmuscle models
 ```
 
+### `openmuscle assets`
+
+Offline copies of the browser files the webcam page and the 3D hand viewer use
+(MediaPipe hand tracker, its model, three.js). Without them those pages load the
+files from the internet.
+
+```bash
+openmuscle assets fetch              # download, verify checksums, install (about 17.6 MB + 1.3 MB)
+openmuscle assets fetch --with-nosimd  # also the tracker files for processors without SIMD
+openmuscle assets status             # which files are present and correct
+openmuscle assets status --hashes    # also print each installed file's sha256
+```
+
+Files go to `<data folder>/assets` (default `~/OpenMuscle/assets`) and are served
+under `/static/vendor/`. Every file is checked against a size and checksum pinned
+in the code; a mismatch is discarded and nothing is installed for that file. See
+[webcam-labeling.md](webcam-labeling.md).
+
 ## Typical Workflow
 
 ```bash

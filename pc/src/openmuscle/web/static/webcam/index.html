@@ -75,6 +75,30 @@
         .bars .val { font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
         .note { font-size: 12px; color: var(--fg-dim); margin: 0; }
         .stats { font-size: 12px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+        .check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-dim); }
+        .notice {
+            display: none; margin: 0; padding: 8px 10px; font-size: 12px;
+            color: var(--orange); border: 1px solid rgba(255, 164, 44, 0.4);
+            border-radius: 6px; background: rgba(255, 164, 44, 0.08);
+        }
+        /* Shown while the window is hidden and for a few seconds after it
+           comes back: tracking runs on drawn frames, which a background tab
+           does not get. */
+        .vis-warning {
+            display: none; position: absolute; inset: 0; z-index: 3;
+            align-items: center; justify-content: center; text-align: center;
+            padding: 24px; font-size: 18px; font-weight: 600; line-height: 1.35;
+            color: #1b1000; background: rgba(255, 164, 44, 0.95);
+        }
+        .side-by-side { color: var(--orange); }
+        /* Inside the dashboard's Camera panel: no page header or long notes,
+           the pills stay, and the picture sits above the controls. */
+        body.embed header h1, body.embed .only-standalone { display: none; }
+        body.embed header { padding: 6px 12px; justify-content: flex-start; }
+        body.embed main { grid-template-columns: minmax(0, 1fr) 240px; padding: 10px 12px; gap: 12px; }
+        body.embed .panel { padding: 10px; gap: 10px; }
+        body.embed .stage { max-height: 380px; }
+        @media (max-width: 640px) { body.embed main { grid-template-columns: minmax(0, 1fr); } }
     </style>
 </head>
 <body>
@@ -91,6 +115,7 @@
             <video id="video" playsinline muted></video>
             <canvas id="overlay"></canvas>
             <div id="hint" class="hint">Choose a camera and press Start.</div>
+            <div id="vis-warning" class="vis-warning" role="alert"></div>
         </div>
         <div class="panel">
             <div class="row">
@@ -105,7 +130,11 @@
                     <option value="right">right hand</option>
                 </select>
             </div>
+            <label class="check" title="Tick this only if the on-screen hand is labelled the wrong way round (some external cameras and phone-as-webcam apps flip the picture)">
+                <input type="checkbox" id="swap"> Swap left and right
+            </label>
             <button id="start" class="primary">Start camera</button>
+            <p id="notice" class="notice" role="status"></p>
             <div>
                 <div class="label">Finger curl being sent (0 = straight, 1 = curled)</div>
                 <div class="bars" id="bars"></div>
@@ -113,12 +142,19 @@
             <div class="stats" id="stats">not running</div>
             <p class="note">Hold the hand about an arm's length from the camera with the palm
                 facing it and all fingers visible. Bright, even light helps.</p>
-            <p class="note">The picture stays in this browser. Only joint coordinates are sent,
-                and only to the OpenMuscle server this page was opened from.</p>
-            <p class="note">Then open the <a href="/" target="_blank" rel="noopener">dashboard</a>,
-                set Labels to "Webcam hand", and record.</p>
+            <p class="note only-standalone">The picture stays in this browser. Only joint coordinates
+                are sent, and only to the OpenMuscle server this page was opened from.</p>
+            <p class="note only-standalone"><strong class="side-by-side">Keep this window visible.</strong>
+                Browsers pause a tab that is in the background, and the hand labels stop with it.
+                The easiest way is the Camera panel on the <a href="/" target="_blank" rel="noopener">dashboard</a>,
+                which does the same job without a second window. If you use this page instead,
+                put it side by side with the dashboard, not behind it.</p>
         </div>
     </main>
+    <script nomodule>
+        document.getElementById('hint').textContent =
+            'This browser is too old for the camera page. Use the current Chrome or Edge.';
+    </script>
     <script type="module" src="/static/webcam/webcam.js"></script>
 </body>
 </html>

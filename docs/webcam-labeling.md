@@ -1,36 +1,70 @@
 # Webcam hand labeling
 
-Use the computer's camera as the label source instead of a VR headset or a LASK5.
-The camera watches a hand, a hand tracker in the browser turns the picture into
-joint positions, and those are recorded next to the band data exactly like the
-headset's hand tracking is.
+Use the computer's camera to record how your fingers move while the bands record
+how your forearm feels. The camera watches a hand, a hand tracker in the browser
+turns the picture into joint positions, and those are saved next to the band data.
+This is how a recording gets the finger information a model learns from, with no
+extra hardware.
 
-Good for: getting started with no extra hardware, labeling the thumb and
-individual joints (which the LASK5 cannot measure), and mirrored training (below).
+You can also train from a VR headset or a LASK5 finger labeler if you have one.
+Recording with no labeler at all works too, but a take without finger data cannot
+be used to train a model.
 
-## Quick start
+## Your first labelled recording
 
-1. Start the server: `openmuscle web`.
-2. On the same computer, open the dashboard address with `/webcam` on the end
-   (for example `https://localhost:8000/webcam`), choose the camera, and press
-   **Start camera**. Allow camera access when the browser asks.
-3. Hold a hand up to the camera. A skeleton is drawn over it and the five
+You need the computer that has the camera, with `openmuscle web` running and at
+least one band showing in the dashboard.
+
+1. Open the dashboard at **http://localhost:8000**. `openmuscle web` prints the
+   address it is using in its first lines and opens it for you; if port 8000 was
+   busy it picked the next free one, so use the address it printed. (The address
+   starts with `https` only if you set up the headset certificate described in
+   [vr-setup.md](vr-setup.md).)
+2. Find the **Camera** panel near the top of the page and open it. Press **Start
+   camera** inside it. The first time, your browser asks whether this page may use
+   the camera; choose **Allow**.
+3. Hold one hand up to the camera, palm toward it, all fingers visible, about an
+   arm's length away. A green skeleton is drawn over the hand and the five
    finger-curl bars move. Those bars are the numbers that get recorded.
-4. In the dashboard, set **Labels** to **Webcam hand** and press **Record**.
+4. In the bar at the top, make sure **Finger data from** says **Webcam**
+   (choosing it opens the Camera panel for you). The line beside the Record
+   button should read "Ready ... Press Record."
+5. Press **Record**, move your fingers (open, close, curl one at a time), and press
+   it again to stop. The new take appears in the Captures list.
 
-The camera page needs a secure address, which `localhost` always is. On another
-computer on the network it needs the HTTPS setup described in
-[vr-setup.md](vr-setup.md).
+Keep the dashboard tab in front while you record. The Camera panel is inside the
+dashboard so that one visible tab does both jobs. If you close the panel the
+camera keeps running; you do not need to leave it open.
 
-The first start downloads the hand tracker (about 8 MB) from a public CDN and
-the browser keeps it. To work with no internet, put a copy under
-`pc/src/openmuscle/web/static/vendor/mediapipe/` and the page uses it instead:
+### If you would rather use a separate window
+
+The camera page also works on its own at **http://localhost:8000/webcam** (use the
+same port as the dashboard). Browsers pause a tab that is in the background, and
+the hand labels stop with it. So if you use the separate page, put it side by side
+with the dashboard, not behind it. The page warns you when it was hidden, and the
+dashboard says the camera has stopped sending hand data.
+
+## Working with no internet
+
+The first time the camera starts it downloads the hand tracker (about 17.6 MB)
+from the internet, and the browser keeps it. To keep a copy on this computer so
+the camera also works with no internet, connect once and run:
 
 ```
-vendor/mediapipe/vision_bundle.mjs        from the @mediapipe/tasks-vision package
-vendor/mediapipe/wasm/                    the package's wasm folder
-vendor/mediapipe/hand_landmarker.task     the hand landmarker model
+openmuscle assets fetch
 ```
+
+That saves the tracker and the 3D hand viewer under `~/OpenMuscle/assets`, checks
+every file against a checksum built into OpenMuscle, and throws away any file that
+does not match. Restart `openmuscle web`, reload the page, and the camera panel
+says **tracker: ready (local)**. `openmuscle assets status` shows what is
+installed. Add `--with-nosimd` only if you have a very old processor. For a kit
+without internet, copy the `assets` folder from another computer into the same
+place; `assets status` tells you if every file is present and correct.
+
+Where the files come from and their licences are written to `NOTICE.txt` in that
+folder: MediaPipe tasks-vision 0.10.14 (Apache-2.0), the MediaPipe Hand Landmarker
+model published by Google, and three.js 0.160.0 (MIT).
 
 ## Getting good labels
 
@@ -41,13 +75,47 @@ vendor/mediapipe/hand_landmarker.task     the hand landmarker model
 - Curling fingers straight toward the camera is the hardest motion for a single
   camera to measure. Turning the hand slightly so the curl is seen from the side
   improves it.
-- "Hand in view" defaults to automatic left/right detection. If it guesses
-  wrong, pick the hand yourself.
+- The page decides left or right from what the camera sees and keeps that decision
+  steady, so one bad frame does not change it. The hand being recorded is drawn
+  in bright green; any other hand in view is drawn faint and ignored.
+- If it keeps calling your left hand "right" (some external cameras and
+  phone-as-webcam apps flip the picture), tick **Swap left and right**. The choice
+  is remembered. Or pick the hand yourself under **Hand in view**.
+
+## If something goes wrong
+
+The camera panel says in plain words what happened. The usual cases:
+
+| What you see | What it means | What to do |
+|---|---|---|
+| "The browser was not allowed to use the camera" | You chose Block, or the system blocks the browser | Click the camera icon in the address bar and choose Allow. On Windows also check Settings > Privacy & security > Camera; on a Mac, System Settings > Privacy & Security > Camera. |
+| "The camera is busy" | Another program or tab has it | Close Zoom, Teams, FaceTime, the Camera app, or other tabs using the camera, then Start camera again. |
+| "No camera was found" | Nothing plugged in, or switched off | Plug in or switch on a webcam, check the system lists it, then Start camera again. |
+| "Could not download the hand tracker, check internet access" | The tracker comes from the internet and there is none | Connect once and run `openmuscle assets fetch`, or check the connection. |
+| "Graphics acceleration did not work here" (a note, not an error) | The graphics card cannot run the tracker | Nothing. It switched to the processor automatically; it works but may track fewer frames per second. |
+| "The hand tracker stopped working" | It failed again after switching to the processor | Press Start camera. If it repeats, close other programs that use the camera or graphics card and reload. |
+| "The camera only works at http://localhost..." | The page was opened by another address, such as the computer's network address | On the computer with the camera, open the `http://localhost:8000` address. |
+| "Cannot reach the OpenMuscle server" | The page cannot connect, or it was opened from another device | Check `openmuscle web` is still running; open the page on the same computer. |
+| Hand skeleton on the wrong side | Some cameras mirror the picture | Tick **Swap left and right**. |
+| "Tracking was paused ... window in the background" | The tab was hidden, so no labels were sent | Keep the window visible; use the Camera panel in the dashboard. |
+
+Camera labels can only come from the computer running OpenMuscle: the labeler
+socket refuses connections from any other device, so another computer on your
+network cannot add or change labels in a recording.
+
+## Browser support
+
+The camera page is built for current Chrome and Edge on Windows, macOS and Linux.
+Firefox and Safari have not been tested; if the camera or the tracker does not
+start in one of them, use Chrome or Edge. A browser too old to run the page says
+so on the page. (The checks in this repository run the page logic and the server
+under Node and Python; the live camera and hand tracker have not been run on every
+browser and operating system combination.)
 
 ## Privacy
 
 The picture never leaves the browser tab. Only joint coordinates are sent, and
-only to the OpenMuscle server the page was opened from. No video is saved.
+only to the OpenMuscle server on this computer. No video is saved.
 
 ## Mirrored training
 
@@ -59,9 +127,11 @@ or it is busy holding a tool), measure the other one:
 3. Move both sides together, making the same movement with each.
 4. In **Start new session**, set **Mirrored** to the hand the labeler measures.
 
-Per-finger curl is the same number on both sides, so nothing is transformed.
-Captures made in a mirrored session are tagged `"mirror": true` in their
-`.meta.json` so that later tools know the labels came from the opposite hand.
+In a mirrored session one hand labels the band, so the dashboard uses whichever
+camera hand is streaming best. Per-finger curl is the same number on both sides,
+so nothing is transformed. Captures made in a mirrored session are tagged
+`"mirror": true` in their `.meta.json` so that later tools know the labels came
+from the opposite hand.
 
 A second band on the labeled arm, at the matching position, can be recorded in
 the same capture. It gives a direct comparison: one model per band, one fed by
@@ -84,6 +154,11 @@ x across the palm toward the index and thumb side, z = x cross y, in meters.
 It describes the pose of the hand and not where the hand was in front of the
 camera, so moving or turning the hand does not change the recorded pose.
 
+The raw joint columns (`label_0..174`) are hand-local, so a left and a right hand
+differ in the sign of z; they are not directly comparable across sides. The
+`lbl_flex_*` columns (finger curl, 0 straight to 1 curled) mean the same on both
+hands, and those are the ones to compare or pool across sides.
+
 The camera tracker has 21 landmarks and no point for the base of each finger's
 metacarpal bone. The page places that joint on the line from the wrist to the
 knuckle. Knuckle flexion is measured against that line, so the reported angle
@@ -92,7 +167,10 @@ from a webcam and from a headset to differ by a few degrees for the same pose;
 do not pool the two sources in one model without checking that on your own data.
 
 The `.labels.schema.json` sidecar names the source, the tracker and version,
-the frame, and which joints are synthesized.
+the frame, which joints are synthesized, which processor mode the tracker used
+(`delegate`: GPU or CPU), how many frames per second it tracked (`fps`), whether
+the tracker came from the local copy or the internet (`tracker_assets`), and
+whether left and right were swapped.
 
 Because the column sets differ (no forearm columns), `openmuscle train` refuses
 to combine webcam captures with headset captures. Train them separately, or

@@ -11,6 +11,7 @@ Usage:
     openmuscle web         Launch the browser-based UI (live + record + captures)
     openmuscle doctor      Check this computer and network, say what to fix
     openmuscle firewall    Show (and, if you agree, add) the Windows firewall rule
+    openmuscle assets      Download the hand tracker + 3D viewer for offline use
 
 Everything is saved under one folder, ~/OpenMuscle (override with OPENMUSCLE_HOME
 or `openmuscle web --data-dir`).
@@ -633,6 +634,69 @@ def models():
         who = str(m.get("participant") or m.get("wearer") or "").strip().lower()             or "unknown participant"
         print(f"  {m.get('dir') or m['name']}  {hand}  {who}  {v['headline']}")
         print(f"      created {m['created']}   {m.get('path', '')}")
+
+
+@main.group()
+def assets():
+    """Offline copies of the webcam hand tracker and the 3D hand viewer.
+
+    Without them the webcam page and the 3D viewer load from the internet.
+    Fetch them once while online and they work with the network off.
+    """
+
+
+@assets.command("fetch")
+@click.option("--data-dir", default=None, type=click.Path(file_okay=False),
+              help="Data folder (default ~/OpenMuscle). Files go in its assets folder.")
+@click.option("--with-nosimd", is_flag=True, default=False,
+              help="Also fetch the tracker files for very old processors without "
+                   "SIMD (about 9.5 MB more; almost nobody needs them).")
+@click.option("--force", is_flag=True, default=False,
+              help="Download again even if the files are already there and correct.")
+def assets_fetch(data_dir, with_nosimd, force):
+    """Download the pinned tracker and viewer files and verify their checksums."""
+    from openmuscle import assets as om_assets
+    from openmuscle import paths
+    if data_dir:
+        paths.set_data_root(data_dir)
+    dest = paths.assets_dir()
+    click.echo(f"Fetching offline browser files into {dest}")
+    try:
+        got = om_assets.fetch(include_optional=with_nosimd, force=force, say=click.echo)
+    except om_assets.AssetError as e:
+        raise click.ClickException(str(e))
+    click.echo("")
+    if got:
+        click.echo(f"Done. {len(got)} file(s) downloaded and checked.")
+    else:
+        click.echo("Done. Everything was already in place and correct.")
+    click.echo("Restart `openmuscle web` if it is running, then reload the page: the camera "
+               "page should say 'tracker: ready (local)'.")
+
+
+@assets.command("status")
+@click.option("--data-dir", default=None, type=click.Path(file_okay=False),
+              help="Data folder (default ~/OpenMuscle).")
+@click.option("--hashes", is_flag=True, default=False,
+              help="Print the sha256 of every installed file (for pinning values).")
+def assets_status(data_dir, hashes):
+    """Show which offline files are present and correct."""
+    from openmuscle import assets as om_assets
+    from openmuscle import paths
+    if data_dir:
+        paths.set_data_root(data_dir)
+    click.echo(f"Offline browser files in {paths.assets_dir()}")
+    for row in om_assets.status():
+        a = row["asset"]
+        state = "ok" if row["problem"] is None else row["problem"]
+        extra = " (optional)" if a.optional else ""
+        click.echo(f"  {a.rel}: {state}{extra}")
+    for g, label in om_assets.GROUP_LABELS.items():
+        click.echo(f"  {label}: " + ("ready" if om_assets.group_ready(g) else
+                                     "not ready (run `openmuscle assets fetch`)"))
+    if hashes:
+        for h in om_assets.actual_hashes():
+            click.echo(f"  {h['rel']}  sha256={h['sha256']}  md5={h['md5']}")
 
 
 @main.command()

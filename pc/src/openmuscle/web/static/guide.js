@@ -64,8 +64,11 @@
             + 'Open the OpenMuscle page on the Quest with both hands selected.',
         noLask: 'The finger labeler (LASK5) is not sending data. '
             + 'Check it is turned on and on the same Wi-Fi as this computer.',
-        noWebcam: 'The camera is not on. Open the camera page in a new tab (/webcam), '
+        noWebcam: 'The camera is not on. Open the Camera panel on this page, '
             + 'press Start camera and hold your hand up.',
+        staleWebcam: 'The camera has stopped sending hand data. Keep the camera window '
+            + 'visible next to this one (side by side, not behind it), or use the Camera '
+            + 'panel on this page, which keeps tracking while you record.',
         noPad: 'The game controller is not sending data. Plug it in and press any button.',
     };
 
@@ -91,7 +94,8 @@
         return `Ready: ${b} + ${LABELER_TEXT[source] || 'finger data'}. Press Record.`;
     }
 
-    // ctx: { devices, source, windowMs (number|null), sensorId, labelId }
+    // ctx: { devices, source, windowMs (number|null), sensorId, labelId,
+//        mirrored (optional: the active session is mirrored) }
     // Returns { ready, mode, reason?, text, summary?, endpoint?, body? }.
     // `text` is the plain line shown to the operator; `summary` is the
     // technical string (tooltip only).
@@ -217,12 +221,18 @@
             // hand labels every recorded band: with a band on each arm and one
             // hand in view, both bands get that hand's labels, which is what
             // mirrored training wants.
-            const cams = devices.filter(d => d.device_type === 'webcam_hand' && deviceFresh(d));
-            if (!cams.length) return blocked(R.noWebcam);
-            const camFor = side => cams.find(d =>
-                String(d.device_id).toLowerCase().includes(side)) || cams[0];
+            const allCams = devices.filter(d => d.device_type === 'webcam_hand');
+            const cams = allCams.filter(deviceFresh);
+            if (!cams.length) return blocked(allCams.length ? R.staleWebcam : R.noWebcam);
+            // Only fresh hands are candidates (a hand from a page that was
+            // closed or hidden earlier must never be picked). With a mirrored
+            // session one hand labels both bands, so take the one streaming
+            // fastest; otherwise prefer the hand on the band's own side.
+            const fastest = () => cams.reduce((a, b) => ((b.hz || 0) > (a.hz || 0) ? b : a));
+            const camFor = side => (ctx.mirrored ? null : cams.find(d =>
+                String(d.device_id).toLowerCase().includes(side))) || fastest();
             if (both) {
-                const cam = cams[0];
+                const cam = fastest();
                 return ready({
                     mode: '2band-webcam',
                     endpoint: '/api/recording',

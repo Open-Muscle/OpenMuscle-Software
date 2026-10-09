@@ -11,6 +11,7 @@ Launch via the CLI: `openmuscle web --port 8000`
 import asyncio
 import ipaddress
 import os
+import mimetypes
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -27,9 +28,23 @@ from openmuscle import paths as om_paths
 from openmuscle.data import export_bundle as eb
 from openmuscle import doctor, netutil
 from openmuscle.web.state import AppState, ModelGuardError, TrainDataError
+from openmuscle import assets as om_assets
+from openmuscle import paths
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# The browser refuses to compile WebAssembly or load a module script unless the
+# server labels them correctly. Python only knows .wasm from 3.11 on, and on
+# Windows the registry can map .js/.mjs to text/plain, so state them outright.
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
+
+# index.html loads three.js from this URL; when a verified local copy exists
+# (`openmuscle assets fetch`) the page is served pointing at it instead.
+_THREE_CDN_URL = f"https://cdn.jsdelivr.net/npm/three@{om_assets.THREE_VERSION}/build/three.module.js"
+_THREE_LOCAL_URL = "/static/vendor/three/three.module.js"
 
 
 def _package_version() -> str:
@@ -108,6 +123,44 @@ def _is_loopback_client(request: Optional[Request]) -> bool:
     if getattr(ip, "ipv4_mapped", None) is not None:
         ip = ip.ipv4_mapped
     return ip.is_loopback
+class _OptionalDirStaticFiles(StaticFiles):
+    """StaticFiles for a folder that may not exist yet (404 until it does,
+    instead of a startup-config RuntimeError on the first request)."""
+
+    async def check_config(self) -> None:
+        return None
+
+
+def _is_loopback_host(host: Optional[str]) -> bool:
+    """True for 127.0.0.0/8, ::1 and their IPv4-mapped forms."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address((host or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return bool(mapped.is_loopback if mapped else ip.is_loopback)
+
+
+def _origin_matches_host(origin: Optional[str], host_header: Optional[str]) -> bool:
+    """A missing Origin is fine (not a browser); a present one must name the
+    same host:port the request was sent to."""
+    if not origin:
+        return True
+    from urllib.parse import urlsplit
+    try:
+        origin_netloc = urlsplit(origin).netloc
+    except ValueError:
+        return False
+    return bool(origin_netloc) and origin_netloc.lower() == (host_header or "").strip().lower()
+
+
+def _webcam_socket_allowed(websocket: WebSocket) -> bool:
+    client = websocket.client
+    if client is None or not _is_loopback_host(client.host):
+        return False
+    return _origin_matches_host(websocket.headers.get("origin"),
+                                websocket.headers.get("host"))
 
 
 def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
@@ -195,7 +248,17 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
 
     @app.get("/")
     async def index():
+        if om_assets.group_ready("three"):
+            html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+            if _THREE_CDN_URL in html:
+                return HTMLResponse(html.replace(_THREE_CDN_URL, _THREE_LOCAL_URL))
         return FileResponse(STATIC_DIR / "index.html")
+
+    # Which offline browser files (hand tracker, 3D viewer) are installed and
+    # verified. The webcam page reads this to choose local files over the CDN.
+    @app.get("/api/assets")
+    async def get_assets():
+        return om_assets.web_status()
 
     # WebXR companion page served at /vr. Quest Browser loads this URL,
     # negotiates 'hand-tracking', opens /ws/quest, and streams XRHand frames.
@@ -227,6 +290,12 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def webcam_page():
         return FileResponse(STATIC_DIR / "webcam" / "index.html")
 
+    # Offline copies fetched by `openmuscle assets fetch`. Registered before
+    # /static so it wins for /static/vendor/*; the folder may not exist yet (it
+    # is looked up per request), in which case these URLs are simply 404.
+    app.mount("/static/vendor",
+              _OptionalDirStaticFiles(directory=str(paths.assets_dir()), check_dir=False),
+              name="vendor")
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # ----- live data over WebSocket -----
@@ -288,8 +357,19 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     # camera, in the same payload shape as /ws/quest. ingest_webcam_packet
     # synthesizes a device_type="webcam_hand" packet and routes it through
     # _handle_packet, so the recorder treats it like any other label device.
+    #
+    # Local machine only: the camera page can only work on http://localhost (a
+    # camera needs a secure context), so there is nothing to lose by refusing
+    # everyone else, and with `openmuscle web --lan` it stops another device on
+    # the network from injecting hand labels into a recording. The connection
+    # must come from a loopback address and, when the browser sends an Origin,
+    # that Origin must be this same server (blocks a web page on some other
+    # site from reaching the local socket through the user's browser).
     @app.websocket("/ws/webcam")
     async def ws_webcam(websocket: WebSocket):
+        if not _webcam_socket_allowed(websocket):
+            await websocket.close(code=1008)   # 1008 = policy violation
+            return
         await websocket.accept()
         inbound_ws.add(websocket)   # so shutdown can close it (no timeout hang)
         client = (f"{websocket.client.host}:{websocket.client.port}"
