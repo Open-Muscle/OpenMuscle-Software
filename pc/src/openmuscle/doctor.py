@@ -433,8 +433,11 @@ def infer_cause(facts):
                 "No band answered, and this looks like a guest or public Wi-Fi "
                 "network, which often keeps devices apart.",
                 "Use your main Wi-Fi instead of a guest network.")
-    if devices:
-        d = devices[0]
+    # A device remembered on this computer's own address was a simulator, not
+    # a band: never tell the user a band was "seen before at 127.0.0.1".
+    real = [d for d in devices if not d["ip"].startswith("127.")]
+    if real:
+        d = real[0]
         return ("device_offline",
                 "A band was seen before at %s but does not answer now." % d["ip"],
                 "Check the band is powered on and shows it joined the Wi-Fi.")

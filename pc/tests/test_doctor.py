@@ -371,6 +371,17 @@ def test_cause_device_offline_known_band_not_answering():
     assert cause == "device_offline" and "10.0.0.23" in sentence
 
 
+def test_cause_device_offline_ignores_remembered_simulator_on_loopback():
+    # A simulator cached from an earlier run lives at 127.0.0.1; it is not a
+    # band, so the sentence must not point the user at it.
+    d = _dev(ip="127.0.0.1", age=None, heard=False, tcp=False, source="cache",
+             did="flexgrid-sim-left")
+    cause, sentence, _action = doctor.infer_cause(_facts(devices=[d]))
+    assert cause == "device_offline"
+    assert "127.0.0.1" not in sentence
+    assert "No band has answered" in sentence
+
+
 def test_cause_device_offline_when_nothing_has_ever_been_seen():
     cause, sentence, action = doctor.infer_cause(_facts())
     assert cause == "device_offline"
