@@ -2396,16 +2396,16 @@ trainBtn.onclick = async () => {
             // a load error) refused the model and the ghosts are still on the
             // old one. That silent gap cost two capture sessions.
             const failed = ['left', 'right'].filter(role => !results[role].active);
+            const bad = badTakesNote([results.left, results.right]);
             if (failed.length) {
                 const why = failed.map(role =>
                     `${role.toUpperCase()}: ${results[role].activate_error || 'not loaded'}`).join(' · ');
                 trainStatus.className = 'train-status error';
-                trainStatus.textContent = `⚠ Trained (L R²=${r2s.left}, R R²=${r2s.right}) but NOT loaded: ${why}`;
+                trainStatus.textContent = `⚠ Trained (L R²=${r2s.left}, R R²=${r2s.right}) but NOT loaded: ${why}` + bad;
             } else {
                 await autoEnablePrediction();
                 trainStatus.className = 'train-status ok';
-                trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}` +
-                    badTakesNote([results.left, results.right]);
+                trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}` + bad;
             }
         } else {
             // All-single-band selection: today's pooled/role-less call.
@@ -2417,20 +2417,20 @@ trainBtn.onclick = async () => {
             const nf  = m.n_features ?? '?';
             const nl  = m.n_labels ?? '?';
             const nt  = m.n_train ?? '?';
+            const bad = badTakesNote([result]);
             if (!result.active) {
                 // Trained-but-not-loaded is a FAILURE for live use: say why.
                 trainStatus.className = 'train-status error';
-                trainStatus.textContent = `⚠ Trained (R²=${r2}) but NOT loaded: ${result.activate_error || result.warning || 'activation refused'}`;
+                trainStatus.textContent = `⚠ Trained (R²=${r2}) but NOT loaded: ${result.activate_error || result.warning || 'activation refused'}` + bad;
             } else if (result.warning) {
                 // e.g. role-less bilateral pivot loading with no live band
                 // connected: on disk and loaded, but it can't drive ghosts.
                 trainStatus.className = 'train-status error';
-                trainStatus.textContent = `⚠ Trained + loaded, but: ${result.warning}`;
+                trainStatus.textContent = `⚠ Trained + loaded, but: ${result.warning}` + bad;
             } else {
                 await autoEnablePrediction();
                 trainStatus.className = 'train-status ok';
-                trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]` +
-                    badTakesNote([result]);
+                trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]` + bad;
             }
         }
         await refreshModels();
