@@ -56,7 +56,8 @@ class CaptureWriter:
     def __init__(self, output_path: str = None, matrix_rows: int = 4,
                  matrix_cols: int = 16, label_count: Optional[int] = 4,
                  schema_version: str = "v1", with_imu: bool = False,
-                 with_forearm: bool = False, with_canonical: bool = False):
+                 with_forearm: bool = False, with_canonical: bool = False,
+                 flush_every: int = 1):
         if output_path is None:
             from openmuscle import paths
             out_dir = paths.captures_dir()
@@ -88,6 +89,12 @@ class CaptureWriter:
         self._writer = csv.writer(self._file)
         self._header_written = False
         self._count = 0
+        # Push rows to the OS every `flush_every` rows (default: every row). A
+        # take is then readable up to the last complete row even if the program
+        # is killed mid-recording (window closed, power cut), instead of losing
+        # whatever was still in Python's buffer.
+        self._flush_every = max(1, int(flush_every))
+        self._unflushed = 0
 
     def _write_header(self, label_count: int) -> None:
         sensor_cols = [f"R{r}C{c}" for r in range(self._matrix_rows)
@@ -105,6 +112,21 @@ class CaptureWriter:
             lead + sensor_cols + label_cols + imu_cols + forearm_cols + canonical_cols)
         self._label_count = label_count
         self._header_written = True
+        self.flush()
+
+    def flush(self) -> None:
+        """Push everything written so far to the OS (safe to call any time)."""
+        self._unflushed = 0
+        try:
+            self._file.flush()
+        except (OSError, ValueError):
+            pass            # already closed, or the disk went away
+
+    def _row_written(self) -> None:
+        self._count += 1
+        self._unflushed += 1
+        if self._unflushed >= self._flush_every:
+            self.flush()
 
     @staticmethod
     def _imu_cells(imu) -> list:
@@ -143,7 +165,7 @@ class CaptureWriter:
                      else len(label_values))
             self._write_header(count)
         self._writer.writerow([timestamp] + sensor_values + label_values)
-        self._count += 1
+        self._row_written()
 
     def write_row_v2(self, ts_hub_ms: int, role: str, device_id: str,
                      sensor_values: list, label_values: list,
@@ -175,7 +197,7 @@ class CaptureWriter:
         if self._with_canonical:
             row += self._canonical_cells(canonical)
         self._writer.writerow(row)
-        self._count += 1
+        self._row_written()
 
     @property
     def row_count(self) -> int:
@@ -189,6 +211,8 @@ class CaptureWriter:
         return self._label_count
 
     def close(self):
+        if self._file.closed:
+            return
         if not self._header_written:
             # No row was ever paired -- still emit a header so consumers
             # don't trip on a zero-byte file. Use the constructor hint

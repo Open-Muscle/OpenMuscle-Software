@@ -9,6 +9,7 @@ Launch via the CLI: `openmuscle web --port 8000`
 # string and falls back to treating the param as a query string field).
 
 import asyncio
+import ipaddress
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from openmuscle import paths as om_paths
+from openmuscle.data import export_bundle as eb
 from openmuscle.web.state import AppState
 
 
@@ -59,14 +62,42 @@ def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
                 folder = path if path.is_dir() else path.parent
                 subprocess.Popen(["open", str(folder)])
         else:
-            # Linux / other -- xdg-open only opens directories cleanly
-            opener = shutil.which("xdg-open") or shutil.which("gio")
-            if opener is None:
-                raise RuntimeError("No file-manager opener found (xdg-open / gio)")
+            # Linux / other. xdg-open takes the folder directly; gio needs its
+            # "open" subcommand (bare `gio <path>` is an error).
             folder = path if path.is_dir() else path.parent
-            subprocess.Popen([opener, str(folder)])
+            xdg = shutil.which("xdg-open")
+            gio = shutil.which("gio")
+            if xdg:
+                subprocess.Popen([xdg, str(folder)])
+            elif gio:
+                subprocess.Popen([gio, "open", str(folder)])
+            else:
+                raise RuntimeError(
+                    "No file manager opener found (install xdg-utils). "
+                    "Open this folder yourself: {}".format(folder))
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"Failed to open file manager: {e}")
+
+
+def _is_loopback_client(request: Optional[Request]) -> bool:
+    """True when the request came from this computer. Anything else (a phone,
+    a headset, another PC on the network) must not be able to open windows on
+    the machine running the server."""
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None)
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host.split("%")[0])
+    except ValueError:
+        return False
+    if getattr(ip, "ipv4_mapped", None) is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
 
 
 def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
@@ -322,11 +353,18 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         return {"debug": bool(getattr(app.state, "debug", False))}
 
     @app.get("/api/storage")
-    async def get_storage():
+    async def get_storage(request: Request = None):
         """Where this server saves things, as absolute paths: the data root plus
-        captures / sessions / models / exports / logs, and a one-line
-        `legacy_hint` when the launch directory still holds older recordings."""
-        return state.storage_info()
+        captures / sessions / models / exports / logs, free disk space (with a
+        low_space flag under 1 GB), and a one-line `legacy_hint` when the launch
+        directory still holds older recordings. `reveal_enabled` says whether
+        POST /api/reveal will open a folder for THIS caller: only a browser on
+        the same computer, and never under --debug (the server is LAN-open)."""
+        info = state.storage_info()
+        info["reveal_enabled"] = bool(
+            not getattr(app.state, "debug", False)
+            and (request is None or _is_loopback_client(request)))
+        return info
 
     # ----- REST: native V4 discovery -----
 
@@ -579,16 +617,26 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(status_code=404, detail="Capture not found")
         return FileResponse(p, filename=p.name, media_type="text/csv")
 
+    # Folders the dashboard may ask to have opened (never an arbitrary path).
+    REVEAL_FOLDERS = ("root", "captures", "sessions", "models", "exports", "logs")
+
     class RevealBody(BaseModel):
-        # If empty/None -> just open captures_dir. Otherwise must be a
-        # capture name whitelisted by state.capture_path().
+        # name: a capture to highlight inside the captures folder (whitelisted
+        # by state.capture_path()). folder: one of REVEAL_FOLDERS. With neither,
+        # the captures folder is opened.
         name: Optional[str] = None
+        folder: Optional[str] = None
 
     @app.post("/api/reveal")
-    async def reveal_in_folder(body: RevealBody):
-        """Open the captures folder (and optionally highlight a specific
-        capture) in the OS file manager. Local-only convenience; the server
-        is intended for localhost use."""
+    async def reveal_in_folder(body: RevealBody, request: Request = None):
+        """Open a data folder (or highlight one capture) in the OS file manager
+        on the machine running the server. Refused for any caller that is not
+        on that machine, and under --debug."""
+        if not _is_loopback_client(request):
+            raise HTTPException(
+                status_code=403,
+                detail="Opening folders only works from the computer running "
+                       "OpenMuscle. The path is shown on the page.")
         if getattr(app.state, "debug", False):
             # --debug binds all interfaces on plain HTTP; opening a local file
             # manager from a LAN-reachable endpoint is not something we expose.
@@ -602,13 +650,22 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             target = p
             select = True
         else:
-            target = state.captures_dir
+            which = body.folder or "captures"
+            if which not in REVEAL_FOLDERS:
+                raise HTTPException(status_code=400,
+                                    detail="Unknown folder: {}".format(which))
+            info = state.storage_info()
+            target = Path(info[which])
+            try:
+                target.mkdir(parents=True, exist_ok=True)    # e.g. models, before the first model
+            except OSError:
+                pass
             select = False
         try:
             _reveal_path_in_file_manager(target, select_file=select)
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
-        return {"opened": str(target), "selected": select}
+        return {"opened": str(target.resolve()), "selected": select}
 
     @app.delete("/api/captures/{name}")
     async def delete_capture(name: str):
@@ -935,6 +992,108 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "removed": capture_name,
             "session": state.get_session(session_id),
         }
+
+    # ----- REST: export bundle (zip of takes + plain README) -----
+    #
+    # GET/POST download a zip built on the spot; a copy is kept in the exports
+    # folder (<data root>/exports) so the file can be found again. Compact by
+    # default: raw streams (raw=1) and typed notes (notes=1) are opt-in, and
+    # models are never included.
+
+    class ExportBody(BaseModel):
+        captures: list[str]
+        raw: bool = False
+        notes: bool = False
+
+    class SessionExportBody(BaseModel):
+        raw: bool = False
+        notes: bool = False
+
+    def _export_http_error(e: eb.BundleError) -> HTTPException:
+        code = 404 if isinstance(e, eb.BundleNotFound) else 400
+        return HTTPException(status_code=code, detail=str(e))
+
+    def _refuse_if_recording(session_id, capture_names):
+        """A take still being written is incomplete; ask the user to stop first."""
+        rec = state.recording
+        if rec is None:
+            return
+        names = set()
+        if session_id:
+            try:
+                names = set(eb.load_session(state.sessions_dir, session_id).get("captures") or [])
+            except eb.BundleError:
+                return                      # let the builder report the real problem
+        else:
+            for n in capture_names or []:
+                try:
+                    names.add(eb.clean_capture_name(n))
+                except eb.BundleError:
+                    pass                    # the builder reports bad names
+        if rec.path.name in names:
+            raise HTTPException(
+                status_code=409,
+                detail="A recording is in progress ({}). Stop it, then export.".format(
+                    rec.path.name))
+
+    async def _estimate(session_id, capture_names, raw, notes):
+        try:
+            _refuse_if_recording(session_id, capture_names)
+            return await asyncio.to_thread(
+                eb.estimate_bundle, state.captures_dir, state.sessions_dir,
+                session_id=session_id, capture_names=capture_names,
+                include_raw=raw, include_notes=notes)
+        except eb.BundleError as e:
+            raise _export_http_error(e)
+
+    async def _build(session_id, capture_names, raw, notes):
+        try:
+            _refuse_if_recording(session_id, capture_names)
+            out = eb.unique_path(om_paths.exports_dir(), eb.bundle_filename(session_id))
+            return await asyncio.to_thread(
+                eb.build_session_bundle, state.captures_dir, state.sessions_dir, out,
+                session_id=session_id, capture_names=capture_names,
+                include_raw=raw, include_notes=notes)
+        except eb.BundleError as e:
+            raise _export_http_error(e)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail="Could not write the export: {}".format(e))
+
+    def _zip_response(report):
+        return FileResponse(report.out_file, filename=report.out_file.name,
+                            media_type="application/zip")
+
+    @app.get("/api/sessions/{session_id}/export/estimate")
+    async def estimate_session_export(session_id: str, raw: bool = False, notes: bool = False):
+        """How big the session's export zip will be, before building it."""
+        return await _estimate(session_id, None, raw, notes)
+
+    @app.get("/api/sessions/{session_id}/export")
+    async def export_session(session_id: str, raw: bool = False, notes: bool = False):
+        """Download one session as a zip: README.txt, session.json, summary.csv
+        and each take's CSV and helper files."""
+        return _zip_response(await _build(session_id, None, raw, notes))
+
+    @app.post("/api/sessions/{session_id}/export")
+    async def save_session_export(session_id: str, body: SessionExportBody):
+        """Same zip, saved into the exports folder and described as JSON
+        (path, size, files) instead of downloaded."""
+        report = await _build(session_id, None, body.raw, body.notes)
+        return report.to_dict()
+
+    @app.post("/api/export/estimate")
+    async def estimate_takes_export(body: ExportBody):
+        """Size estimate for a list of loose takes."""
+        if not body.captures:
+            raise HTTPException(status_code=400, detail="Choose at least one take.")
+        return await _estimate(None, body.captures, body.raw, body.notes)
+
+    @app.post("/api/export")
+    async def export_takes(body: ExportBody):
+        """Download a list of takes (selected in the table) as a zip."""
+        if not body.captures:
+            raise HTTPException(status_code=400, detail="Choose at least one take.")
+        return _zip_response(await _build(None, body.captures, body.raw, body.notes))
 
     return app
 

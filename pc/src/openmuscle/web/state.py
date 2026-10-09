@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,6 +79,39 @@ from openmuscle.quality import (
 )
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
+
+
+# Warn about free disk space below this (1 GB).
+LOW_DISK_BYTES = 1024 ** 3
+
+
+def _trim_partial_last_row(path: Path) -> bool:
+    """Cut a CSV back to its last complete line. A recording killed mid-write
+    can leave half a row at the end; every row ends in a newline, so anything
+    after the last newline is the unfinished one. True when something was cut."""
+    with open(path, "rb+") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        if size == 0:
+            return False
+        fh.seek(size - 1)
+        if fh.read(1) == b"\n":
+            return False
+        # Walk back in blocks to the last newline.
+        pos = size
+        block = 4096
+        keep = 0
+        while pos > 0:
+            start = max(0, pos - block)
+            fh.seek(start)
+            chunk = fh.read(pos - start)
+            i = chunk.rfind(b"\n")
+            if i >= 0:
+                keep = start + i + 1
+                break
+            pos = start
+        fh.truncate(keep)
+    return True
 
 
 # ----- capture file naming -----
@@ -526,6 +560,11 @@ class AppState:
             target=self._watch_devices, name="om-device-watch", daemon=True)
         self._watch_thread.start()
         self._started = True
+        # Takes left unfinished by a crash or a closed window get their summary
+        # (rows, duration, quality) rebuilt from the CSV. Off the main thread so
+        # a big folder never delays startup.
+        threading.Thread(target=self.recover_unfinished_captures,
+                         name="om-recover-takes", daemon=True).start()
 
     # How long a band can be silent before the console says it was lost.
     DEVICE_LOST_AFTER_S = 10.0
@@ -595,12 +634,20 @@ class AppState:
                 "lost", "Lost {}{}".format(self._device_noun(dev.device_type), where))
 
     def stop(self):
+        """Shut down (server exit: Ctrl+C, SIGTERM, window close). A recording in
+        progress is finished first-class: CSV and sidecars closed, meta final
+        block written, so the take is complete and listed on the next start."""
         self._watch_stop.set()
+        # Finish the recording before anything that could raise or hang.
+        if self.recording:
+            try:
+                self.stop_recording()
+            except Exception as e:
+                self.log_buffer.warn("recording",
+                    "could not finish the recording cleanly on shutdown: {}".format(e))
         self.listener.stop()
         if self.discovery:
             self.discovery.stop()
-        if self.recording:
-            self.stop_recording()
         if self._hand_sock is not None:
             try:
                 self._hand_sock.close()
@@ -1937,7 +1984,11 @@ class AppState:
         if self.recording is None:
             return None
         rec = self.recording
-        rec.writer.close()
+        try:
+            rec.writer.close()
+        except Exception as e:
+            self.log_buffer.warn("recording",
+                "closing {} failed: {}".format(rec.path.name, e))
         for stream in (rec.sensor_jsonl, rec.label_jsonl):
             if stream is not None:
                 try:
@@ -2095,6 +2146,45 @@ class AppState:
         except Exception as e:
             self.log_buffer.warn("meta", "could not cache quality for {}: {}".format(p.name, e))
         return dict(quality_of(merged), source="scan")
+    def recover_unfinished_captures(self) -> list:
+        """Repair takes whose recording never finished (crash, power cut, window
+        closed): the meta file has no final block, so rows / duration / quality
+        are unknown. For each one, drop a half-written last CSV row, count the
+        rows, and write the final block (marked recovered) so the take lists and
+        exports like any other. Returns the names that were repaired. The take
+        being recorded right now is left alone."""
+        fixed = []
+        if not self.captures_dir.exists():
+            return fixed
+        for p in sorted(self.captures_dir.glob("*.csv")):
+            if self.recording is not None and p == self.recording.path:
+                continue
+            try:
+                if self._recover_capture(p):
+                    fixed.append(p.name)
+            except Exception as e:
+                self.log_buffer.warn("recording",
+                    "could not recover {}: {}".format(p.name, e))
+        if fixed:
+            self.log_buffer.info("recording",
+                "recovered {} unfinished take(s): {}".format(len(fixed), ", ".join(fixed)))
+        return fixed
+
+    def _recover_capture(self, p: Path) -> bool:
+        meta = self.read_capture_meta(p.name)
+        if not meta or not isinstance(meta.get("auto"), dict):
+            return False                      # not written by this recorder
+        if meta["auto"].get("final"):
+            return False                      # finished normally
+        _trim_partial_last_row(p)
+        stats = scan_capture_csv(p, meta.get("label_source"))
+        final = summarize_take(stats)
+        final["rows"] = stats["rows"]
+        final["duration_s"] = stats["duration_s"]
+        final["recovered"] = True
+        self.write_capture_meta(p.name, {"auto": {"final": final}})
+        return True
+
     def next_capture_name(self, base: str = "take", start: int = 1) -> str:
         """Next free take file name for `base`: <base>-take<N>.csv, where N is
         the first number >= start with no CSV or sidecar on disk. Used by the UI
@@ -2166,6 +2256,11 @@ class AppState:
         `legacy_hint` is a one-line note when the current directory still holds
         recordings from before the single data root, else None.
         """
+        free = None
+        try:
+            free = shutil.disk_usage(os.path.abspath(str(self.captures_dir))).free
+        except OSError:
+            pass
         return {
             "root": str(om_paths.data_root()),
             "captures": os.path.abspath(str(self.captures_dir)),
@@ -2174,6 +2269,11 @@ class AppState:
             "exports": str(om_paths.exports_dir()),
             "logs": str(om_paths.logs_dir()),
             "legacy_hint": om_paths.legacy_hint(),
+            # Free space on the drive recordings are saved to; the dashboard
+            # warns below low_space_bytes (a few long takes fill a small disk).
+            "free_bytes": free,
+            "low_space_bytes": LOW_DISK_BYTES,
+            "low_space": free is not None and free < LOW_DISK_BYTES,
         }
 
     def _session_path(self, session_id: str) -> Optional[Path]:
