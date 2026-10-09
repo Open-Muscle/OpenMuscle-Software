@@ -583,6 +583,9 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # If empty/None -> just open captures_dir. Otherwise must be a
         # capture name whitelisted by state.capture_path().
         name: Optional[str] = None
+        # A model folder (as returned by /api/train): must sit inside the
+        # models folder. Wins over `name`.
+        model: Optional[str] = None
 
     @app.post("/api/reveal")
     async def reveal_in_folder(body: RevealBody):
@@ -595,7 +598,19 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             raise HTTPException(
                 status_code=403,
                 detail="reveal is disabled in --debug mode (server is LAN-exposed)")
-        if body.name:
+        if body.model:
+            from openmuscle import paths as om_paths
+            try:
+                target = Path(body.model).resolve()
+                target.relative_to(om_paths.models_dir().resolve())
+            except (ValueError, OSError):
+                raise HTTPException(status_code=404, detail="Model folder not found")
+            if target.is_file():
+                target = target.parent
+            if not target.is_dir():
+                raise HTTPException(status_code=404, detail="Model folder not found")
+            select = False
+        elif body.name:
             p = state.capture_path(body.name)
             if p is None:
                 raise HTTPException(status_code=404, detail="Capture not found")
@@ -678,7 +693,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.post("/api/train")
     async def train_endpoint(body: TrainBody):
         if not body.captures:
-            raise HTTPException(status_code=400, detail="No captures specified")
+            raise HTTPException(status_code=400, detail="No recordings are selected. Tick at least one recording, then press Train.")
         try:
             # Training is CPU-bound (RandomForest fit). Run it in a worker
             # thread so the asyncio event loop / WS broadcast keeps flowing

@@ -3348,7 +3348,7 @@ class AppState:
         unless the existing engine has a different one.
 
         Loading a model does NOT start running it. Inference stays paused
-        until the operator clicks ▶ Resume (or POSTs /api/inference/enabled
+        until the operator presses ▶ Predict (or POSTs /api/inference/enabled
         {enabled: true}). This was a deliberate change from the earlier
         "auto-start on load" behaviour, which surprised the operator by
         having the model start consuming CPU + driving the hand the moment
@@ -3427,7 +3427,7 @@ class AppState:
         if prev != self.inference_enabled:
             self.log_buffer.info("inference",
                 "{} (model={})".format(
-                    "resumed" if self.inference_enabled else "paused",
+                    "started" if self.inference_enabled else "paused",
                     self.engine.name if self.engine else "none"))
         if not self.inference_enabled:
             # Clear the cached prediction so the panel shows "paused" cleanly

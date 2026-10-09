@@ -1032,7 +1032,8 @@ function renderActiveSession() {
         const dur = s.started_at ? Math.floor(Date.now()/1000 - s.started_at) : 0;
         const nDev = (s.context && Array.isArray(s.context.devices)) ? s.context.devices.length : 0;
         const sig = JSON.stringify([s.id, s.name, s.arm, s.wearer, s.subject, s.take,
-            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(',')]);
+            s.labeler_source, s.capture_count, s.notes, nDev, (s.gestures || []).join(','),
+            (s.model_wearer_mismatch || []).join(','), (s.model_guard || []).length]);
         if (sig !== _activeSessionSig) {
             _activeSessionSig = sig;
             const armCls = s.arm === 'left' ? 'arm-left' : (s.arm === 'right' ? 'arm-right' : '');
@@ -1045,6 +1046,15 @@ function renderActiveSession() {
             const gestures = (s.gestures || []).length
                 ? ' · planned: ' + escapeHtml((s.gestures || []).join(', '))
                 : '';
+            // The loaded model(s) were trained for someone else / other band
+            // units: said in words here too, not just in the log.
+            const guardMsgs = (s.model_guard || []).map(g => g.message);
+            if (!guardMsgs.length && (s.model_wearer_mismatch || []).length) {
+                guardMsgs.push('The ' + s.model_wearer_mismatch.join(' and ') +
+                    '-hand model was trained for a different participant than this session.');
+            }
+            const guardLine = guardMsgs.length
+                ? `<div class="session-meta-line session-model-warn" style="margin-top:6px">⚠ ${escapeHtml(guardMsgs.join(' '))}</div>` : '';
             activeSessionArea.innerHTML = `
                 <div class="session-card active">
                     <div class="session-head">
@@ -1059,6 +1069,7 @@ function renderActiveSession() {
                         </div>
                     </div>
                     ${s.notes ? `<div class="session-meta-line" style="margin-top:6px">${escapeHtml(s.notes)}</div>` : ''}
+                    ${guardLine}
                 </div>`;
             document.getElementById('session-end-btn').onclick = endSession;
             const addBtn = document.getElementById('active-session-add-btn');
@@ -1257,7 +1268,7 @@ function renderPastSessions() {
                 <div>
                     <span class="session-caret">${caret}</span>
                     <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.subject || '—')} · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                    <span class="session-meta-line">${armBit} · ${escapeHtml(s.wearer || s.subject || '-')} · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
                 </div>
                 <div class="session-actions">
                     <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
@@ -1373,7 +1384,7 @@ sessionForm.onsubmit = async (e) => {
     const takeRaw = parseInt(document.getElementById('sess-take').value, 10);
     const body = {
         name:     document.getElementById('sess-name').value.trim(),
-        subject:  document.getElementById('sess-subject').value.trim(),
+        subject:  document.getElementById('sess-wearer').value.trim(),   // one Participant code field
         arm:      document.getElementById('sess-arm').value || null,
         gestures: document.getElementById('sess-gestures').value.split(',').map(s=>s.trim()).filter(Boolean),
         tags:     document.getElementById('sess-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
@@ -2194,46 +2205,118 @@ async function postTrain(body) {
     return r.json();
 }
 
-// Loading a model does NOT auto-resume inference; say which state we're in
-// instead of implying predictions are flowing while paused.
-function trainRunHint() {
-    return (inferenceState && inferenceState.enabled)
-        ? 'predicting' : 'click ▶ Resume to run';
+// Turn prediction on. A model trained for another participant or band unit is
+// refused by the server (409 with the sentences); the operator can override with
+// an explicit OK, which re-sends the request with force. Resolves to
+// 'started' | 'cancelled' | 'failed'.
+async function enablePrediction() {
+    const post = (force) => fetch('/api/inference/enabled', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true, force: !!force }),
+    });
+    try {
+        let r = await post(false);
+        if (r.status === 409) {
+            const body = await r.json();
+            if (!confirm(OMTrain.guardPrompt(body.issues || [{ message: body.detail }]))) return 'cancelled';
+            r = await post(true);
+        }
+        if (!r.ok) throw new Error(await readError(r));
+        // Optimistic local flip so the hint says "predicting" now instead of
+        // one WS tick from now; the next tick confirms.
+        if (inferenceState) inferenceState.enabled = true;
+        return 'started';
+    } catch (e) {
+        console.warn('could not start prediction', e);
+        return 'failed';
+    }
 }
 
-// Train -> see it live (the core-loop fix): after a successful activate,
-// start predicting without a trip to the Predict button (mirrors the VR
-// client's runTrain) and pulse the control-bar model chips.
+// Train -> see it live (the core-loop fix): after a trained model that earns
+// Fair or Good, start predicting without a trip to the Predict button and pulse
+// the control-bar model chips.
 async function autoEnablePrediction() {
-    try {
-        const r = await fetch('/api/inference/enabled', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: true }),
-        });
-        // Optimistic local flip so trainRunHint() says "predicting" now
-        // instead of one WS tick from now; the next tick confirms.
-        if (r.ok && inferenceState) inferenceState.enabled = true;
-    } catch (e) {
-        console.warn('auto-enable after train failed', e);
-    }
-    if (predictModels) {
+    const outcome = await enablePrediction();
+    if (outcome === 'started' && predictModels) {
         predictModels.classList.add('just-trained');
         setTimeout(() => predictModels.classList.remove('just-trained'), 4000);
     }
+    return outcome;
 }
 
-// Train still accepts bad takes, but says which ones they are and why. The
-// server scores every selected capture (stored verdict, or a one-time scan for
-// older takes) and returns the bad ones in `bad_captures`.
-function badTakesNote(results) {
-    const seen = new Map();
-    for (const res of results) {
-        for (const b of (res.bad_captures || [])) seen.set(b.name, b.reasons || []);
-    }
-    if (!seen.size) return '';
-    const list = [...seen].map(([n, why]) => `${n}${why.length ? ' (' + why[0] + ')' : ''}`).join('; ');
-    return ` · ⚠ ${seen.size} bad take(s) included, consider unticking: ${list}`;
+const trainResultEl = document.getElementById('train-result');
+
+// One verdict card per hand. tone: good/fair = green/amber, weak = amber-red,
+// bad = red; never green for a model that does not work. Raw scores live only
+// inside the collapsed "Technical details".
+function trainCardHtml(c, idx) {
+    const bars = c.bars.length ? `<div class="tc-bars">${c.bars.map(b => `
+        <div class="tc-bar" title="${escapeHtml(b.pct === null ? b.name + ' ' + b.note : b.name + ': follows ' + b.pct + '%')}">
+            <div class="tc-bar-track"><div class="tc-bar-fill tone-${b.tone}" style="height:${b.pct === null ? 0 : b.pct}%"></div></div>
+            <div class="tc-bar-name">${escapeHtml(b.name)}</div>
+        </div>`).join('')}</div>` : '';
+    const notes = c.notes.concat(c.badTakes.length ? ['Takes that looked bad were included: ' + c.badTakes.join('; ')] : []);
+    const noteHtml = notes.length ? `<ul class="tc-notes">${notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>` : '';
+    const tech = c.technical.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join('');
+    const anyway = c.canStartAnyway
+        ? `<button class="link tc-start-anyway" data-card="${idx}">Start anyway</button>` : '';
+    return `<div class="train-card tone-${c.tone}" data-card="${idx}">
+        ${c.title ? `<div class="tc-title">${escapeHtml(c.title)}</div>` : ''}
+        <div class="tc-headline">${escapeHtml(c.headline)}</div>
+        <div class="tc-body">
+            ${bars}
+            <div class="tc-text">
+                <p>${escapeHtml(c.detail)}</p>
+                <p class="tc-next"><strong>What to do next:</strong> ${escapeHtml(c.nextStep)}</p>
+                ${noteHtml}
+                <p class="tc-status">${escapeHtml(c.status)} ${anyway}</p>
+            </div>
+        </div>
+        <div class="tc-saved">Saved to <code>${escapeHtml(c.savedTo)}</code>
+            <button class="link tc-open-folder" data-path="${escapeHtml(c.savedTo)}">Open folder</button></div>
+        <details class="tc-details"><summary>Technical details</summary>
+            <table>${tech}</table></details>
+    </div>`;
+}
+
+function renderTrainResult(cards, extraHtml) {
+    if (!trainResultEl) return;
+    trainResultEl.innerHTML = cards.map(trainCardHtml).join('') + (extraHtml || '');
+    trainResultEl.querySelectorAll('.tc-open-folder').forEach(btn => {
+        btn.onclick = () => revealModelFolder(btn.dataset.path);
+    });
+    trainResultEl.querySelectorAll('.tc-start-anyway').forEach(btn => {
+        btn.onclick = async () => {
+            btn.disabled = true;
+            const outcome = await enablePrediction();
+            const status = btn.closest('.tc-status');
+            if (outcome === 'started') {
+                status.textContent = 'Prediction started (this model scored low, so treat it with care).';
+            } else if (outcome === 'cancelled') {
+                btn.disabled = false;
+            } else {
+                status.textContent = 'Prediction could not be started. Press Predict in the top bar.';
+            }
+        };
+    });
+}
+
+function renderTrainError(message) {
+    if (!trainResultEl) return;
+    trainResultEl.innerHTML = `<div class="train-card tone-bad">
+        <div class="tc-headline">Could not train yet</div>
+        <div class="tc-body"><div class="tc-text"><p>${escapeHtml(message)}</p></div></div></div>`;
+}
+
+async function revealModelFolder(path) {
+    try {
+        await fetch('/api/reveal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: path }),
+        });
+    } catch (e) { /* best-effort, same as the captures folder button */ }
 }
 
 trainBtn.onclick = async () => {
@@ -2241,72 +2324,49 @@ trainBtn.onclick = async () => {
     const captures = [...selectedCaptures];
     const label = captures.length === 1 ? captures[0] : `${captures.length} captures`;
     // Two-hand detection: /api/captures rows carry `hands` (2 = both roles in
-    // the CSV). ANY two-hand capture in the mix means per-hand training.
+    // the CSV). ANY two-hand capture in the mix means per-hand training. (Left
+    // files plus right files recorded at different times are split by the server.)
     const byName = new Map(_lastCapturesList.map(c => [c.name, c]));
     const twoHand = captures.some(n => (byName.get(n) || {}).hands === 2);
 
     trainBtn.disabled = true;
     trainStatus.className = 'train-status busy';
+    if (trainResultEl) trainResultEl.innerHTML = '';
 
     try {
+        let payload;
         if (twoHand) {
             // Sequential on purpose: each RF fit is CPU-bound 20-60s; two at
             // once would just contend and blur the progress line.
             const results = {};
             for (const role of ['left', 'right']) {
                 trainStatus.className = 'train-status busy';
-                trainStatus.textContent = `⏳ Training ${role.toUpperCase()} hand on ${label}... (${role === 'left' ? '1' : '2'}/2)`;
+                trainStatus.textContent = `⏳ Training the ${role} hand on ${label}... (${role === 'left' ? '1' : '2'}/2)`;
                 results[role] = await postTrain({ captures, role, activate: true });
             }
-            const r2s = {
-                left:  ((results.left.metrics  || {}).r2 ?? 0).toFixed(3),
-                right: ((results.right.metrics || {}).r2 ?? 0).toFixed(3),
-            };
-            // Activation must be LOUD: active=false means the load guard (or
-            // a load error) refused the model and the ghosts are still on the
-            // old one. That silent gap cost two capture sessions.
-            const failed = ['left', 'right'].filter(role => !results[role].active);
-            const bad = badTakesNote([results.left, results.right]);
-            if (failed.length) {
-                const why = failed.map(role =>
-                    `${role.toUpperCase()}: ${results[role].activate_error || 'not loaded'}`).join(' · ');
-                trainStatus.className = 'train-status error';
-                trainStatus.textContent = `⚠ Trained (L R²=${r2s.left}, R R²=${r2s.right}) but NOT loaded: ${why}` + bad;
-            } else {
-                await autoEnablePrediction();
-                trainStatus.className = 'train-status ok';
-                trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}` + bad;
-            }
+            payload = results;
         } else {
-            // All-single-band selection: today's pooled/role-less call.
             trainStatus.textContent = `⏳ Training on ${label}...`;
-            const result = await postTrain({ captures, activate: true });
-            const m = result.metrics || {};
-            const r2 = (m.r2 ?? 0).toFixed(3);
-            const mse = (m.mse ?? 0).toFixed(4);
-            const nf  = m.n_features ?? '?';
-            const nl  = m.n_labels ?? '?';
-            const nt  = m.n_train ?? '?';
-            const bad = badTakesNote([result]);
-            if (!result.active) {
-                // Trained-but-not-loaded is a FAILURE for live use: say why.
-                trainStatus.className = 'train-status error';
-                trainStatus.textContent = `⚠ Trained (R²=${r2}) but NOT loaded: ${result.activate_error || result.warning || 'activation refused'}` + bad;
-            } else if (result.warning) {
-                // e.g. role-less bilateral pivot loading with no live band
-                // connected: on disk and loaded, but it can't drive ghosts.
-                trainStatus.className = 'train-status error';
-                trainStatus.textContent = `⚠ Trained + loaded, but: ${result.warning}` + bad;
-            } else {
-                await autoEnablePrediction();
-                trainStatus.className = 'train-status ok';
-                trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]` + bad;
-            }
+            payload = await postTrain({ captures, activate: true });
+        }
+        const cards = OMTrain.cardsFor(payload);
+        renderTrainResult(cards);
+        if (OMTrain.allAutoStart(cards)) {
+            const outcome = await autoEnablePrediction();
+            trainStatus.className = 'train-status ok';
+            trainStatus.textContent = outcome === 'started'
+                ? 'Done. Prediction is running.'
+                : (outcome === 'cancelled' ? 'Done. Prediction is off (press Predict to start it).'
+                    : 'Done. Press Predict to start it.');
+        } else {
+            trainStatus.className = 'train-status';
+            trainStatus.textContent = 'Done. See the result below.';
         }
         await refreshModels();
     } catch (e) {
         trainStatus.className = 'train-status error';
-        trainStatus.textContent = `✗ Train failed: ${e.message}`;
+        trainStatus.textContent = 'Training did not run.';
+        renderTrainError(e.message);
     } finally {
         trainBtn.disabled = (selectedCaptures.size === 0);
     }
@@ -2316,14 +2376,17 @@ trainBtn.onclick = async () => {
 
 // name -> wearer, for the predict-chip mismatch warning (a model trained on
 // someone else's arm quietly underperforms; tint the chip instead).
-const _modelWearerByName = new Map();
+const _modelWearerByName = new Map();      // folder name -> normalised participant code
 
 async function refreshModels() {
     try {
         const r = await fetch('/api/models');
         if (!r.ok) return;
         const list = await r.json();
-        list.forEach(m => { if (m.name) _modelWearerByName.set(m.name, m.wearer || null); });
+        list.forEach(m => {
+            const key = m.dir || m.name;
+            if (key) _modelWearerByName.set(key, OMTrain.normCode(m.participant || m.wearer) || null);
+        });
         renderModels(list);
     } catch (e) {
         // best-effort
@@ -2356,6 +2419,10 @@ const modelSessionCombo = modelFilterSession
 
 // Role of a model row: per-hand models carry metrics.role (left/right);
 // anything else (bilateral pivot / legacy) counts as 'pooled'.
+function modelParticipant(m) {
+    return OMTrain.normCode(m.participant || m.wearer);
+}
+
 function modelRole(m) {
     const r = (m.metrics || {}).role;
     return (r === 'left' || r === 'right') ? r : 'pooled';
@@ -2378,7 +2445,7 @@ function applyModelFilters(list) {
             if (m.session_id !== modelFilter.session) return false;
         }
         if (modelFilter.roles.size && !modelFilter.roles.has(modelRole(m))) return false;
-        if (modelFilter.wearers.size && !modelFilter.wearers.has((m.wearer || '').trim())) return false;
+        if (modelFilter.wearers.size && !modelFilter.wearers.has(modelParticipant(m))) return false;
         return true;
     });
 }
@@ -2405,7 +2472,7 @@ let _modelWearerChipsSig = null;
 function renderModelWearerChips(list) {
     const group = document.getElementById('model-filter-wearer');
     if (!group) return;
-    const wearers = [...new Set(list.map(m => (m.wearer || '').trim()).filter(Boolean))].sort();
+    const wearers = [...new Set(list.map(modelParticipant).filter(Boolean))].sort();
     const sig = JSON.stringify(wearers);
     if (sig === _modelWearerChipsSig) return;
     _modelWearerChipsSig = sig;
@@ -2414,7 +2481,7 @@ function renderModelWearerChips(list) {
         if (!wearers.includes(w)) modelFilter.wearers.delete(w);
     }
     group.innerHTML = wearers.map(w =>
-        `<button class="filter-chip${modelFilter.wearers.has(w) ? ' on' : ''}" data-wearer="${escapeHtml(w)}" title="only models trained while ${escapeHtml(w)} wore the band(s)">${escapeHtml(w)}</button>`
+        `<button class="filter-chip${modelFilter.wearers.has(w) ? ' on' : ''}" data-wearer="${escapeHtml(w)}" title="only models trained for participant ${escapeHtml(w)}">${escapeHtml(w)}</button>`
     ).join('');
     group.querySelectorAll('.filter-chip').forEach(btn => {
         btn.onclick = () => {
@@ -2441,22 +2508,18 @@ let _modelsSig = null;
 
 // One <tr> for the models table. pinned=true rows are the CHOSEN models
 // (occupying an engine slot): strong highlight class + solid green slot
-// chips, so which model(s) are running is impossible to miss.
+// chips, so which model(s) are running is impossible to miss. The wording comes
+// from OMTrain.modelRow (static/train-card.js); raw error and score sit in the
+// columns the "Show details" toggle reveals.
 function modelRowHtml(m, pinned) {
+    const row = OMTrain.modelRow(m);
     const metrics = m.metrics || {};
-    const r2  = (metrics.r2 ?? null);
-    const mse = (metrics.mse ?? null);
-    const nf  = metrics.n_features ?? '?';
-    const nl  = metrics.n_labels ?? '?';
-    const r2s  = (r2 !== null && !isNaN(r2)) ? Number(r2).toFixed(3) : '—';
-    const mses = (mse !== null && !isNaN(mse)) ? Number(mse).toFixed(4) : '—';
-    const created = m.created ?? '';
     const slots = modelSlots(m);
     // Solid green chip per occupied slot (upgrade of the old small
     // "active · L" text; recipe from .model-chip.on, solidified).
     const slotChips = slots.map(s =>
-        `<span class="model-slot-chip" title="loaded in the ${s} engine slot">${
-            s === 'shared' ? 'active' : 'active · ' + s[0].toUpperCase()}</span>`).join(' ');
+        `<span class="model-slot-chip" title="loaded in the ${s} slot">${
+            s === 'shared' ? 'in use' : 'in use · ' + s[0].toUpperCase()}</span>`).join(' ');
     // Per-hand role badge (separate-model-per-hand). Reuses the capture
     // list's 1H/2H badge styling: green = left, orange = right.
     const role = (metrics.role === 'left' || metrics.role === 'right')
@@ -2464,21 +2527,43 @@ function modelRowHtml(m, pinned) {
     const roleBadge = role
         ? `<span class="hands-badge ${role === 'left' ? 'h2' : 'h1'}" title="single-arm model, trained on role=${role} rows">${role === 'left' ? 'L' : 'R'}</span>`
         : '';
-    const escName = escapeHtml(m.name || '');
     const escPath = escapeHtml(m.path || '');
     // Role-tagged models must load into their OWN per-hand slot; sending
     // them to the shared endpoint leaves the router on the old model.
     const useBtn = slots.length ? '' :
-        `<button class="link" data-activate="${escPath}" data-role="${role || ''}">use</button>`;
+        `<button class="link" data-activate="${escPath}" data-role="${role || ''}" title="Load this model (prediction stays off until you press Predict)">Load</button>`;
     const trClass = pinned ? ' class="model-active-row"' : '';
+    const unitTitle = row.units.length ? 'band units: ' + row.units.join(', ') : 'band units not recorded';
+    const who = row.unknownParticipant
+        ? `<span class="model-unknown" title="This model was trained before participants were recorded">${escapeHtml(row.participant)}</span>`
+        : escapeHtml(row.participant);
     return `<tr${trClass}>
-        <td>${roleBadge} ${escName} ${slotChips}</td>
-        <td>${escapeHtml(created)}</td>
-        <td>${r2s}</td>
-        <td>${mses}</td>
-        <td>${nf} × ${nl}</td>
+        <td title="${escapeHtml(row.session ? 'trained in session: ' + row.session : '')}">${roleBadge} <span class="model-name">${escapeHtml(row.name)}</span> ${slotChips}</td>
+        <td>${escapeHtml(row.when)}</td>
+        <td>${who}</td>
+        <td title="${escapeHtml(unitTitle)}">${escapeHtml(row.hand)}</td>
+        <td title="${escapeHtml(row.scoreTitle)}"><span class="model-score tone-${row.tone}">${escapeHtml(row.score)}</span></td>
+        <td class="detail-col">${escapeHtml(row.featuresLabels)}</td>
+        <td class="detail-col">MSE ${escapeHtml(row.mse)} · R² ${escapeHtml(row.r2)}</td>
         <td class="actions">${useBtn}</td>
     </tr>`;
+}
+
+// "Show details" reveals the technical columns; remembered per browser.
+const modelsDetailsToggle = document.getElementById('models-details-toggle');
+const modelsTable = document.getElementById('models-table');
+function applyModelsDetails() {
+    if (modelsTable && modelsDetailsToggle) {
+        modelsTable.classList.toggle('show-details', modelsDetailsToggle.checked);
+    }
+}
+if (modelsDetailsToggle) {
+    try { modelsDetailsToggle.checked = localStorage.getItem('om.modelsDetails') === '1'; } catch (e) { /* private window */ }
+    applyModelsDetails();
+    modelsDetailsToggle.onchange = () => {
+        try { localStorage.setItem('om.modelsDetails', modelsDetailsToggle.checked ? '1' : '0'); } catch (e) { /* ignore */ }
+        applyModelsDetails();
+    };
 }
 
 function renderModels(list) {
@@ -2495,7 +2580,8 @@ function renderModels(list) {
     const rowBits = m => [m.name, m.created, m.path, m.active,
                           (m.active_roles || []).join(','),
                           (m.metrics || {}).role || '', m.session_id || '',
-                          (m.wearer || '')];
+                          modelParticipant(m), (m.verdict || {}).grade || '',
+                          (m.verdict || {}).score_pct];
     const sig = JSON.stringify([
         modelFilter.session, [...modelFilter.roles], [...modelFilter.wearers],
         activeSession ? activeSession.id : null,
@@ -2513,13 +2599,13 @@ function renderModels(list) {
         : `${shown} of ${list.length} model${plural}${modelFilter.session === '__active__' ? ' (this session)' : ''}`;
 
     if (!list.length) {
-        modelsBody.innerHTML = '<tr class="empty"><td colspan="6">No models trained yet.</td></tr>';
+        modelsBody.innerHTML = '<tr class="empty"><td colspan="8">No models trained yet.</td></tr>';
         return;
     }
 
     const pinnedRows = pinned.map(m => modelRowHtml(m, true)).join('');
     const divider = pinned.length
-        ? '<tr class="models-inuse-divider"><td colspan="6">in use</td></tr>' : '';
+        ? '<tr class="models-inuse-divider"><td colspan="8">in use</td></tr>' : '';
     const bodyRows = filtered.map(m => modelRowHtml(m, false)).join('');
     // Empty-filter message only when the filters actually hid something
     // (all models being pinned in-use is not a filter problem).
@@ -2527,8 +2613,8 @@ function renderModels(list) {
     if (!filtered.length && list.length > pinned.length) {
         emptyRow = (modelFilter.session === '__active__'
                     && !modelFilter.roles.size && !modelFilter.wearers.size)
-            ? '<tr class="empty"><td colspan="6">No models trained in this session yet · select captures and hit Train.</td></tr>'
-            : '<tr class="empty"><td colspan="6">No models match the current filters.</td></tr>';
+            ? '<tr class="empty"><td colspan="8">No models trained in this session yet · select captures and hit Train.</td></tr>'
+            : '<tr class="empty"><td colspan="8">No models match the current filters.</td></tr>';
     }
     modelsBody.innerHTML = pinnedRows + divider + emptyRow + bodyRows;
 
@@ -2750,7 +2836,7 @@ function renderPredictModelChips(inf) {
     if (!predictModels) return;
     const am = (inf && inf.active_models) || {};
     const live = !!(inf && inf.enabled) && inf.status === 'live';
-    const sessionWearer = (activeSession && activeSession.wearer) || null;
+    const sessionWearer = OMTrain.normCode(activeSession && (activeSession.wearer || activeSession.subject)) || null;
     const entries = [];
     if (am.left)  entries.push(['L ', am.left]);
     if (am.right) entries.push(['R ', am.right]);
@@ -2768,18 +2854,50 @@ function renderPredictModelChips(inf) {
         // Warn when the model was trained on a different wearer than the
         // active session's: it will quietly underperform on this arm.
         const wearer = _modelWearerByName.get(name) || null;
-        const mismatch = !!(sessionWearer && wearer && wearer !== sessionWearer);
+        const mismatch = !!(sessionWearer && wearer && !OMTrain.sameParticipant(wearer, sessionWearer));
         const title = mismatch
-            ? `trained on ${wearer}, session wearer is ${sessionWearer}`
+            ? `trained for participant ${wearer}, this session is ${sessionWearer}`
             : ((inf && inf.status) || '');
         return `<span class="model-chip ${stateCls}${mismatch ? ' wearer-mismatch' : ''}"`
             + ` title="${escapeHtml(title)}">${escapeHtml(badge + name)}</span>`;
     }).join('');
 }
 
+// Notices under the control bar: (1) a model restored from the last run that is
+// waiting for Predict, (2) a model that does not match the participant or band
+// units in front of it (amber, stronger while it is running), (3) which model
+// drives which band. Sig-gated so ticks leave the DOM alone.
+const modelBannerEl = document.getElementById('model-banner');
+let _modelBannerSig = null;
+
+function renderModelBanner(inf) {
+    if (!modelBannerEl) return;
+    const guard = (inf && inf.guard) || [];
+    const restored = (inf && inf.restored_banner) || '';
+    const routing = (inf && inf.routing_text) || '';
+    const running = !!(inf && inf.enabled);
+    const sig = JSON.stringify([guard.map(g => g.message), restored, routing, running]);
+    if (sig === _modelBannerSig) return;
+    _modelBannerSig = sig;
+    const parts = [];
+    if (guard.length) {
+        parts.push(`<div class="mb-line mb-warn"><strong>${running ? 'Prediction is running on a model that may not match.' : 'This model may not match.'}</strong> ${
+            guard.map(g => escapeHtml(g.message)).join(' ')} <span class="mb-hint">Train a new model for this participant and these bands, or press Predict to run it anyway.</span></div>`);
+    }
+    if (restored) {
+        parts.push(`<div class="mb-line mb-info">${escapeHtml(restored)}</div>`);
+    }
+    if (routing && ((inf && inf.model) || guard.length)) {
+        parts.push(`<div class="mb-line mb-route">Which model drives which band: ${escapeHtml(routing)}</div>`);
+    }
+    modelBannerEl.innerHTML = parts.join('');
+    modelBannerEl.classList.toggle('hidden', parts.length === 0);
+}
+
 function renderInferenceControls(inf) {
     maybeRestoreHandTarget(inf);
     renderPredictModelChips(inf);
+    renderModelBanner(inf);
 
     const hasModel = !!(inf && inf.model);
     const enabled  = !!(inf && inf.enabled);
@@ -2788,12 +2906,12 @@ function renderInferenceControls(inf) {
     inferToggleBtn.disabled = !hasModel;
     inferToggleBtn.classList.toggle('running', enabled);
     inferToggleBtn.classList.toggle('paused', hasModel && !enabled);
-    if (!hasModel)      inferToggleBtn.textContent = '▶ Predict (no model — train first)';
+    if (!hasModel)      inferToggleBtn.textContent = '▶ Predict (no model yet, train first)';
     else if (enabled)   inferToggleBtn.textContent = '⏸ Pause prediction';
     else                inferToggleBtn.textContent = '▶ Predict';
     inferToggleBtn.title = hasModel
-        ? (enabled ? 'Prediction is LIVE — click to pause' : 'Click to start predicting')
-        : 'No model loaded: check a capture below and hit ⚙ Train (Stage 3), or pick one in the Models panel';
+        ? (enabled ? 'Prediction is running. Click to pause.' : 'Prediction is paused. Click to start predicting with the loaded model(s).')
+        : 'No model is loaded: tick a recording below and press Train, or load one in the Models panel.';
 
     // --- hand target input ---
     const hand = (inf && inf.hand_target) || '';
@@ -2816,6 +2934,13 @@ function renderInferenceControls(inf) {
 inferToggleBtn.onclick = async () => {
     if (inferToggleBtn.disabled) return;
     const wantEnabled = !inferToggleBtn.classList.contains('running');
+    if (wantEnabled) {
+        // Turning prediction ON can be refused for a participant / band-unit
+        // mismatch; enablePrediction() asks the operator before overriding.
+        const outcome = await enablePrediction();
+        if (outcome === 'failed') alert('Could not start prediction. Check the model notice at the top of the page.');
+        return;
+    }
     try {
         const r = await fetch('/api/inference/enabled', {
             method: 'POST',
@@ -2824,7 +2949,7 @@ inferToggleBtn.onclick = async () => {
         });
         if (!r.ok) throw new Error(await readError(r));
     } catch (e) {
-        alert(`Could not ${wantEnabled ? 'resume' : 'pause'}: ${e.message}`);
+        alert(`Could not pause: ${e.message}`);
     }
 };
 
