@@ -69,7 +69,7 @@ def connect(ssid, password, timeout=1000):
     print("SSID repr:", repr(SSID))
     print("PASS repr:", repr(PASSWORD))
     print("PASS length:", len(PASSWORD))
-    wlan.connect(ssid, password, bssid=bytes.fromhex('000000000000'))
+    wlan.connect(ssid, password)
 
     # Wait up to `timeout` seconds
     for i in range(timeout):

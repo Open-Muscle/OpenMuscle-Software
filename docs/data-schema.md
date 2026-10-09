@@ -27,7 +27,8 @@ ts_hub_ms, role, device_id, R{r}C{c}..., label_0..label_{N-1}, [imu_* + lbl_imu_
 
 The bracketed groups (imu, forearm, and the canonical `lbl_flex_*` / `lbl_ang_*`
 block) are OPT-IN, appended after the raw `label_*`. Because they are opt-in, the
-minimal schema-v2 output stays byte-identical to the golden and name-addressable readers stay backward compatible.
+minimal schema-v2 output stays byte-identical to the golden and name-addressable
+readers stay backward compatible.
 
 Lead columns (not features, not labels; provenance/keys):
 - `ts_hub_ms`: hub receive clock in ms. The ONE true clock. All sync (video sync

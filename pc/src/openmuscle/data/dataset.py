@@ -94,9 +94,10 @@ def load_training_data(csv_path: str,
     long CSV must NEVER fall through to the single-source path, which would
     silently pool left + right rows into one role-agnostic 60-feature set.
 
-    `role` (left/right) selects the SEPARATE-MODEL-PER-HAND path: keep only that role's rows, then train a normal single-arm model
-    on its own 60 muscle features -> its own hand labels. Run twice (left, right)
-    to get two independent models. This deliberately SKIPS the bilateral pivot --
+    `role` (left/right) selects the SEPARATE-MODEL-PER-HAND path: keep only
+    that role's rows, then train a normal single-arm model on its own 60 muscle
+    features -> its own hand labels. Run twice (left, right) to get two
+    independent models. This deliberately SKIPS the bilateral pivot --
     we are NOT concatenating L||R into one model; each hand gets its own.
 
     Returns:

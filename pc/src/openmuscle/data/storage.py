@@ -21,7 +21,7 @@ class CaptureWriter:
     and the writer derives it from the first row.
     """
 
-    # IMU columns (board: LASK5 gyro + flexgrid band orientation into the
+    # IMU columns (LASK5 gyro + flexgrid band orientation into the
     # training set). Two groups per row: the SENSOR band that produced the row,
     # and the matched LABELER (e.g. a LASK5 whose gyro is the supination
     # ground-truth). Appended AFTER the labels so name-addressable readers stay

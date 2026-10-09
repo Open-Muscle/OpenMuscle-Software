@@ -7,10 +7,13 @@ cheap tripwire, not a substitute for review.
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-SCAN_DIRS = ["pc/src", "pc/tests", "pc/data", "docs", "embedded", "analysis"]
+# pc/data holds untracked user captures and models, so only its README is scanned.
+SCAN_DIRS = ["pc/src", "pc/tests", "docs", "embedded", "analysis"]
+SCAN_FILES = ["pc/data/README.md"]
 SCAN_EXT = {".py", ".js", ".html", ".css", ".md", ".json", ".bat"}
 SELF = Path(__file__).resolve()
 
@@ -26,12 +29,34 @@ PATTERNS = {
 }
 
 
-def _files():
+def _tracked():
+    """Paths tracked by git under the scanned dirs, or None outside a checkout."""
+    try:
+        out = subprocess.run(["git", "ls-files", "-z", "--"] + SCAN_DIRS + SCAN_FILES,
+                             cwd=REPO, capture_output=True, check=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = [n for n in out.decode("utf-8", "ignore").split("\0") if n]
+    return [REPO / n for n in names] or None
+
+
+def _candidates():
+    tracked = _tracked()
+    if tracked is not None:
+        return tracked
+    # No git (e.g. an exported source tree): walk the dirs, skipping untracked
+    # user data under pc/data by never listing it.
+    found = [REPO / f for f in SCAN_FILES]
     for d in SCAN_DIRS:
-        for p in (REPO / d).rglob("*"):
-            if (p.is_file() and p.suffix in SCAN_EXT and p.resolve() != SELF
-                    and "node_modules" not in p.parts):
-                yield p
+        found.extend((REPO / d).rglob("*"))
+    return found
+
+
+def _files():
+    for p in _candidates():
+        if (p.is_file() and p.suffix in SCAN_EXT and p.resolve() != SELF
+                and "node_modules" not in p.parts):
+            yield p
 
 
 def test_no_internal_references_in_public_files():

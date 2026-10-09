@@ -77,9 +77,9 @@ header.topbar .topbar-right .stream-link:hover {
 }
 
 /* ===== Sticky control bar (Record | Predict | Session | signal pills) =====
-   The record -> train -> predict loop stays reachable while scrolled anywhere
-  . Full-width children (.record-plan, .record-advanced,
-   .rec-status) wrap onto their own rows via flex-basis: 100%. */
+   The record -> train -> predict loop stays reachable while scrolled anywhere.
+   Full-width children (.record-plan, .record-advanced, .rec-status) wrap onto
+   their own rows via flex-basis: 100%. */
 #control-bar {
     position: sticky; top: 0; z-index: 40;
     display: flex; flex-wrap: wrap;
@@ -704,8 +704,8 @@ main.studio {
 }
 
 /* ---- device status (inside band cards) ----
-   The old #device-list styles are gone with the Devices column; .device-status now renders inside each band card's
-   .band-stats via renderDeviceStatus(). */
+   The old #device-list styles are gone with the Devices column; .device-status
+   now renders inside each band card's .band-stats via renderDeviceStatus(). */
 
 .device-status {
     margin-top: 5px;

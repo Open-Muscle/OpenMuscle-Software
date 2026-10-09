@@ -3363,7 +3363,8 @@ function makeImuBand() {
 
 // --- Orientation gizmo (locked convention) ----------------------
 // A 2D XYZ axis gizmo so the VR orientation widget is pixel-consistent with the
-// phone's Compose Canvas gizmo. Convention (locked, shared with the phone app): world frame +X right / +Y up / +Z toward viewer; axis colors X red
+// phone's Compose Canvas gizmo. Convention (locked, shared with the phone app):
+// world frame +X right / +Y up / +Z toward viewer; axis colors X red
 // ef4444 / Y green 22c55e / Z blue 3b82f6; orthographic -Z projection (drop the
 // rotated z, screen y points up); vectors from center, len 0.4*min(w,h);
 // painter-sorted far-to-near by projected z so the nearer axis draws on top.
