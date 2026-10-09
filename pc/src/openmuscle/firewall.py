@@ -201,14 +201,37 @@ def inspect(timeout=8.0):
 
 # ----- changing the rules (only on request, through a UAC prompt) -------------
 
+def quote_args(args):
+    """One command-line string for `args`, quoted the way Windows programs parse
+    it. Start-Process joins an -ArgumentList array with plain spaces and quotes
+    nothing, so `name=OpenMuscle UDP 3140-3141` would reach netsh as three
+    arguments; passing one explicitly quoted string avoids that."""
+    parts = []
+    for a in args:
+        if re.search(r"[\s\"]", a):
+            m = re.match(r"^([A-Za-z]+=)(.*)$", a, re.S)
+            key, val = (m.group(1), m.group(2)) if m else ("", a)
+            a = '%s"%s"' % (key, val.replace('"', '\\"'))
+        parts.append(a)
+    return " ".join(parts)
+
+
+def start_process_script(program, args, elevated=True):
+    """The PowerShell that runs `program` with `args` and exits with its code.
+    `elevated` adds -Verb RunAs (the UAC prompt)."""
+    def lit(s):
+        return "'%s'" % s.replace("'", "''")
+    return ("$p = Start-Process -FilePath %s -ArgumentList %s %s-Wait -PassThru "
+            "-WindowStyle Hidden; exit $p.ExitCode"
+            % (lit(program), lit(quote_args(args)), "-Verb RunAs " if elevated else ""))
+
+
 def run_elevated(netsh_args, timeout=120.0):
     """Run netsh with `netsh_args` as administrator via a UAC prompt.
     Returns True when the process ran and exited 0. Windows only."""
     if not netutil.IS_WINDOWS:
         return False
-    arglist = ",".join("'%s'" % a.replace("'", "''") for a in netsh_args)
-    ps = ("$p = Start-Process -FilePath netsh -ArgumentList %s -Verb RunAs -Wait "
-          "-PassThru -WindowStyle Hidden; exit $p.ExitCode" % arglist)
+    ps = start_process_script("netsh", netsh_args)
     rc, _out = netutil.run_cmd(["powershell", "-NoProfile", "-NonInteractive",
                                 "-Command", ps], timeout)
     return rc == 0

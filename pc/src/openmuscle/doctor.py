@@ -708,10 +708,26 @@ def versions():
     return out
 
 
+# Log sources whose messages carry take, session, wearer or model names (or URLs
+# that contain them). Only the source and level are kept for these in a report.
+_NAMEY_SOURCES = ("recording", "recorder", "capture", "session", "meta", "training",
+                  "replay", "inference", "uvicorn.access")
+
+_FILE_EXT = r"(?:csv|pkl|npz|labels\.json|meta\.json|json)"
+
+
+def _folder_pattern(folder):
+    """A case-insensitive regex for `folder` that accepts either slash style."""
+    parts = [p for p in re.split(r"[\\/]+", folder) if p]
+    lead = r"[\\/]+" if folder[:1] in "\\/" else ""
+    return re.compile(lead + r"[\\/]+".join(re.escape(p) for p in parts) + r"(?!\w)",
+                      re.I)
+
+
 def scrub(text, ssid=None):
     """Remove what must never leave the machine from free text: the Wi-Fi name,
-    anything that looks like a password, file names of recordings and models, and
-    the user's home folder."""
+    anything that looks like a password, wearer and take names, file names of
+    recordings and models, and the user's home folder (any case, either slash)."""
     if not text:
         return text
     if ssid:
@@ -720,12 +736,32 @@ def scrub(text, ssid=None):
                   r"(\"[^\"]*\"|'[^']*'|\S+)", r"\1\2<hidden>", text)
     text = re.sub(r"(?i)(\"(?:password|ssid|psk)\"\s*:\s*)\"[^\"]*\"", r'\1"<hidden>"',
                   text)
-    text = re.sub(r"[^\s'\"<>|]+\.(?:csv|pkl|npz|labels\.json|meta\.json|json)\b",
-                  "<file>", text, flags=re.I)
+    text = re.sub(r"(?i)\b(wearer|subject|participant)(\s*[=:]\s*)[^,)\r\n]*",
+                  r"\1\2<hidden>", text)
+    text = re.sub(r"(?i)(name adjusted:\s*)'[^']*'\s*->\s*'[^']*'", r"\1<hidden>", text)
     for folder in (str(paths.data_root()), os.path.expanduser("~")):
         if folder and len(folder) > 3:
-            text = text.replace(folder, "~")
+            text = _folder_pattern(folder).sub("~", text)
+    # Any other user profile folder (another drive or account) is masked too.
+    text = re.sub(r"(?i)(?:\b[A-Za-z]:)?[\\/]+(?:Users|home)[\\/]+[^\\/\s'\"]+", "~", text)
+    # A file name with spaces: everything from the last separator or quote to the
+    # extension. Then names without spaces anywhere in the text.
+    text = re.sub(r"(?i)(?<=[\\/'\"])[^\\/'\"<>|]*\." + _FILE_EXT + r"\b", "<file>", text)
+    text = re.sub(r"(?i)[^\s'\"<>|]+\." + _FILE_EXT + r"\b", "<file>", text)
     return text
+
+
+def scrub_log_entry(entry, ssid=None):
+    """One LogBuffer entry as a single scrubbed line. Entries from sources that
+    handle names keep only the source and level; the message body is dropped."""
+    stamp = time.strftime("%H:%M:%S", time.localtime(entry.get("t", 0)))
+    source = str(entry.get("source", ""))
+    message = str(entry.get("message", ""))
+    low = source.lower()
+    if any(low == n or low.startswith(n + ".") or low.endswith("." + n)
+           for n in _NAMEY_SOURCES) or "wearer=" in message.lower():
+        message = "(details removed)"
+    return scrub("%s %-5s %s: %s" % (stamp, entry.get("level", ""), source, message), ssid)
 
 
 def report_text(result, ssid=None):
@@ -769,11 +805,7 @@ def build_support_zip(result, log_entries=(), ssid=None, out_dir=None):
     for c in safe["checks"]:
         c["detail"] = scrub(c["detail"], ssid)
         c["fix"] = scrub(c["fix"], ssid)
-    log_lines = []
-    for e in log_entries:
-        stamp = time.strftime("%H:%M:%S", time.localtime(e.get("t", 0)))
-        log_lines.append(scrub("%s %-5s %s: %s" % (
-            stamp, e.get("level", ""), e.get("source", ""), e.get("message", "")), ssid))
+    log_lines = [scrub_log_entry(e, ssid) for e in log_entries]
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("report.txt", report_text(result, ssid))
         z.writestr("doctor.json", json.dumps(safe, indent=2))

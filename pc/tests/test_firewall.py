@@ -1,6 +1,11 @@
 """Windows firewall reading and the rule helper, from canned netsh output."""
 
-from openmuscle import firewall as fw
+import json
+import sys
+
+import pytest
+
+from openmuscle import firewall as fw, netutil
 
 
 def _rule(name, ports="Any", action="Allow", profiles="Private,Public,Domain",
@@ -134,3 +139,36 @@ def test_inspect_reads_through_run_cmd(monkeypatch):
 def test_inspect_unreadable_output(monkeypatch):
     monkeypatch.setattr(fw.netutil, "run_cmd", lambda *a, **k: (None, ""))
     assert fw.inspect()["readable"] is False
+
+
+def test_quote_args_keeps_the_rule_name_whole():
+    line = fw.quote_args(fw.add_rule_args())
+    assert 'name="OpenMuscle UDP 3140-3141"' in line
+    assert line.startswith("advfirewall firewall add rule ")
+    assert "localport=3140,3141" in line
+    assert fw.quote_args(["a", "b c", "d=e f"]) == 'a "b c" d="e f"'
+
+
+def test_start_process_script_passes_one_quoted_string():
+    ps = fw.start_process_script("netsh", fw.remove_rule_args())
+    assert "-Verb RunAs" in ps
+    assert "-ArgumentList 'advfirewall firewall delete rule name=\"OpenMuscle UDP 3140-3141\"'" in ps
+    assert "-Verb" not in fw.start_process_script("netsh", ["x"], elevated=False)
+    assert "'it''s'" in fw.start_process_script("it's", [])
+
+
+@pytest.mark.skipif(not netutil.IS_WINDOWS, reason="Start-Process is Windows PowerShell")
+def test_real_start_process_delivers_the_name_as_one_argument(tmp_path):
+    """Run the real builder through PowerShell against a stub that records argv
+    (the elevation verb is left off so no prompt appears)."""
+    out = tmp_path / "argv.json"
+    stub = tmp_path / "stub.py"
+    stub.write_text("import json, sys\njson.dump(sys.argv[2:], open(sys.argv[1], 'w'))\n")
+    args = [str(stub), str(out)] + fw.add_rule_args()
+    ps = fw.start_process_script(sys.executable, args, elevated=False)
+    rc, _ = netutil.run_cmd(["powershell", "-NoProfile", "-NonInteractive",
+                             "-Command", ps], 60.0)
+    assert rc == 0
+    got = json.loads(out.read_text())
+    assert "name=OpenMuscle UDP 3140-3141" in got
+    assert got == fw.add_rule_args()
