@@ -8,8 +8,28 @@ dist/
 build/
 *.whl
 
-# ML models (large binary files)
-data/models/*.pkl
+# Your recordings are private. OpenMuscle keeps them in ~/OpenMuscle (outside
+# this repository); these rules cover the same files if --data-dir, OPENMUSCLE_HOME
+# or --captures-dir points somewhere inside a clone, so `git status` stays clean
+# and a recording cannot be committed by accident. Anchored to the repo root so
+# the pc/src/openmuscle/data Python package is not affected.
+/OpenMuscle/
+/data/captures/
+/data/sessions/
+/data/models/
+/data/exports/
+/data/logs/
+/data/raw/sessions/
+/data/raw/merged/
+/pc/data/*
+!/pc/data/README.md
+# Sidecar files written next to every take, wherever the folder is.
+*.sensor.jsonl
+*.label.jsonl
+*.meta.json
+*.labels.schema.json
+# Trained models (large binary files; pickles are not safe to share).
+*.pkl
 
 # IDE
 .vscode/

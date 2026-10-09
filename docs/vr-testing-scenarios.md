@@ -195,8 +195,8 @@ The two-band workflow: capture BOTH arms at once, train one model per hand, and 
 6. **Train one model per hand** from that single CSV:
    ```bash
    cd pc
-   openmuscle train data/raw/merged/<capture>.csv --role left  -o model_left.pkl
-   openmuscle train data/raw/merged/<capture>.csv --role right -o model_right.pkl
+   openmuscle train ~/OpenMuscle/captures/<capture>.csv --role left  -o model_left.pkl
+   openmuscle train ~/OpenMuscle/captures/<capture>.csv --role right -o model_right.pkl
    ```
 7. **Restart the server with both models:**
    ```bash
