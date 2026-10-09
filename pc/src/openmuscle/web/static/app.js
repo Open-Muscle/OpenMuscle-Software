@@ -1513,6 +1513,9 @@ function deriveRecordPlan() {
         windowMs: Number.isFinite(winRaw) ? winRaw : null,
         sensorId: sensorSelect.value,
         labelId: labelSelect.value,
+        // A mirrored session lets one hand label both bands, so the plan picks
+        // the best-streaming camera hand instead of matching it to a band side.
+        mirrored: !!(activeSession && activeSession.mirrored),
     });
 }
 
@@ -1566,6 +1569,8 @@ if (labelSourceSelect) {
         }
     } catch (e) { /* storage blocked: auto-default only */ }
     labelSourceSelect.addEventListener('change', () => {
+        // Choosing the webcam shows the Camera panel, where it is started.
+        if (labelSourceSelect.value === 'webcam' && window.OMCameraPanel) window.OMCameraPanel.open();
         labelSourceUserChose = true;
         try {
             localStorage.setItem(STORE_LABEL_SOURCE, labelSourceSelect.value);

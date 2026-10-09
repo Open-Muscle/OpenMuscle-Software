@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OpenMuscle Studio</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/camera-panel.css?v=1">
     <!-- Shared FlexGrid heatmap color ramp (window.OMHeatColor). Loaded plain
          and BEFORE app.js so pressureColor delegates to the one shared ramp;
          the OBS /stream view loads the same file so its heatmaps match ours. -->
@@ -20,6 +21,7 @@
     <!-- Gamepad labeler: reads a USB controller (navigator.getGamepads) and
          streams frames to /ws/gamepad. Plain script (no module). -->
     <script defer src="/static/gamepad.js?v=2"></script>
+    <script defer src="/static/camera-panel.js?v=1"></script>
     <script type="module" src="/static/imu-viewer.js?v=1"></script>
 </head>
 <body>
@@ -100,6 +102,19 @@
                 <h2 class="stage-title"><span class="stage-num">1</span> Live</h2>
                 <span class="stage-sub">what the band feels, what the model thinks: record, train, predict</span>
             </header>
+
+            <!-- Camera panel: the webcam hand labeler inside the dashboard, so
+                 tracking never pauses because a tab went to the background.
+                 camera-panel.js creates the iframe on first open. -->
+            <div id="camera-panel" class="camera-panel collapsed">
+                <div class="camera-panel-head">
+                    <button id="camera-panel-toggle" class="camera-panel-toggle"
+                            aria-expanded="false" aria-controls="camera-panel-body">&#9656; Camera</button>
+                    <span class="camera-panel-sub">use your webcam to record finger movement while you press Record</span>
+                    <span id="camera-panel-state" class="camera-panel-state">camera off</span>
+                </div>
+                <div id="camera-panel-body" class="camera-panel-body"></div>
+            </div>
 
             <div class="live-grid">
                 <!-- Heatmap area (left, the hero). One BAND ROW per streaming
