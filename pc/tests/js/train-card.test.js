@@ -60,6 +60,11 @@ test('a not-working result is a red card with Start anyway and no auto-start', (
     assert.equal(c.status, 'Model saved but not started.');
 });
 
+test('a weak result that paused a running prediction says so', () => {
+    const c = T.cardModel(result('not_working', { paused_running: true }));
+    assert.match(c.status, /^Model saved but not started\. Prediction was paused/);
+});
+
 test('a good result starts by itself and offers no Start anyway', () => {
     const c = T.cardModel(result('good'));
     assert.equal(c.tone, 'good');

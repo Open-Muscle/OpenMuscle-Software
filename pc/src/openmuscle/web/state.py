@@ -2985,6 +2985,17 @@ class AppState:
         verdict = describe_result(
             metrics, n_captures=len(capture_names), hand_side=role,
             checks=[c for c in soft_checks if c["code"] not in _QUIET_CHECKS])
+        # A weak or not-working model must not take over a prediction that is
+        # already running. It stays loaded (and is the one "Start anyway" runs),
+        # but prediction is paused so the result card's wording is true.
+        paused_running = False
+        if (activated and verdict["grade"] in ("weak", "not_working")
+                and self.inference_enabled):
+            self.set_inference_enabled(False)
+            paused_running = True
+            self.log_buffer.warn("training",
+                "prediction paused: the new model scored {} ({})".format(
+                    verdict["grade"], verdict["headline"]))
         self.log_buffer.info("training",
             "done: rows={} held-out curl R²={} ({}) feats={}x{} model={} ({}) | {}".format(
                 metrics.get("n_rows", 0),
@@ -3006,6 +3017,9 @@ class AppState:
             # Warnings from the pre-train data checks (blocks raised instead).
             "checks": soft_checks,
             "active": activated,
+            # True when a prediction that was running got paused because the new
+            # model is weak or not working.
+            "paused_running": paused_running,
             # Why activation failed (None when loaded). The UI must show this
             # loudly; "trained but not loaded" burned two capture sessions.
             "activate_error": activate_error,

@@ -85,6 +85,8 @@
             status = 'Trained and loaded, but it cannot drive the hands: ' + result.warning;
         } else if (auto) {
             status = 'Prediction starts automatically.';
+        } else if (loaded && result.paused_running) {
+            status = 'Model saved but not started. Prediction was paused because this model is not good enough yet.';
         } else if (loaded) {
             status = 'Model saved but not started.';
         } else {

@@ -214,11 +214,19 @@ def test_one_file_with_both_hands_that_never_overlap_blocks():
     "Input X contains infinity or a value too large for dtype('float64').",
     "combine_csvs: refusing to merge captures with different schemas",
     "weird unknown failure inside the forest",
+    "Unknown model type: banana",
+    "financial data",
 ])
 def test_friendly_error_never_leaks_library_words(raw):
     msg = dc.friendly_error(ValueError(raw))
     assert msg and "n_samples" not in msg and "Input y contains NaN" not in msg
     assert "sample(s)" not in msg and "dtype" not in msg
+
+
+def test_friendly_error_nan_match_is_a_whole_word():
+    assert "missing" in dc.friendly_error(ValueError("Input y contains NaN.")).lower()
+    for raw in ("Unknown model type: banana", "financial data"):
+        assert "missing" not in dc.friendly_error(ValueError(raw)).lower()
 
 
 # ------------------------------------------------- state / HTTP wiring
@@ -376,3 +384,25 @@ def test_cli_models_lists_hand_participant_and_verdict(tmp_path, monkeypatch):
     assert "left hand" in res.output and "p-07" in res.output
     assert "Not tested" in res.output or "Fair" in res.output or "Weak" in res.output \
         or "Good" in res.output or "Not working" in res.output
+
+
+def test_weak_model_trained_while_running_pauses_prediction(state, tmp_path, monkeypatch):
+    import random
+    monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
+    _write(state.captures_dir / "good.csv", _rows(400))
+    first = state.train_from_captures(["good.csv"], n_estimators=5, role="left")
+    assert first["active"] is True
+    state.set_inference_enabled(True)
+    assert state.inference_enabled is True
+
+    rng = random.Random(3)
+    noise = _rows(400)
+    for r in noise:
+        r[3:3 + N_FEATS] = [100.0 + 600.0 * rng.random() for _ in range(N_FEATS)]
+        r[3 + N_FEATS:] = [rng.random(), rng.random()]
+    _write(state.captures_dir / "noise.csv", noise)
+    res = state.train_from_captures(["noise.csv"], n_estimators=5, role="left")
+    assert res["verdict"]["grade"] in ("weak", "not_working")
+    assert res["active"] is True                    # loaded, so Start anyway works
+    assert res["paused_running"] is True
+    assert state.inference_enabled is False

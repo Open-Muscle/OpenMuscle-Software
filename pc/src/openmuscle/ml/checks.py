@@ -15,6 +15,8 @@ shown next to the result. friendly_error() turns any leftover exception from the
 data loader or from scikit-learn into the same kind of plain sentence.
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -428,7 +430,7 @@ def friendly_error(exc):
             or "empty" in low and "frame" in low:
         return ("There were no usable samples to train on after lining the recordings up. "
                 "Check the selected recordings overlap in time and have data in them.")
-    if "nan" in low or "infinity" in low or "contains nan" in low:
+    if re.search(r"nan|infinity|contains nan", low):
         return ("Some readings in these recordings are missing, so the model could not be "
                 "fitted. Record again and keep your hand in view of the labeler.")
     if "no sensor columns" in low or "no label columns" in low:
@@ -444,6 +446,9 @@ def friendly_error(exc):
     if "pivot_bilateral" in low or "paired" in low:
         return ("The left and right bands were never recorded at the same moment, so a "
                 "two-band model cannot be built. Train each hand on its own.")
+    if "unknown model type" in low:
+        return ("That model type is not one of the available choices. Pick a model type "
+                "from the list and train again.")
     return ("The recordings could not be used for training. Try a different selection, or "
             "record a new take.")
 
