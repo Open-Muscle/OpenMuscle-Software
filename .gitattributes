@@ -1,0 +1,20 @@
+# Line endings for the files a person double-clicks.
+#
+# Windows batch files and PowerShell scripts are stored WITH CRLF line endings
+# and never converted ("-text"), so a downloaded ZIP, a git clone with any
+# autocrlf setting, and a CI checkout all hand Windows the bytes it needs. A bare
+# LF in a .bat can make cmd.exe mis-parse labels and multi-line blocks.
+#
+# Shell scripts, macOS .command files and .desktop entries are stored with LF
+# only. A CRLF there breaks the "#!/bin/bash" line ("bad interpreter").
+#
+# Edit these files with an editor that keeps their line endings (or run
+# "git add --renormalize ." and check "git ls-files --eol"). A test in
+# pc/tests/test_installers.py fails when a .bat has a bare LF.
+*.bat   -text
+*.cmd   -text
+*.ps1   -text
+*.sh        text eol=lf
+*.command   text eol=lf
+*.desktop   text eol=lf
+*.ico   binary
