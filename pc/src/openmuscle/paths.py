@@ -16,6 +16,8 @@ Layout:
     <root>/models     trained model folders
     <root>/exports    prediction exports, shareable archives
     <root>/logs       server logs
+    <root>/assets     optional offline copies of the hand tracker and 3D viewer
+                      (created by `openmuscle assets fetch`)
 """
 
 import os
@@ -66,6 +68,11 @@ def exports_dir() -> Path:
 
 def logs_dir() -> Path:
     return data_root() / "logs"
+
+
+def assets_dir() -> Path:
+    """Offline browser assets. Not in SUBDIRS: only `assets fetch` creates it."""
+    return data_root() / "assets"
 
 
 def ensure_data_dirs() -> Path:
