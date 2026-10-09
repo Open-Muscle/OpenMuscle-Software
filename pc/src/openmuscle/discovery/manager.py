@@ -5,7 +5,7 @@ and keeps a TCP subscription (with a 1 Hz heartbeat) to each, so the existing
 UDP 3141 listener receives their sensor frames with no change to the parse or
 state pipeline.
 
-Three discovery paths, because no single one is sufficient:
+Four discovery paths, because no single one is sufficient:
 
   1. Passive beacons. V4 devices broadcast an `announce` to 255.255.255.255:3141
      at ~1 Hz WHILE THEY HAVE NO SUBSCRIBER. The moment any hub subscribes, the
@@ -16,6 +16,10 @@ Three discovery paths, because no single one is sufficient:
      device_type). On startup we actively re-probe cached devices with the
      `get_info` command, recovering them even when their beacon is silent.
   3. Manual probe. Probe an explicit ip:cmd_port (lab setup / UI "add device").
+  4. Active discover. Broadcast {"verb":"discover"} to the announce port (PROTOCOL
+     5.5); every device answers at once with an announce, subscribed or not. Sent
+     at startup, whenever this computer's address changes, on a timer, and on
+     demand (send_discover), so a band is found without waiting for a beacon.
 
 Discovered + reachable devices are auto-subscribed when auto_subscribe is set.
 The contract this implements is documented in FlexGridV4-Firmware/lib/
@@ -30,6 +34,9 @@ import socket
 import threading
 import time
 
+from openmuscle import netutil
+from openmuscle.netutil import default_lan_ip, local_ip_for
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_UDP_PORT = 3141          # where we ask sources to unicast sensor frames
@@ -42,26 +49,11 @@ HEARTBEAT_S = 1.0                # firmware drops a subscriber after ~5 s silenc
 TCP_TIMEOUT_S = 3.0
 RESUBSCRIBE_BACKOFF_S = 2.0      # wait between failed re-subscribe attempts
 HUB_ID = "pc-native-discovery"
-
-
-def default_lan_ip(test_target=("10.0.0.1", 80)):
-    """Best-effort local LAN IP (the address sources should unicast to).
-
-    Opens a throwaway UDP socket toward the gateway and reads the chosen
-    source address; no packet is actually sent. Falls back to hostname
-    resolution, then loopback.
-    """
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(test_target)
-        return s.getsockname()[0]
-    except Exception:
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except Exception:
-            return "127.0.0.1"
-    finally:
-        s.close()
+DISCOVER_INTERVAL_S = 10.0       # active discover probe period while running
+NET_POLL_S = 5.0                 # how often to notice a changed local address
+DISCOVER_WAIT_S = 0.6            # how long a probe waits for replies
+MAX_SCAN_HOSTS = 1024            # hard cap for "Search my network"
+DISCOVER_PROBE = {"v": "1.0", "type": "cmd", "data": {"verb": "discover"}}
 
 
 def default_cache_path():
@@ -174,6 +166,11 @@ class _SubscriptionKeeper:
     """Owns one device's TCP command channel: subscribe, then heartbeat at
     1 Hz, auto-resubscribing on failure. Sensor frames arrive out-of-band on
     the manager's UDP port; this object never touches them.
+
+    pc_host is the address the device should send frames to. Pass a string for a
+    fixed address, or a callable(device_ip) -> str to work it out per device and
+    again at every subscribe, resubscribe and heartbeat (a laptop that moves
+    between networks keeps telling the band the address that now reaches it).
     """
 
     def __init__(self, device, pc_host, udp_port, on_state):
@@ -185,6 +182,12 @@ class _SubscriptionKeeper:
         self._tcp = None
         self._thread = None
         self._msg_id = 1
+        self._host = ""                   # last address we told the device
+
+    def _resolve_host(self):
+        ph = self.pc_host
+        host = ph(self.device.ip) if callable(ph) else ph
+        return host or ""
 
     def start(self):
         """Subscribe once synchronously; on success spawn the heartbeat thread.
@@ -199,11 +202,15 @@ class _SubscriptionKeeper:
 
     def _connect_and_subscribe(self):
         try:
+            host = self._resolve_host()
+            if not host:
+                raise OSError("this computer has no address on the same network "
+                              "as the device (%s)" % self.device.ip)
             tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             tcp.settimeout(TCP_TIMEOUT_S)
             tcp.connect((self.device.ip, self.device.cmd_port))
             ack = _send_cmd(tcp, self._next_id(), "subscribe",
-                            host=self.pc_host, port=self.udp_port,
+                            host=host, port=self.udp_port,
                             transport="wifi", hub_id=HUB_ID)
             data = (ack or {}).get("data") or {}
             if not data.get("accepted"):
@@ -213,6 +220,7 @@ class _SubscriptionKeeper:
                 self._emit()
                 return False
             self._tcp = tcp
+            self._host = host
             self.device.subscribed = True
             self.device.sub_error = ""
             self._emit()
@@ -228,8 +236,15 @@ class _SubscriptionKeeper:
             if self._stop.wait(HEARTBEAT_S):
                 break
             try:
+                host = self._resolve_host()
+                if not host:
+                    raise OSError("no address on the device's network")
+                if host != self._host:
+                    logger.info("discovery: address toward %s changed %s -> %s",
+                                self.device.device_id, self._host, host)
+                    self._host = host
                 _send_cmd(self._tcp, self._next_id(), "heartbeat",
-                          host=self.pc_host, port=self.udp_port,
+                          host=host, port=self.udp_port,
                           transport="wifi")
             except Exception as e:
                 # Connection dropped (device reboot, Wi-Fi blip). Try to
@@ -247,7 +262,7 @@ class _SubscriptionKeeper:
         if self._tcp is not None:
             try:
                 _send_cmd(self._tcp, 999, "unsubscribe",
-                          host=self.pc_host, port=self.udp_port,
+                          host=self._host, port=self.udp_port,
                           transport="wifi")
             except Exception:
                 pass
@@ -285,11 +300,19 @@ class DiscoveryManager:
 
     def __init__(self, pc_host=None, udp_port=DEFAULT_UDP_PORT,
                  announce_port=DEFAULT_ANNOUNCE_PORT,
-                 cache_path=None, auto_subscribe=True, on_event=None):
+                 cache_path=None, auto_subscribe=True, on_event=None,
+                 discover_targets=None, discover_interval_s=DISCOVER_INTERVAL_S,
+                 net_poll_s=NET_POLL_S):
         # Optional callback(kind, device) fired from _upsert when a source is
         # seen for the first time this run (kind == "found"). The web server
         # uses it to print a plain "Found FlexGrid band at <ip>" console line.
         self.on_event = on_event
+        # An explicit pc_host pins the address told to every device. Left unset
+        # (the normal case) it is worked out per device with a UDP connect() to
+        # that device's own IP, so a band on 192.168.4.x hears a 192.168.4.x
+        # address and one on the home router hears the home address. self.pc_host
+        # is then just the main address, refreshed when this computer moves.
+        self._pc_host_pinned = bool(pc_host)
         self.pc_host = pc_host or default_lan_ip()
         self.udp_port = udp_port              # data frames land here (3141)
         self.announce_port = announce_port    # dedicated beacon port (3140)
@@ -302,6 +325,54 @@ class DiscoveryManager:
         self._announce_thread = None
         self._announce_stop = threading.Event()
         self._announce_started = False
+        # Listener health: None before start(), True once UDP 3140 is bound,
+        # False when the bind failed (then only the 3141 fallback tap and the
+        # active discover probe can find devices). announce_error is a sentence.
+        self.listener_ok = None
+        self.announce_error = ""
+        # Beacon / probe health counters (read by diagnose and the status view).
+        self.last_announce_time = 0.0
+        self.announce_total = 0
+        self._announce_rate = netutil.RateWindow()
+        self.last_discover_time = 0.0
+        self.last_discover_found = 0
+        self._discover_targets = discover_targets   # None = broadcast addresses
+        self.discover_interval_s = discover_interval_s
+        self.net_poll_s = net_poll_s
+        self._watch_thread = None
+        self._pc_by_device = {}    # device_id -> address last told to that device
+
+    def pc_host_for(self, device_ip):
+        """The address of this computer that `device_ip` can reach.
+
+        Never loopback for a device that is not itself on loopback: a band on
+        another machine cannot send frames to 127.x, so "" (no usable address)
+        is returned instead and the subscribe fails with a readable reason.
+        """
+        if self._pc_host_pinned:
+            return self.pc_host
+        host = local_ip_for(device_ip)
+        if host and host.startswith("0."):
+            host = None
+        on_loopback = bool(device_ip) and device_ip.startswith("127.")
+        if host and (on_loopback or not host.startswith("127.")):
+            return host
+        if on_loopback:
+            return "127.0.0.1"
+        fallback = self.pc_host
+        return fallback if fallback and not fallback.startswith("127.") else ""
+
+    def _host_for_device(self, device):
+        host = self.pc_host_for(device.ip)
+        if host:
+            self._pc_by_device[device.device_id] = host
+        return host
+
+    def _pc_host_resolver(self, dev):
+        """callable(device_ip) for a keeper: the address toward that device now."""
+        def _resolve(_ip=None):
+            return self._host_for_device(dev)
+        return _resolve
 
     # ---- discovery inputs -------------------------------------------------
 
@@ -313,6 +384,9 @@ class DiscoveryManager:
             device_id = obj["id"]
         except (KeyError, TypeError):
             return None
+        self.last_announce_time = time.time()
+        self.announce_total += 1
+        self._announce_rate.add()
         services = obj.get("services") or {}
         cmd_port = int(services.get("cmd", DEFAULT_CMD_PORTS[0]))
         sensor_port = int(services.get("sensor", self.udp_port))
@@ -393,8 +467,10 @@ class DiscoveryManager:
             _work()
 
     def scan_subnet(self, base=None, start=1, end=254, timeout=0.5,
-                    max_workers=32, background=True):
-        """Probe every host on the local /24 with get_info to find V4 devices.
+                    max_workers=32, background=True, prefix=24,
+                    max_hosts=MAX_SCAN_HOSTS):
+        """Search my network: probe the hosts around this computer with
+        get_info to find V4 devices.
 
         The cold-cache discovery path: a device subscribed by another hub
         suppresses its beacon, so a freshly started hub with no cache cannot see
@@ -402,6 +478,11 @@ class DiscoveryManager:
         exit: "a late-joining hub reaches a singly-subscribed device"). Found
         devices flow through probe() -> _upsert (cache + auto-subscribe), exactly
         like the other discovery paths. Non-blocking by default.
+
+        prefix is the network size: 24 (default, 254 hosts) or 16 (a bigger
+        home or office network, scanned outward from this computer's own /24).
+        At most max_hosts addresses are tried, so a /16 never turns into a
+        65,000-address sweep.
 
         Returns the worker thread when background, else the list of device_ids
         found this scan.
@@ -412,9 +493,12 @@ class DiscoveryManager:
                            "(pc_host=%s)", self.pc_host)
             return None
         lo, hi = max(1, int(start)), min(254, int(end))
+        ips = []
+        for blk in self._scan_blocks(base, int(prefix)):
+            ips.extend("%s.%d" % (blk, h) for h in range(lo, hi + 1))
+        ips = ips[:max(1, int(max_hosts))]
 
-        def _scan_one(host):
-            ip = "%s.%d" % (base, host)
+        def _scan_one(ip):
             if ip == self.pc_host:
                 return None
             dev = self.probe(ip, timeout=timeout)
@@ -425,13 +509,13 @@ class DiscoveryManager:
             try:
                 from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                    for did in pool.map(_scan_one, range(lo, hi + 1)):
+                    for did in pool.map(_scan_one, ips):
                         if did:
                             found.append(did)
             except Exception as e:
                 logger.warning("discovery: subnet scan failed: %s", e)
-            logger.info("discovery: subnet scan of %s.%d-%d found %d device(s)",
-                        base, lo, hi, len(found))
+            logger.info("discovery: subnet scan of %d address(es) around %s.x "
+                        "found %d device(s)", len(ips), base, len(found))
             return found
 
         if background:
@@ -441,36 +525,135 @@ class DiscoveryManager:
             return t
         return _work()
 
+    @staticmethod
+    def _scan_blocks(base, prefix):
+        """The /24 blocks ("a.b.c") a scan covers: just this one for /24, the
+        enclosing /16 ordered nearest-first for /16."""
+        if prefix >= 24:
+            return [base]
+        a, b, c = base.split(".")
+        mine = int(c)
+        order = sorted(range(256), key=lambda n: (abs(n - mine), n))
+        return ["%s.%s.%d" % (a, b, n) for n in order]
+
+    # ---- active discover (PROTOCOL 5.5) -------------------------------------
+
+    def broadcast_targets(self):
+        """Addresses a discover probe is sent to: limited broadcast plus the
+        broadcast address of each local network (assumed /24, the home-router
+        norm; the limited broadcast covers the rest)."""
+        if self._discover_targets is not None:
+            return list(self._discover_targets)
+        targets = ["255.255.255.255"]
+        for ip in netutil.local_ipv4_addresses():
+            b = ".".join(ip.split(".")[:3]) + ".255"
+            if b not in targets:
+                targets.append(b)
+        return targets
+
+    def send_discover(self, wait_s=DISCOVER_WAIT_S):
+        """Ask every device on the network to announce itself right now.
+
+        Broadcasts {"verb":"discover"} to the announce port. Each device
+        answers with an immediate announce, broadcast AND unicast to this
+        probe's own socket, which is read here, so a device is found within a
+        round trip without waiting for its ~1 Hz beacon (and a subscribed
+        device, whose beacon is silent, answers too). Returns the device_ids
+        that answered. Safe to call from any thread.
+        """
+        payload = json.dumps(DISCOVER_PROBE).encode("utf-8")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        found = []
+        try:
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            except OSError:
+                pass
+            sock.bind(("0.0.0.0", 0))
+            sent = 0
+            for target in self.broadcast_targets():
+                try:
+                    sock.sendto(payload, (target, self.announce_port))
+                    sent += 1
+                except OSError:
+                    continue
+            self.last_discover_time = time.time()
+            if not sent:
+                return found
+            deadline = time.time() + max(0.05, wait_s)
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                sock.settimeout(remaining)
+                try:
+                    data, addr = sock.recvfrom(8192)
+                except (socket.timeout, OSError):
+                    break
+                try:
+                    obj = json.loads(data.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and obj.get("type") == "announce":
+                    dev = self.on_announce(obj, addr[0])
+                    if dev is not None and dev.device_id not in found:
+                        found.append(dev.device_id)
+                    # Gather the other devices' replies, but do not sit out the
+                    # whole window once the first one is in.
+                    deadline = min(deadline, time.time() + 0.25)
+        finally:
+            sock.close()
+        self.last_discover_found = len(found)
+        return found
+
     # ---- lifecycle --------------------------------------------------------
 
     def start(self):
-        """Start the dedicated announce-beacon listener and recover cached
-        devices. Idempotent. The dedicated port (3140 per PROTOCOL.md v1.0) is
-        the primary discovery path; the shared-3141 type-tap (wired via the data
-        listener's announce_handler) stays a fallback only."""
+        """Start the dedicated announce-beacon listener, the network watcher and
+        recover cached devices. Idempotent. The dedicated port (3140 per
+        PROTOCOL.md v1.0) is the primary discovery path; the shared-3141
+        type-tap (wired via the data listener's announce_handler) stays a
+        fallback only."""
         if not self._announce_started:
             self._announce_started = True
             self._announce_stop.clear()
-            self._announce_thread = threading.Thread(
-                target=self._announce_listen, name="om-announce-listener",
-                daemon=True)
-            self._announce_thread.start()
+            # Bind in the caller's thread so a busy port is known (listener_ok)
+            # by the time start() returns.
+            sock = self._bind_announce_socket()
+            if sock is not None:
+                self._announce_thread = threading.Thread(
+                    target=self._announce_listen, args=(sock,),
+                    name="om-announce-listener", daemon=True)
+                self._announce_thread.start()
+            if self._watch_thread is None or not self._watch_thread.is_alive():
+                self._watch_thread = threading.Thread(
+                    target=self._watch_network, name="om-net-watch", daemon=True)
+                self._watch_thread.start()
         self.recover_cache()
 
-    def _announce_listen(self):
+    def _bind_announce_socket(self):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            # Exclusive: a second OpenMuscle window must not share the beacon
+            # port (both would subscribe to every band).
+            netutil.make_exclusive(sock)
             sock.settimeout(1.0)
             sock.bind(("0.0.0.0", self.announce_port))
         except OSError as e:
             # Port busy / unavailable: fall back to the shared-3141 type-tap.
+            self.listener_ok = False
+            self.announce_error = netutil.bind_error_text(self.announce_port, "UDP", e)
             logger.warning(
                 "discovery: announce listener could not bind UDP %d (%s); "
-                "relying on the 3141 fallback tap", self.announce_port, e)
-            self._announce_started = False
-            return
+                "relying on the 3141 fallback tap and the discover probe",
+                self.announce_port, e)
+            return None
+        self.listener_ok = True
+        self.announce_error = ""
         logger.info("discovery: announce listener on UDP %d", self.announce_port)
+        return sock
+
+    def _announce_listen(self, sock):
         while not self._announce_stop.is_set():
             try:
                 data, addr = sock.recvfrom(8192)
@@ -489,6 +672,61 @@ class DiscoveryManager:
                     logger.warning("discovery: on_announce failed: %s", e)
         sock.close()
 
+    def _watch_network(self):
+        """Daemon thread: send a discover probe at startup, every
+        discover_interval_s, and the moment this computer's address changes
+        (laptop moved to another Wi-Fi, hotspot came up)."""
+        next_probe = 0.0
+        while not self._announce_stop.is_set():
+            changed = False
+            if not self._pc_host_pinned:
+                try:
+                    ip = default_lan_ip()
+                except Exception:
+                    ip = self.pc_host
+                if ip and ip != self.pc_host:
+                    logger.info("discovery: this computer's address changed %s -> %s",
+                                self.pc_host, ip)
+                    self.pc_host = ip
+                    changed = True
+            if changed or time.time() >= next_probe:
+                try:
+                    self.send_discover()
+                except Exception as e:
+                    logger.warning("discovery: discover probe failed: %s", e)
+                next_probe = time.time() + self.discover_interval_s
+            if self._announce_stop.wait(self.net_poll_s):
+                break
+
+    def status(self, data_listener=None, full=True):
+        """Health view for the UI: this computer's address toward the bands,
+        listener health and beacon counters. `data_listener` is the UDP 3141
+        UDPListener (owned by the web state), included so one object answers
+        "is anything listening". full=False skips the adapter-name lookup."""
+        now = time.time()
+        data_ok = None
+        data_error = ""
+        if data_listener is not None:
+            data_ok = data_listener.bound
+            data_error = data_listener.bind_error
+        return {
+            "pc_host": self.pc_host,
+            "pc_host_pinned": self._pc_host_pinned,
+            "pc_host_by_device": dict(self._pc_by_device),
+            "interface": (netutil.adapter_name_for_ip(self.pc_host)
+                          if full and netutil.is_usable_ipv4(self.pc_host) else None),
+            "listener_ok": {"announce": self.listener_ok, "data": data_ok},
+            "listener_errors": {"announce": self.announce_error, "data": data_error},
+            "ports": {"announce": self.announce_port, "data": self.udp_port},
+            "last_announce_s": (round(now - self.last_announce_time, 2)
+                                if self.last_announce_time else None),
+            "announces_per_min": self._announce_rate.per_minute(now),
+            "announces_total": self.announce_total,
+            "last_discover_s": (round(now - self.last_discover_time, 2)
+                                if self.last_discover_time else None),
+            "last_discover_found": self.last_discover_found,
+        }
+
     # ---- subscription control --------------------------------------------
 
     def subscribe(self, device_id):
@@ -500,8 +738,8 @@ class DiscoveryManager:
             existing = self._keepers.get(device_id)
             if existing is not None:
                 return dev.subscribed
-            keeper = _SubscriptionKeeper(dev, self.pc_host, self.udp_port,
-                                         self._on_keeper_state)
+            keeper = _SubscriptionKeeper(dev, self._pc_host_resolver(dev),
+                                         self.udp_port, self._on_keeper_state)
             self._keepers[device_id] = keeper
         ok = keeper.start()
         if not ok:

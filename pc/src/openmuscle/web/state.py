@@ -647,6 +647,9 @@ class AppState:
                 self.log_buffer.warn("recording",
                     "could not finish the recording cleanly on shutdown: {}".format(e))
         self.listener.stop()
+        # Free the broadcaster's executor thread, which may be blocked in
+        # packet_queue.get(); without this a stopped server can hang at exit.
+        self.listener.packet_queue.put(None)
         if self.discovery:
             self.discovery.stop()
         if self._hand_sock is not None:
@@ -672,6 +675,11 @@ class AppState:
                 while not self.listener.packet_queue.empty():
                     packets.append(self.listener.packet_queue.get_nowait())
             except Exception:
+                await asyncio.sleep(0.01)
+                continue
+            # None is the shutdown wake-up from stop(), not a packet.
+            packets = [p for p in packets if p is not None]
+            if not packets:
                 await asyncio.sleep(0.01)
                 continue
 
@@ -1367,10 +1375,34 @@ class AppState:
             # streaming also appear in `devices` above (via their frames); this
             # adds the ones that are known-but-silent plus per-device sub status.
             "discovery": self.discovery.snapshot() if self.discovery else [],
+            # This computer's address toward the bands plus listener health
+            # (UDP 3140 beacons / 3141 data bound or not), cheap to compute.
+            "network": self.network_status(full=False),
             # Replay-for-testing progress (a past capture re-fed into the live
             # pipeline). {"active": False} when idle; the VR shows a progress line.
             "replay": dict(self._replay_status),
         }
+
+    def network_status(self, full: bool = True) -> dict:
+        """pc_host (the address the bands are told), listener_ok for UDP 3140 and
+        3141, beacon counters. full=True also names the network adapter (runs one
+        short system command), so the snapshot path asks for full=False."""
+        listener = getattr(self, "listener", None)
+        try:
+            if self.discovery is not None:
+                st = self.discovery.status(data_listener=listener, full=full)
+            else:
+                st = {"pc_host": None, "listener_ok": {"announce": None, "data": None},
+                      "listener_errors": {"announce": "", "data": ""},
+                      "ports": {"announce": None, "data": getattr(self, "udp_port", None)}}
+                if listener is not None:
+                    st["listener_ok"]["data"] = listener.bound
+                    st["listener_errors"]["data"] = listener.bind_error
+            if listener is not None:
+                st["data_listener"] = listener.health()
+            return st
+        except Exception:
+            return {}
 
     def _has_any_engine(self) -> bool:
         """True if any inference model (single or per-role) is loaded."""

@@ -29,9 +29,15 @@ openmuscle web --model X --hand 10.0.0.55:3145                 # custom hand por
 
 **Firewall.** The bands send UDP to this computer (port 3141 for data, 3140 for discovery beacons), so the first run may ask whether to allow Python through the firewall:
 
-- **Windows:** choose **Allow** for **Private networks**. To pre-add the rules instead (admin PowerShell): `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3140-3141" -Direction Inbound -Protocol UDP -LocalPort 3140,3141 -Action Allow`.
+- **Windows:** choose **Allow** for **Private networks**. Both ports are needed: 3141 carries the sensor data and 3140 carries the "I am here" beacons, and a rule for only one of them leaves the bands invisible or silent. A rule is tied to a network type, so if Windows has labelled your Wi-Fi **Public**, a Private-only rule does nothing (switch the network to Private in Settings > Network & internet > Wi-Fi > your network, or add the rule for Public too). To add the rule without the prompt run `openmuscle firewall` (it shows the rule, asks, then raises the Windows administrator prompt), or in an admin PowerShell: `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3140-3141" -Direction Inbound -Protocol UDP -LocalPort 3140,3141 -Action Allow -Profile Private,Domain`. A program-based rule for `python.exe` also works.
 - **macOS:** click **Allow** on "Do you want the application to accept incoming network connections?", and allow Local Network access if macOS asks.
 - **Linux:** if `ufw` is on, `sudo ufw allow 3140:3141/udp`.
+
+`openmuscle doctor` checks all of this and names the fix, and the app's "why can't I see my device?" panel uses the same checks (`GET /api/discovery/diagnose`).
+
+**Keeping the computer awake.** While the server runs it asks the operating system not to sleep from inactivity (Windows `SetThreadExecutionState`, macOS `caffeinate`; nothing on Linux), so a recording is not cut off. Closing a laptop lid still puts it to sleep. `--no-keep-awake` turns this off.
+
+**Ports.** A second `openmuscle web` is detected and exits with one line. The UDP data port is opened exclusively (no address reuse), so a program that already holds it is reported rather than silently sharing it; the UI shows a bound/not-bound state for both UDP ports in `GET /api/discovery/status`.
 
 ## Debug mode (`--debug`)
 
@@ -157,6 +163,13 @@ from the CSV (a half-written last row is dropped).
 | GET | `/static/*` | static assets (no-cache headers in dev) |
 | WS  | `/ws/live` | server-pushes the `tick` snapshot above on every batch of packets |
 | GET | `/api/devices` | same `devices` array as in the tick |
+| GET | `/api/mode` | `{debug, app: "openmuscle", version}`; `app` lets a launcher or a second instance tell this server from any other program on the port |
+| GET | `/api/discovery` | the known bands as a list. `?detail=1` returns `{devices, pc_host, interface, listener_ok: {announce, data}, listener_errors, ports, last_announce_s, announces_per_min, last_discover_s, ...}` instead (same as `/api/discovery/status`). `pc_host` is this computer's address on the bands' network, worked out per device with a UDP connect to the device's own IP (never loopback for a band on the network) and re-worked on every resubscribe and heartbeat |
+| GET | `/api/discovery/status` | the detail view above |
+| POST | `/api/discovery/discover` | broadcast the PROTOCOL 5.5 `{"verb":"discover"}` probe; every device answers at once. Returns `{found: [device_id], devices}`. The server also sends it at startup, every 10 s, and whenever this computer's address changes |
+| POST | `/api/discovery/scan` | "Search my network": probe the addresses around this computer with `get_info`. Body `{prefix?: 24 or 16, max_hosts?: up to 1024, start?, end?, timeout?}`. Returns `{found, devices}` |
+| GET | `/api/discovery/diagnose` | the self-diagnosis behind `openmuscle doctor`: `{ok, checks: [{id, title, status: pass/warn/fail, detail, fix}], udp_port, bound_host, devices_seen: [{device_id, ip, age_s}], last_announce_s, firewall: {platform, likely_blocked, how_to_fix}, likely_cause, advice: {sentence, action}}`. `likely_cause` is one of `none`, `firewall`, `different_network`, `client_isolation`, `device_offline`, `port_conflict`, `no_network`. `?discover=0` skips the live probe |
+| POST | `/api/support-report` | writes a zip (versions, doctor results, recent log lines; no Wi-Fi names, passwords or capture data) into `~/OpenMuscle/exports`; returns `{ok, path, size}` |
 | GET | `/api/recording` | `{recording, filename, sensor_device_id, label_device_id, window_ms, rows, duration_s, matched, unpaired_sensor, match_rate, ...}` or `{recording: false}` |
 | POST | `/api/recording` | body `{sensor_device_id?, label_device_id?, filename?, window_ms?}` — starts a paired capture. All fields optional. `sensor_device_id` defaults to first flexgrid; `label_device_id` defaults to first lask5. Pass `label_device_id: ""` to record sensor-only (no pairing). |
 | DELETE | `/api/recording` | stops the active capture, returns final stats + sidecar paths |

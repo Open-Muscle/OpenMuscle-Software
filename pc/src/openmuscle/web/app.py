@@ -10,6 +10,7 @@ Launch via the CLI: `openmuscle web --port 8000`
 
 import asyncio
 import ipaddress
+import os
 import shutil
 import subprocess
 import sys
@@ -24,10 +25,19 @@ from pydantic import BaseModel
 
 from openmuscle import paths as om_paths
 from openmuscle.data import export_bundle as eb
+from openmuscle import doctor, netutil
 from openmuscle.web.state import AppState
 
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("openmuscle")
+    except Exception:
+        return ""
 
 
 def _reveal_path_in_file_manager(path: Path, select_file: bool) -> None:
@@ -108,7 +118,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                model_right: Optional[str] = None,
                debug: bool = False,
                on_device_event=None,
-               quiet: bool = False) -> FastAPI:
+               quiet: bool = False,
+               http_port: int = 8000) -> FastAPI:
     state = AppState(
         udp_port=udp_port,
         captures_dir=captures_dir,
@@ -161,6 +172,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     # reads /api/mode once on load and unlocks the debug panels; a couple of
     # local-only conveniences (the FS opener) are refused when LAN-exposed.
     app.state.debug = debug
+    app.state.http_port = http_port
 
     # ----- static frontend -----
     # Disable browser caching so live edits to app.js / styles.css are picked up
@@ -350,7 +362,10 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         debug=True means the server was started with `openmuscle web --debug`
         (plain-HTTP + LAN-open); the UI then shows a warning ribbon and the
         verbose panels (hardware health, raw-packet inspector, per-session eval)."""
-        return {"debug": bool(getattr(app.state, "debug", False))}
+        return {"debug": bool(getattr(app.state, "debug", False)),
+                # Launchers and a second `openmuscle web` read this to tell an
+                # OpenMuscle server from any other program on the port.
+                "app": "openmuscle", "version": _package_version()}
 
     @app.get("/api/storage")
     async def get_storage(request: Request = None):
@@ -369,10 +384,71 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     # ----- REST: native V4 discovery -----
 
     @app.get("/api/discovery")
-    async def list_discovery():
+    async def list_discovery(detail: bool = False):
         """Known V4 sources + subscription state (auto-discover replaces the
-        manual bridge_subscriber.py)."""
-        return JSONResponse(state.discovery.snapshot() if state.discovery else [])
+        manual bridge_subscriber.py). A plain list, which existing clients
+        iterate. With ?detail=1 the same list comes back inside an object with
+        this computer's address and listener health: {devices, pc_host,
+        interface, listener_ok: {announce, data}, ...} (same as /status)."""
+        devices = state.discovery.snapshot() if state.discovery else []
+        if not detail:
+            return JSONResponse(devices)
+        return JSONResponse(await _discovery_detail(devices))
+
+    async def _discovery_detail(devices=None):
+        if devices is None:
+            devices = state.discovery.snapshot() if state.discovery else []
+        net = await asyncio.to_thread(state.network_status, True)
+        return dict(net, devices=devices)
+
+    @app.get("/api/discovery/status")
+    async def discovery_status():
+        """Devices plus the health of discovery: pc_host (the address the bands
+        are told), listener_ok for the beacon port (3140) and data port (3141)
+        with a plain error sentence for each, last announce age, announces per
+        minute, last discover probe."""
+        return JSONResponse(await _discovery_detail())
+
+    @app.post("/api/discovery/discover")
+    async def discovery_discover():
+        """Ask every device on the network to announce itself now (broadcast
+        {"verb":"discover"}). Returns the device_ids that answered within about
+        a second plus the refreshed device list."""
+        if not state.discovery:
+            raise HTTPException(status_code=409, detail="discovery disabled")
+        found = await asyncio.to_thread(state.discovery.send_discover)
+        return {"found": found, "devices": state.discovery.snapshot()}
+
+    @app.get("/api/discovery/diagnose")
+    async def discovery_diagnose(discover: bool = True):
+        """Why can't I see my band? The same checks as `openmuscle doctor`, run
+        against this running server: {ok, checks:[{id,title,status,detail,fix}],
+        udp_port, bound_host, devices_seen, last_announce_s, firewall:{platform,
+        likely_blocked, how_to_fix}, likely_cause, advice:{sentence, action}}."""
+        result = await asyncio.to_thread(_run_doctor, discover, False)
+        return JSONResponse(result)
+
+    def _run_doctor(discover, redact):
+        return doctor.run_doctor(
+            http_port=getattr(app.state, "http_port", 8000),
+            udp_port=state.udp_port,
+            announce_port=(state.discovery.announce_port if state.discovery
+                           else 3140),
+            discovery=state.discovery, data_listener=state.listener,
+            redact=redact, discover=discover)
+
+    @app.post("/api/support-report")
+    async def support_report():
+        """Write a zip of versions, the doctor results and recent logs into the
+        exports folder and return its path. It never includes Wi-Fi names,
+        passwords or capture data."""
+        def _build():
+            ssid = netutil.wifi_ssid()
+            result = _run_doctor(True, True)
+            entries = state.log_buffer.entries(since_id=0, limit=400)
+            path = doctor.build_support_zip(result, entries, ssid=ssid)
+            return {"ok": True, "path": path, "size": os.path.getsize(path)}
+        return await asyncio.to_thread(_build)
 
     class ProbeBody(BaseModel):
         ip: str
@@ -394,18 +470,23 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         start: int = 1
         end: int = 254
         timeout: float = 0.5
+        prefix: int = 24            # 24 = this /24; 16 = the bigger home/office net
+        max_hosts: int = 1024       # hard cap on addresses tried
 
-    @app.post("/api/discovery/scan")
+    @app.post("/api/discovery/scan", summary="Search my network")
     async def discovery_scan(body: ScanBody):
-        """Probe the local /24 for V4 devices that are not beaconing (held by
-        another hub), with no manual IP. Cold-cache discovery, the P3
-        late-joiner path. Runs to completion (a few seconds) and returns the
-        device_ids found plus the refreshed device list."""
+        """Search my network: probe the addresses around this computer for V4
+        devices that are not beaconing (held by another hub), with no manual IP.
+        Cold-cache discovery, the P3 late-joiner path. prefix 24 tries this
+        network's 254 addresses; 16 widens it to the surrounding /16, never more
+        than max_hosts (capped at 1024). Runs to completion (a few seconds) and
+        returns the device_ids found plus the refreshed device list."""
         if not state.discovery:
             raise HTTPException(status_code=409, detail="discovery disabled")
+        prefix = 16 if body.prefix <= 16 else 24
         found = await asyncio.to_thread(
             state.discovery.scan_subnet, None, body.start, body.end,
-            body.timeout, 32, False)      # background=False -> returns id list
+            body.timeout, 32, False, prefix, max(1, min(body.max_hosts, 1024)))
         return {"found": found or [], "devices": state.discovery.snapshot()}
 
     class DeviceIdBody(BaseModel):
@@ -1129,6 +1210,10 @@ def _open_browser_when_up(host: str, port: int, url: str, wait_s: float = 30.0) 
     threading.Thread(target=_work, name="om-open-browser", daemon=True).start()
 
 
+class ServerStartError(RuntimeError):
+    """The server could not start (port busy). str(e) is one plain sentence."""
+
+
 def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
           captures_dir: Optional[str] = None,
           model_path: Optional[str] = None,
@@ -1141,8 +1226,13 @@ def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
           debug: bool = False,
           open_browser_url: Optional[str] = None,
           verbose: bool = False,
-          on_device_event=None):
+          on_device_event=None,
+          keep_awake: bool = True):
     """Run the web UI server (blocks).
+
+    keep_awake: ask the OS not to sleep while the server runs (see keepawake.py);
+    released when this returns. Raises ServerStartError, before anything is
+    started, when the HTTP port is already taken.
 
     open_browser_url: when set, the default browser is opened to this address
     once (after the server answers on its port). verbose restores uvicorn's
@@ -1154,6 +1244,15 @@ def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
     on the headset (see README).
     """
     import uvicorn
+    # Check the port BEFORE any thread or socket exists: a bind failure inside
+    # uvicorn happens after the app has started its workers, and the process then
+    # lingers instead of exiting. The check is exclusive on Windows, where a plain
+    # bind would let a second server share the port.
+    if not netutil.tcp_port_free(host, port):
+        raise ServerStartError(
+            "Port %d is already in use, so OpenMuscle cannot start there. Is "
+            "OpenMuscle already running in another window? Try "
+            "http://localhost:%d , or pick another port with --port." % (port, port))
     app = create_app(
         udp_port=udp_port,
         captures_dir=captures_dir,
@@ -1165,6 +1264,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
         debug=debug,
         on_device_event=on_device_event,
         quiet=not verbose,
+        http_port=port,
     )
     if open_browser_url:
         _open_browser_when_up(host, port, open_browser_url)
@@ -1172,8 +1272,17 @@ def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
     # couple seconds even if a WebSocket (Quest / gamepad / another dashboard
     # tab) is still open, instead of hanging forever. Belt to the lifespan's
     # suspenders (which closes the /ws/live clients it tracks).
-    uvicorn.run(app, host=host, port=port,
-                log_level="info" if verbose else "warning",
-                access_log=verbose,
-                ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
-                timeout_graceful_shutdown=3)
+    awake = None
+    if keep_awake:
+        from openmuscle.keepawake import KeepAwake
+        awake = KeepAwake()
+        awake.start()
+    try:
+        uvicorn.run(app, host=host, port=port,
+                    log_level="info" if verbose else "warning",
+                    access_log=verbose,
+                    ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile,
+                    timeout_graceful_shutdown=3)
+    finally:
+        if awake is not None:
+            awake.stop()
