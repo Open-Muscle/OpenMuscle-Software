@@ -325,21 +325,69 @@ def predict(model, port):
 @main.command()
 @click.option("--port", default=3141, help="UDP port to send to")
 @click.option("--device-type", default="flexgrid",
-              type=click.Choice(["flexgrid", "lask5", "quest_hand", "combo"]),
-              help="Device type to simulate. quest_hand streams synthetic "
-                   "WebXR hand frames to the web server's /ws/quest; combo "
-                   "adds a correlated flexgrid UDP device so record/train/"
-                   "predict works end to end without hardware.")
+              type=click.Choice(["flexgrid", "lask5", "quest_hand", "combo",
+                                 "rehearsal"]),
+              help="Device type to simulate. rehearsal is a whole V4 kit with no "
+                   "hardware: 1 or 2 learnable 15x4 bands (announced on the "
+                   "discovery port) plus a finger labeler driven by the same "
+                   "curls, so record, train and predict give a sensible model. "
+                   "quest_hand streams synthetic WebXR hand frames to the web "
+                   "server's /ws/quest; combo adds a correlated flexgrid UDP "
+                   "device. flexgrid and lask5 send random noise (plumbing "
+                   "tests only, not learnable).")
 @click.option("--replay", type=click.Path(exists=True),
               help="Replay a capture file instead of generating synthetic data")
 @click.option("--target-ip", default="127.0.0.1", help="Target IP address")
 @click.option("--web-port", default=8000,
-              help="openmuscle web HTTP port (quest_hand/combo only)")
-def simulate(port, device_type, replay, target_ip, web_port):
-    """Send synthetic or replayed sensor data."""
+              help="openmuscle web HTTP(S) port (quest_hand/combo/rehearsal)")
+@click.option("--web-scheme", default="auto",
+              type=click.Choice(["auto", "http", "https"]),
+              help="How to reach the web server: auto probes the port for TLS, "
+                   "so an HTTPS server (mkcert pair) gets wss:// automatically.")
+@click.option("--announce-port", default=3140,
+              help="UDP port for discovery beacons (rehearsal)")
+@click.option("--bands", default=2, type=click.Choice(["1", "2"]),
+              help="Rehearsal: number of pressure bands (left, or left + right)")
+@click.option("--labeler", default="lask5",
+              type=click.Choice(["lask5", "webcam", "quest"]),
+              help="Rehearsal: what supplies the finger labels. lask5 is a "
+                   "simulated LASK5 over UDP; webcam and quest stream a hand "
+                   "to the web server.")
+@click.option("--noise", default="default",
+              help="Rehearsal: sensor noise, low / default / high or a number "
+                   "(multiplier). default gives a clean learnable kit; high "
+                   "buries the signal, so a model trained on it is weak.")
+@click.option("--seed", default=1138, type=int,
+              help="Rehearsal: random seed (same seed, same kit)")
+@click.option("--speed", default=1.0, type=float,
+              help="Rehearsal: run faster than real time (for tests)")
+@click.option("--duration", default=None, type=float,
+              help="Rehearsal: stop after this many seconds (default: until Ctrl+C)")
+@click.option("--tag-roles/--no-tag-roles", default=True,
+              help="Rehearsal: tag the bands left/right and the LASK5 as labeler "
+                   "on the running web server (otherwise set them in Sources)")
+def simulate(port, device_type, replay, target_ip, web_port, web_scheme,
+             announce_port, bands, labeler, noise, seed, speed, duration,
+             tag_roles):
+    """Send synthetic or replayed sensor data.
+
+    
+    No hardware? Run a whole kit next to `openmuscle web`:
+
+        openmuscle simulate --device-type rehearsal
+    """
     from openmuscle.simulate.transmitter import run_simulator
+    if device_type == "rehearsal":
+        from openmuscle.simulate.rehearsal import parse_noise
+        try:
+            parse_noise(noise)
+        except ValueError as e:
+            raise click.BadParameter(str(e), param_hint="--noise")
     run_simulator(port=port, device_type=device_type,
-                  replay_file=replay, target_ip=target_ip, web_port=web_port)
+                  replay_file=replay, target_ip=target_ip, web_port=web_port,
+                  web_scheme=web_scheme, announce_port=announce_port,
+                  bands=int(bands), labeler=labeler, noise=noise, seed=seed,
+                  speed=speed, duration=duration, tag_roles=tag_roles)
 
 
 @main.command()

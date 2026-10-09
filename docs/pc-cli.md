@@ -81,6 +81,42 @@ openmuscle predict -m my_model.pkl --port 3141
 
 Send synthetic data for testing without hardware.
 
+**No hardware at all?** One command runs a whole V4 kit next to `openmuscle web`:
+
+```bash
+openmuscle web                                  # terminal 1
+openmuscle simulate --device-type rehearsal     # terminal 2
+```
+
+`rehearsal` is the practice run. It starts two 15x4 pressure bands (60 cells each,
+`flexgrid-sim-left` and `flexgrid-sim-right`) and a LASK5 (`lask5-sim`: four pistons
+0..1 plus a joystick) at 25 Hz. The bands announce on the discovery beacon port and
+answer the command channel, so they show up in the Sources list like real hardware, with
+IMU and battery telemetry. Once discovered they are tagged left / right and the LASK5 as
+labeler for you (`--no-tag-roles` to do it by hand in Sources). The bands and the LASK5
+are driven by the same finger curls, with a rest then move schedule, so a capture you
+record from them is learnable: record, train and predict give a sensible model. Left and
+right have different per-cell gain and offset, so train one model per hand.
+
+```bash
+openmuscle simulate --device-type rehearsal --bands 1               # left band only
+openmuscle simulate --device-type rehearsal --labeler webcam        # hand from a camera feed
+openmuscle simulate --device-type rehearsal --labeler quest         # hand as a Quest would send it
+openmuscle simulate --device-type rehearsal --noise high            # a weak dataset on purpose
+openmuscle simulate --device-type rehearsal --noise 3 --seed 7      # numeric noise multiplier
+```
+
+`--noise` takes `low`, `default`, `high` or a number. `default` gives a held-out score
+well above 0.6 after about 40 s of recording; `high` buries the signal (held-out score
+near zero), which is handy for seeing how the app reports a weak dataset. The `webcam` and
+`quest` labelers stream to the web server, over `wss://` automatically when the server
+is HTTPS (`--web-scheme auto|http|https`). Use `--web-port` and `--announce-port` if the
+server is not on 8000 / 3140.
+
+The other device types below are plumbing tests only: `flexgrid` and `lask5` send random
+noise, so a model trained on them learns nothing. `combo` is learnable too (a 16x4
+flexgrid plus a Quest hand from the same curls).
+
 ```bash
 openmuscle simulate --device-type flexgrid
 openmuscle simulate --device-type lask5 --target-ip 192.168.1.100
