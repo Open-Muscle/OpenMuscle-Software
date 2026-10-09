@@ -12,9 +12,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 # pc/data holds untracked user captures and models, so only its README is scanned.
-SCAN_DIRS = ["pc/src", "pc/tests", "docs", "embedded", "analysis"]
+SCAN_DIRS = ["pc/src", "pc/tests", "docs", "embedded", "analysis", "installers"]
 SCAN_FILES = ["pc/data/README.md"]
-SCAN_EXT = {".py", ".js", ".html", ".css", ".md", ".json", ".bat"}
+SCAN_EXT = {".py", ".js", ".html", ".css", ".md", ".json", ".bat", ".ps1", ".sh",
+            ".command", ".desktop"}
 SELF = Path(__file__).resolve()
 
 # Patterns are assembled from pieces so this file does not match itself.
