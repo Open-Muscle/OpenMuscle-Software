@@ -65,6 +65,32 @@ def test_thresholds_are_one_tunable_dict():
     assert describe_result(_metrics(0.8))["grade"] == "good"
 
 
+# ------------------------------------------------------ no honest number cases
+
+@pytest.mark.parametrize("method,expect,forbid", [
+    ("held_out_capture", "had no finger movement", "before held-out testing existed"),
+    ("held_out_tail", "had no finger movement", "before held-out testing existed"),
+    ("none", "too few rows", "before held-out testing existed"),
+    ("random_split", "before held-out testing existed", "had no finger movement"),
+    (None, "before held-out testing existed", "had no finger movement"),
+])
+def test_no_honest_number_message_depends_on_why(method, expect, forbid):
+    v = describe_result({"eval_method": method, "curl_r2": None})
+    assert v["grade"] == "untested"
+    assert v["show_live_ok"] is False
+    assert v["score_pct"] is None
+    assert expect in v["detail"]
+    assert forbid not in v["detail"]
+    assert v["next_step"]
+
+
+def test_held_out_without_movement_asks_for_a_take_with_movement():
+    v = describe_result(_metrics(None))
+    assert v["grade"] == "untested"
+    assert "could not be scored" in v["detail"]
+    assert "includes finger movement" in v["next_step"]
+
+
 # ---------------------------------------------------------------- the wording
 
 def test_percentage_is_plain_and_never_negative():

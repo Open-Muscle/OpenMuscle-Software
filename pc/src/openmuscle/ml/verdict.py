@@ -140,10 +140,16 @@ def describe_result(metrics, checks=None, n_captures=None, hand_side=None,
         if msgs:
             warn_text = " Heads up: " + " ".join(m if m.endswith(".") else m + "." for m in msgs)
 
-    # No honest number: a legacy model (trained before held-out scoring existed)
-    # or a recording too short to hold anything out.
+    # No honest number: a legacy model (trained before held-out scoring existed),
+    # a recording too short to hold anything out, or a held-out part that had no
+    # finger movement to score.
     if score is None or method in (None, "none", "random_split"):
-        if method == "none":
+        if method in ("held_out_capture", "held_out_tail"):
+            detail = ("The recording kept aside for testing had no finger movement "
+                      "(or too little), so the model could not be scored.")
+            nxt = ("Hold out or record a take that includes finger movement and "
+                   "train again.")
+        elif method == "none":
             detail = ("There were too few rows to keep any aside for a fair test, so "
                       "this model has not been tested on anything it did not train on.")
             nxt = "Record a longer take (a minute or more of moving the fingers) and train again."

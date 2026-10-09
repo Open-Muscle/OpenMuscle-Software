@@ -231,6 +231,28 @@ def test_multi_capture_holds_out_whole_captures(tmp_path):
     assert m["eval_captures"] == ["take0.csv"]
 
 
+def test_rest_take_as_last_capture_gets_a_truthful_verdict(tmp_path):
+    from openmuscle.ml.verdict import describe_result
+    paths = []
+    for k in range(2):
+        p = tmp_path / f"take{k}.csv"
+        rows = _ramp_rows(120, seed=k)
+        if k == 1:                                   # last take is a rest take
+            rows = [(f, [0.5, 0.5]) for f, _l in rows]
+        _write(p, rows, 4, 2)
+        paths.append(str(p))
+    comb = tmp_path / "comb.csv"
+    combine_csvs(paths, str(comb), capture_column="_capture")
+    _model, m = train_model(str(comb), n_estimators=TREES,
+                            output=str(tmp_path / "m.pkl"))
+    assert m["eval_method"] == "held_out_capture"
+    assert m["curl_r2"] is None
+    v = describe_result(m)
+    assert v["grade"] == "untested" and v["show_live_ok"] is False
+    assert "before held-out testing existed" not in v["detail"]
+    assert "no finger movement" in v["detail"]
+
+
 def test_train_from_captures_orders_by_created_ms_and_reports_eval_captures(tmp_path):
     caps = tmp_path / "captures"
     caps.mkdir()
