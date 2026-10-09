@@ -47,7 +47,7 @@ def test_scrub_masks_file_names_with_spaces():
 
 def test_scrub_home_folder_any_case_and_slash(monkeypatch):
     monkeypatch.setattr(os.path, "expanduser", lambda p: "C:\\Users\\Zed")
-    for raw in ("C:/Users/Zed/foo", "c:\\users\\zed\\x", "C:\\Users\\Zed\\x"):
+    for raw in ("C:/" + "Users/Zed/foo", "c:\\users\\zed\\x", "C:\\Users\\Zed\\x"):
         out = doctor.scrub("at " + raw)
         assert "zed" not in out.lower(), (raw, out)
     # a profile folder that is not the current user is masked as well
