@@ -32,8 +32,10 @@ import csv
 import io
 import json
 import os
+import re
 import textwrap
 import time
+import uuid
 import zipfile
 import zlib
 from dataclasses import dataclass, field
@@ -184,16 +186,24 @@ def bundle_filename(session_id: Optional[str] = None, now: Optional[float] = Non
 
 def unique_path(folder, filename) -> Path:
     """folder/filename, or folder/name-2.zip ... when that is taken. Never
-    overwrites an earlier export."""
+    overwrites an earlier export.
+
+    The name is reserved by creating an empty file there (exclusive create), so
+    two exports started at the same moment never get the same path. The build
+    replaces the empty placeholder when it finishes.
+    """
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     p = folder / filename
     stem, suffix = p.stem, p.suffix
     n = 2
-    while p.exists():
-        p = folder / "{}-{}{}".format(stem, n, suffix)
-        n += 1
-    return p
+    while True:
+        try:
+            with open(p, "xb"):
+                return p
+        except FileExistsError:
+            p = folder / "{}-{}{}".format(stem, n, suffix)
+            n += 1
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +373,17 @@ def _summary_csv(facts: Sequence[dict], include_notes: bool) -> str:
 # Generated files
 # ---------------------------------------------------------------------------
 
+# Machine tags the app adds itself ("session:<timestamp id>"). Any other tag was
+# typed by a person and might hold a name, so it stays out unless notes are on.
+_MACHINE_TAG = re.compile(r"^session:[0-9T:\-]+$")
+
+
+def _machine_tags(tags) -> list:
+    if not isinstance(tags, (list, tuple)):
+        return []
+    return [t for t in tags if isinstance(t, str) and _MACHINE_TAG.match(t)]
+
+
 def _session_json(session: Optional[dict], takes: Sequence[_Take],
                   facts: Sequence[dict], include_notes: bool) -> str:
     if session is not None:
@@ -382,7 +403,10 @@ def _session_json(session: Optional[dict], takes: Sequence[_Take],
     out["captures"] = [t.name for t in takes]
     out["capture_count"] = len(takes)
     if not include_notes:
+        # Free text typed by a person (a path or URL, labels, notes) stays out.
         out["notes"] = ""
+        out["video_ref"] = ""
+        out["tags"] = _machine_tags(out.get("tags"))
     return json.dumps(out, indent=2, default=str) + "\n"
 
 
@@ -592,6 +616,8 @@ def _meta_text(meta_path: Path, include_notes: bool) -> Optional[bytes]:
         return None
     if "notes" in data:
         data["notes"] = ""
+    if "tags" in data:
+        data["tags"] = _machine_tags(data.get("tags"))
     data.pop("extras", None)
     return (json.dumps(data, indent=2, default=str) + "\n").encode("utf-8")
 
@@ -634,7 +660,9 @@ def build_session_bundle(captures_dir, sessions_dir, out_file,
 
     out = Path(out_file)
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(out.name + ".part")
+    # A name no other export can share, so two builds of the same session at once
+    # (double click, two tabs) never write into one temporary file.
+    tmp = out.with_name("{}.{}-{}.part".format(out.name, os.getpid(), uuid.uuid4().hex[:8]))
     arcnames: List[str] = []
     uncompressed = 0
     try:
@@ -679,10 +707,13 @@ def build_session_bundle(captures_dir, sessions_dir, out_file,
                     uncompressed += written
         os.replace(tmp, out)
     except BaseException:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+        for leftover in (tmp, out):
+            try:
+                # An empty `out` is the placeholder unique_path reserved.
+                if leftover is tmp or leftover.stat().st_size == 0:
+                    leftover.unlink()
+            except OSError:
+                pass
         raise
     return BundleReport(
         out_file=out, session_id=(session or {}).get("id") if session else None,

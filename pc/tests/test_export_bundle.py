@@ -287,3 +287,68 @@ def test_estimate_flags_large_bundles(env, monkeypatch):
     monkeypatch.setattr(eb, "WARN_BYTES", 10)
     est = eb.estimate_bundle(env.captures, env.sessions, session_id=env.sid)
     assert est["warn_large"] is True
+
+
+def test_free_text_fields_are_left_out_without_notes(tmp_path):
+    state = make_state(tmp_path / "captures")
+    t0 = time.time()
+    state._handle_packet(band_packet(t0, 0))
+    state._handle_packet(labeler_packet(t0, 0))
+    sess = state.start_session(name="baseline", wearer="P01",
+                               video_ref="D:/videos/SECRETNAME/v.mp4",
+                               tags=["SECRETTAG"])
+    record_take(state, "first.csv")
+    state.write_capture_meta("first.csv", {"tags": ["SECRETTAG", "OTHERSECRET"]})
+    state.end_session()
+    out = tmp_path / "out" / "b.zip"
+    eb.build_session_bundle(state.captures_dir, state.sessions_dir, out,
+                            session_id=sess["id"])
+    with zipfile.ZipFile(out) as zf:
+        for n in zf.namelist():
+            blob = zf.read(n)
+            assert b"SECRETNAME" not in blob, n
+            assert b"SECRETTAG" not in blob, n
+            assert b"OTHERSECRET" not in blob, n
+        sj = json.loads(zf.read("session.json"))
+        meta = json.loads(zf.read("takes/first.meta.json"))
+    assert sj["video_ref"] == ""
+    assert sj["tags"] == []
+    assert all(t.startswith("session:") for t in meta["tags"])
+
+    eb.build_session_bundle(state.captures_dir, state.sessions_dir, out,
+                            session_id=sess["id"], include_notes=True)
+    with zipfile.ZipFile(out) as zf:
+        assert json.loads(zf.read("session.json"))["video_ref"] == "D:/videos/SECRETNAME/v.mp4"
+        assert "SECRETTAG" in json.loads(zf.read("session.json"))["tags"]
+
+
+def test_concurrent_exports_get_distinct_valid_zips(env):
+    import threading
+
+    folder = env.tmp / "exports"
+    name = eb.bundle_filename(env.sid)
+    results, errors = [], []
+    barrier = threading.Barrier(6)
+
+    def one():
+        try:
+            barrier.wait()
+            out = eb.unique_path(folder, name)
+            eb.build_session_bundle(env.captures, env.sessions, out, session_id=env.sid)
+            results.append(out)
+        except BaseException as e:      # collected and asserted below
+            errors.append(e)
+
+    threads = [threading.Thread(target=one) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len({str(p) for p in results}) == 6
+    for p in results:
+        with zipfile.ZipFile(p) as zf:
+            assert zf.testzip() is None
+            assert "summary.csv" in zf.namelist()
+    assert not list(folder.glob("*.part"))
+    assert len(list(folder.glob("*.zip"))) == 6
