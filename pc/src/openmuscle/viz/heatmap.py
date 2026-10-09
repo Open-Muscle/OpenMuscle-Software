@@ -24,7 +24,7 @@ def run_heatmap(port: int = 3141, save_dir: str = None):
     """
     from openmuscle.data.storage import CaptureWriter
 
-    listener = UDPListener(port=port)
+    listener = UDPListener(port=port, strict=True)
     listener.start()
 
     # Default to V3 (15x4); will adapt automatically to whatever shape

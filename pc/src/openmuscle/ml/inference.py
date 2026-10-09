@@ -26,7 +26,7 @@ def run_inference(model_path: str, port: int = 3141):
     model = registry.load(model_path)
     print(f"Model loaded from {model_path}")
 
-    listener = UDPListener(port=port)
+    listener = UDPListener(port=port, strict=True)
     listener.start()
 
     matcher = TemporalMatcher(window_s=0.100)
