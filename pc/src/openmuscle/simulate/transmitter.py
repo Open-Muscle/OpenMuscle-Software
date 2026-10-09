@@ -11,22 +11,45 @@ import random
 
 def run_simulator(port: int = 3141, device_type: str = "flexgrid",
                   replay_file: str = None, target_ip: str = "127.0.0.1",
-                  web_port: int = 8000):
+                  web_port: int = 8000, web_scheme: str = "auto",
+                  announce_port: int = 3140, bands: int = 2,
+                  labeler: str = "lask5", noise="default", seed: int = 1138,
+                  speed: float = 1.0, duration: float = None,
+                  tag_roles: bool = True):
     """Send synthetic or replayed sensor data.
 
     Args:
         port: UDP port to send to
         device_type: device type to simulate ("flexgrid", "lask5",
-            "quest_hand", or "combo"). quest_hand streams synthetic WebXR
-            hand frames to the web server's /ws/quest WebSocket (no UDP).
-            combo streams a flexgrid UDP device AND a quest hand driven by
-            the same latent finger curls, so a recorded capture is
-            actually learnable end to end without hardware.
+            "quest_hand", "combo" or "rehearsal"). quest_hand streams
+            synthetic WebXR hand frames to the web server's /ws/quest
+            WebSocket (no UDP). combo streams a flexgrid UDP device AND a
+            quest hand driven by the same latent finger curls, so a recorded
+            capture is actually learnable end to end without hardware.
+            rehearsal is a whole V4 kit (see simulate/rehearsal.py): one or two
+            15x4 bands that announce on the discovery port plus a finger
+            labeler, all driven by the same curls. flexgrid and lask5 send
+            random noise: they exercise the plumbing but are not learnable.
         replay_file: path to a capture .txt file to replay (optional)
         target_ip: IP address to send to
-        web_port: HTTP port of the running `openmuscle web` server
-            (quest_hand/combo only)
+        web_port: HTTP(S) port of the running `openmuscle web` server
+            (quest_hand/combo, and webcam/quest labels in rehearsal)
+        web_scheme: "auto" (probe the port for TLS), "http" or "https". The
+            WebSocket follows it (ws:// or wss://).
+        announce_port, bands, labeler, noise, seed, speed, duration, tag_roles:
+            rehearsal only (see RehearsalConfig / RehearsalSimulator)
     """
+    if device_type == "rehearsal":
+        from openmuscle.simulate.rehearsal import (
+            RehearsalConfig, RehearsalSimulator)
+        sim = RehearsalSimulator(
+            RehearsalConfig(bands=bands, labeler=labeler, noise=noise, seed=seed),
+            target_ip=target_ip, udp_port=port, announce_port=announce_port,
+            web_port=web_port, web_scheme=web_scheme, speed=speed,
+            tag_roles=tag_roles)
+        sim.run_forever(duration=duration)
+        return
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     if replay_file:
@@ -37,9 +60,10 @@ def run_simulator(port: int = 3141, device_type: str = "flexgrid",
         print(f"Replaying {replay_file} -> UDP {target_ip}:{port}, "
               f"quest -> ws://{target_ip}:{web_port}/ws/quest")
         replay_capture(replay_file, target_ip=target_ip, udp_port=port,
-                       web_port=web_port, speed=1.0)
+                       web_port=web_port, speed=1.0, web_scheme=web_scheme)
     elif device_type in ("quest_hand", "combo"):
-        _generate_quest(sock, device_type, target_ip, port, web_port)
+        _generate_quest(sock, device_type, target_ip, port, web_port,
+                        web_scheme)
     else:
         _generate(sock, device_type, target_ip, port)
 
@@ -89,7 +113,7 @@ def _generate(sock, device_type: str, ip: str, port: int):
 
 
 def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
-                    web_port: int):
+                    web_port: int, web_scheme: str = "auto"):
     """Stream synthetic WebXR hand frames to /ws/quest, and for combo mode
     a correlated flexgrid device over UDP alongside.
 
@@ -115,7 +139,7 @@ def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
     try:
         while True:
             try:
-                with connect(url) as ws:
+                with net.ws_connect(scheme, ip, web_port, "/ws/quest") as ws:
                     while True:
                         t = time.time() - t0
                         ws.send(json.dumps(hand_frame(t)))
@@ -141,8 +165,9 @@ def _generate_quest(sock, device_type: str, ip: str, udp_port: int,
             except Exception as e:
                 # KeyboardInterrupt is a BaseException, so Ctrl+C still
                 # reaches the outer handler.
-                print(f"WebSocket dropped ({type(e).__name__}: {e}); "
-                      f"retrying in 2s")
+                print(f"WebSocket to {url} dropped ({type(e).__name__}: {e}); "
+                      f"retrying in 2s. Is `openmuscle web` running on port "
+                      f"{web_port}?")
                 time.sleep(2)
     except KeyboardInterrupt:
         print(f"\nStopped after {frame_num} hand frames")

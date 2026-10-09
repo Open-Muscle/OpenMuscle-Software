@@ -97,14 +97,20 @@ def _yaw_rotate(p, origin, a):
     return (origin[0] + x * ca + z * sa, y, origin[2] - x * sa + z * ca)
 
 
-def hand_pose(t: float):
+def hand_pose(t: float, curls=None):
     """All 25 joint positions (world space, meters) plus the shared
     orientation quaternion at time t.
+
+    `curls` overrides the latent signal (thumb..pinky, each in [0, 1]) so a
+    caller that gates or shapes the curls (the rehearsal rig's rest/active
+    schedule) keeps the hand and the sensors on the same signal. None means
+    the plain finger_curls(t).
 
     Returns (positions, quat) where positions is a list of 25 (x, y, z)
     tuples in JOINT_NAMES order.
     """
-    curls = finger_curls(t)
+    if curls is None:
+        curls = finger_curls(t)
 
     # Wrist wanders slowly so the wrist-local canonicalization in both
     # viewers is exercised, not just fed a static origin.
@@ -156,9 +162,9 @@ def hand_pose(t: float):
 
 
 def hand_frame(t: float, device_id: str = "quest-sim",
-               handedness: str = "right") -> dict:
+               handedness: str = "right", curls=None) -> dict:
     """One /ws/quest JSON payload for time t."""
-    positions, quat = hand_pose(t)
+    positions, quat = hand_pose(t, curls)
     return {
         "device_id": device_id,
         "ts": int(t * 1000) % 2**31,
