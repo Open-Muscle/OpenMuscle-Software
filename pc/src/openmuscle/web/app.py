@@ -446,6 +446,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                                 detail=f"Failed to create capture file: {e}")
         return {
             "filename": rec.path.name,
+            "name_adjusted": rec.name_adjusted,
             "sensor_device_id": rec.sensor_device_id,
             "label_device_id": rec.label_device_id,
             "sensors": dict(rec.sensors),
@@ -472,6 +473,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                                 detail=f"Failed to create capture file: {e}")
         return {
             "filename": rec.path.name,
+            "name_adjusted": rec.name_adjusted,
             "sensors": dict(rec.sensors),
             "label_device_id": rec.label_device_id,
             "window_ms": int(rec.window_s * 1000),
@@ -494,6 +496,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                                 detail=f"Failed to create capture file: {e}")
         return {
             "filename": rec.path.name,
+            "name_adjusted": rec.name_adjusted,
             "sensors": dict(rec.sensors),
             "side_labelers": dict(rec.label_id_side),
             "window_ms": int(rec.window_s * 1000),
@@ -561,6 +564,13 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/api/captures")
     async def list_captures():
         return state.list_captures()
+
+    @app.get("/api/captures/next-name")
+    async def next_capture_name(base: str = "take", start: int = 1):
+        """Next free take file name for `base` (<base>-take<N>.csv). The UI uses
+        this for the 'Record next take' suggestion so it never proposes a name
+        that already exists on disk (e.g. after a take in the middle was deleted)."""
+        return {"filename": state.next_capture_name(base, start)}
 
     @app.get("/api/captures/{name}/download")
     async def download_capture(name: str):
