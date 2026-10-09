@@ -102,11 +102,13 @@ header.topbar .topbar-right .stream-link:hover {
 }
 #control-bar #capture-name:focus { outline: none; border-color: var(--accent); }
 .record-plan {
-    flex-basis: 100%; min-height: 14px;
-    font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+    flex-basis: 100%; min-height: 18px;
+    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     color: var(--fg-dim);
 }
+.record-plan.ready { color: var(--green); }
 .record-plan.blocked { color: var(--orange); }
+.record-plan.blocked::before { content: "\26A0\FE0E  "; }
 /* Plan line yields to the live verdict block while recording */
 #control-bar.recording .record-plan { display: none; }
 .record-advanced { flex-basis: 100%; display: flex; gap: 10px; padding-top: 6px; }

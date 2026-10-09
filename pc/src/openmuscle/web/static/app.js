@@ -58,6 +58,7 @@ const STORE_SENSOR = 'om.sensor_device_id';
 const STORE_LABEL  = 'om.label_device_id';
 const STORE_HAND   = 'om.hand_target';      // last successfully-applied "host:port" — auto-restored on next launch
 const STORE_LABEL_SOURCE = 'om.label_source';   // vr | lask5 | none (Record plan input)
+const STORE_LABEL_SOURCE_USER = 'om.label_source_user';   // '1' once the user picks one
 
 // Set of capture filenames currently checked in the table
 const selectedCaptures = new Set();
@@ -1513,185 +1514,17 @@ async function readError(r) {
 // derived call so the operator sees exactly what one click will do. Adding a
 // future label device (keyboard/controller) = one <option> + one branch here.
 
-const DEVICE_FRESH_S = 2.0;   // same staleness threshold as the device list
-
-function deviceFresh(d) {
-    return d.last_seen_age == null || d.last_seen_age < DEVICE_FRESH_S;
-}
-
+// The derivation itself (wording + logic) lives in guide.js so it can be unit
+// tested under Node; this wrapper only reads the live DOM inputs.
 function deriveRecordPlan() {
     const winRaw = recordWindowInput ? parseInt(recordWindowInput.value, 10) : NaN;
-    const winMs = Number.isFinite(winRaw) ? winRaw : null;
-    // Server defaults when the advanced window box is empty: lask5=100,
-    // quest_hand=175 (DEFAULT_WINDOW_MS_BY_TYPE in state.py).
-    const winText = def => `win ${winMs ?? def}ms`;
-    const blocked = reason => ({ ready: false, mode: 'blocked', reason });
-
-    // Advanced override: an explicit device pick forces the legacy
-    // single-source path (today's exact behavior).
-    const sensorVal = sensorSelect.value;
-    const labelVal  = labelSelect.value;
-    if (sensorVal || labelVal) {
-        const body = { filename: null };
-        if (sensorVal) body.sensor_device_id = sensorVal;
-        if (labelVal === '__none__') body.label_device_id = '';
-        else if (labelVal)           body.label_device_id = labelVal;
-        return {
-            ready: true, mode: 'advanced', endpoint: '/api/recording', body,
-            summary: `advanced | sensor ${sensorVal || 'auto'} | label ${
-                labelVal === '__none__' ? 'none' : (labelVal || 'auto')} | ${winText(100)}`,
-        };
-    }
-
-    const flex   = lastDevices.filter(d => d.device_type === 'flexgrid');
-    const bandL  = flex.find(d => d.role === 'left');
-    const bandR  = flex.find(d => d.role === 'right');
-    const tagged = flex.filter(d => d.role === 'left' || d.role === 'right');
-    // Single-band candidate: the one tagged band, or the only flexgrid seen.
-    const soloBand = tagged.length === 1 ? tagged[0]
-        : (tagged.length === 0 && flex.length === 1 ? flex[0] : null);
-    const quests = lastDevices.filter(d => d.device_type === 'quest_hand');
-    // Same side test as renderHandViewer (quest-left / quest-right ids).
-    const questSide = side => quests.find(d =>
-        String(d.device_id).toLowerCase().includes(side));
-    const lask = lastDevices.find(d => d.device_type === 'lask5' && deviceFresh(d));
-    const source = (labelSourceSelect && labelSourceSelect.value) || 'vr';
-
-    if (!flex.length) return blocked('no band streaming');
-
-    if (source === 'vr') {
-        if (bandL && bandR) {
-            const missing = ['left', 'right'].filter(s => {
-                const q = questSide(s);
-                return !(q && deviceFresh(q));
-            });
-            if (missing.length) return blocked(
-                `2 bands tagged, but VR ${missing.join('+')} hand not streaming: open /vr with ?arm=both`);
-            return {
-                ready: true, mode: '2h-vr',
-                endpoint: '/api/recording/bilateral',
-                body: { filename: null },
-                summary: `2H | L ${bandL.device_id} + R ${bandR.device_id} | labels: VR both hands | ${winText(175)}`,
-            };
-        }
-        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
-        if (!quests.some(deviceFresh)) return blocked('VR hand not streaming: open /vr on the Quest');
-        const role = soloBand.role || 'left';
-        return {
-            ready: true, mode: '1h-vr',
-            endpoint: '/api/recording',
-            // label_device_id omitted: server auto-pick prefers quest_hand
-            body: { filename: null, sensor_device_id: soloBand.device_id, role },
-            summary: `1H | ${soloBand.device_id} (${role}) | labels: VR ${role} hand | ${winText(175)}`,
-        };
-    }
-
-    if (source === 'lask5') {
-        if (!lask) return blocked('no LASK5 streaming');
-        if (bandL && bandR) {
-            return {
-                ready: true, mode: '2band-lask',
-                endpoint: '/api/recording/multiband',
-                body: { filename: null },
-                summary: `2 bands | labels: LASK5 ${lask.device_id} | ${winText(100)}`,
-            };
-        }
-        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
-        // Omit both device ids for a lone untagged band = server auto-pick.
-        const body = { filename: null };
-        if (soloBand.role) {
-            body.sensor_device_id = soloBand.device_id;
-            body.role = soloBand.role;
-        }
-        return {
-            ready: true, mode: '1h-lask',
-            endpoint: '/api/recording', body,
-            summary: `1H | ${soloBand.device_id}${soloBand.role ? ` (${soloBand.role})` : ''} | labels: LASK5 ${lask.device_id} | ${winText(100)}`,
-        };
-    }
-
-    if (source === 'webcam') {
-        // The /webcam page tracks a hand with the computer's camera and streams
-        // it to /ws/webcam, so it shows up here as a device_type="webcam_hand"
-        // label device (ids webcam-left / webcam-right). One hand labels every
-        // recorded band: with a band on each arm and one hand in view, both
-        // bands get that hand's labels, which is what mirrored training wants.
-        const cams = lastDevices.filter(d => d.device_type === 'webcam_hand' && deviceFresh(d));
-        if (!cams.length) return blocked('webcam hand not streaming: open /webcam in a browser tab and start the camera');
-        const camFor = side => cams.find(d =>
-            String(d.device_id).toLowerCase().includes(side)) || cams[0];
-        if (bandL && bandR) {
-            const cam = cams[0];
-            return {
-                ready: true, mode: '2band-webcam',
-                endpoint: '/api/recording',
-                body: { filename: null, label_device_id: cam.device_id,
-                        sensor_device_id: bandL.device_id, role: 'left',
-                        extra_sensors: [{ device_id: bandR.device_id, role: 'right' }] },
-                summary: `2 bands | L ${bandL.device_id} + R ${bandR.device_id} | labels: webcam ${cam.device_id} | ${winText(175)}`,
-            };
-        }
-        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
-        // Pin the webcam hand as the label so auto-pick can't prefer a stray
-        // quest/lask5. Prefer the hand on the band's own side when both stream.
-        const cam = camFor(soloBand.role || 'right');
-        const body = { filename: null, label_device_id: cam.device_id };
-        if (soloBand.role) { body.sensor_device_id = soloBand.device_id; body.role = soloBand.role; }
-        return {
-            ready: true, mode: '1h-webcam',
-            endpoint: '/api/recording', body,
-            summary: `1H | ${soloBand.device_id}${soloBand.role ? ` (${soloBand.role})` : ''} | labels: webcam ${cam.device_id} | ${winText(175)}`,
-        };
-    }
-
-    if (source === 'gamepad') {
-        // The dashboard browser streams the controller to /ws/gamepad, so it
-        // shows up here as a device_type="gamepad" label device (gamepad.js).
-        const pad = lastDevices.find(d => d.device_type === 'gamepad' && deviceFresh(d));
-        if (!pad) return blocked('no controller: plug in a USB gamepad and press a button');
-        if (bandL && bandR) {
-            // multiband auto-picks the label device; gamepad is in the server's
-            // AUTO_LABEL_TYPE_PREFERENCE so a lone controller is found.
-            return {
-                ready: true, mode: '2band-gamepad',
-                endpoint: '/api/recording/multiband',
-                body: { filename: null },
-                summary: `2 bands | labels: gamepad ${pad.device_id} | ${winText(120)}`,
-            };
-        }
-        if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
-        // Pin the gamepad as the label so auto-pick can't prefer a stray quest/lask.
-        const body = { filename: null, label_device_id: pad.device_id };
-        if (soloBand.role) { body.sensor_device_id = soloBand.device_id; body.role = soloBand.role; }
-        return {
-            ready: true, mode: '1h-gamepad',
-            endpoint: '/api/recording', body,
-            summary: `1H | ${soloBand.device_id}${soloBand.role ? ` (${soloBand.role})` : ''} | labels: gamepad ${pad.device_id} | ${winText(120)}`,
-        };
-    }
-
-    // source === 'none': sensor-only (label_device_id "" disables pairing)
-    if (bandL && bandR) {
-        if (!(deviceFresh(bandL) && deviceFresh(bandR))) {
-            return blocked('band(s) stale: check both bands are streaming');
-        }
-        return {
-            ready: true, mode: 'sensor-2band',
-            endpoint: '/api/recording',
-            body: { filename: null, label_device_id: '', sensor_device_id: bandL.device_id,
-                    role: 'left', extra_sensors: [{ device_id: bandR.device_id, role: 'right' }] },
-            summary: `2 bands | L ${bandL.device_id} + R ${bandR.device_id} | labels: none (sensor only) | ${winText(100)}`,
-        };
-    }
-    if (!soloBand) return blocked('no band tagged left/right: tag roles in Sources');
-    if (!deviceFresh(soloBand)) return blocked('band stale: is it streaming?');
-    const role = soloBand.role || 'left';
-    return {
-        ready: true, mode: 'sensor-only',
-        endpoint: '/api/recording',
-        body: { filename: null, label_device_id: '', sensor_device_id: soloBand.device_id, role },
-        summary: `1 band | ${soloBand.device_id} (${role}) | labels: none (sensor only) | ${winText(100)}`,
-    };
+    return OMGuide.deriveRecordPlan({
+        devices: lastDevices,
+        source: (labelSourceSelect && labelSourceSelect.value) || 'lask5',
+        windowMs: Number.isFinite(winRaw) ? winRaw : null,
+        sensorId: sensorSelect.value,
+        labelId: labelSelect.value,
+    });
 }
 
 // Plan preview line + Record-button arming. Runs every WS tick but touches
@@ -1701,28 +1534,54 @@ let _recordPlanSig = null;
 
 function renderRecordPlan() {
     const recording = !!recordingState;
+    // Until the user picks a labeler themselves, follow what is streaming.
+    if (labelSourceSelect && !recording) {
+        const want = OMGuide.autoLabelSource(
+            lastDevices, labelSourceSelect.value, labelSourceUserChose);
+        if (want && want !== labelSourceSelect.value) labelSourceSelect.value = want;
+    }
     const plan = recording ? null : deriveRecordPlan();
     if (controlBar) controlBar.classList.toggle('recording', recording);
     if (labelSourceSelect) labelSourceSelect.disabled = recording;
     if (recordWindowInput) recordWindowInput.disabled = recording;
     recordBtn.disabled = !recording && !(plan && plan.ready);
     const sig = JSON.stringify(plan
-        ? [plan.mode, plan.ready, plan.summary, plan.reason, recording]
+        ? [plan.mode, plan.ready, plan.text, plan.summary, recording]
         : ['recording', recording]);
     if (sig === _recordPlanSig) return;
     _recordPlanSig = sig;
+    // The disabled Record button carries the same reason as its tooltip; when
+    // armed, the tooltip is the technical summary of the call it will make.
+    recordBtn.title = plan ? (plan.ready ? (plan.summary || '') : plan.reason) : '';
     if (!recordPlanEl) return;
     if (!plan) { recordPlanEl.textContent = ''; return; }
     recordPlanEl.classList.toggle('blocked', !plan.ready);
-    recordPlanEl.textContent = plan.ready ? plan.summary : (plan.reason || '');
+    recordPlanEl.classList.toggle('ready', plan.ready);
+    recordPlanEl.textContent = plan.text || '';
+    recordPlanEl.title = plan.ready ? (plan.summary || '') : '';
 }
 
-// Labels pick persists across reloads; default vr (the headset flow).
+// The "Finger data from" pick follows what is streaming (OMGuide.autoLabelSource)
+// until the user changes the dropdown themselves. Only a real change sets the
+// om.label_source_user flag, so a saved value alone never counts as a choice
+// (older builds saved the hardcoded default). A manual pick persists across
+// reloads and is never auto-overridden.
+let labelSourceUserChose = false;
 if (labelSourceSelect) {
-    const saved = localStorage.getItem(STORE_LABEL_SOURCE);
-    if (saved && ['vr', 'lask5', 'webcam', 'none', 'gamepad'].includes(saved)) labelSourceSelect.value = saved;
+    try {
+        const saved = localStorage.getItem(STORE_LABEL_SOURCE);
+        labelSourceUserChose = localStorage.getItem(STORE_LABEL_SOURCE_USER) === '1';
+        if (labelSourceUserChose && saved
+            && ['vr', 'lask5', 'webcam', 'none', 'gamepad'].includes(saved)) {
+            labelSourceSelect.value = saved;
+        }
+    } catch (e) { /* storage blocked: auto-default only */ }
     labelSourceSelect.addEventListener('change', () => {
-        localStorage.setItem(STORE_LABEL_SOURCE, labelSourceSelect.value);
+        labelSourceUserChose = true;
+        try {
+            localStorage.setItem(STORE_LABEL_SOURCE, labelSourceSelect.value);
+            localStorage.setItem(STORE_LABEL_SOURCE_USER, '1');
+        } catch (e) { /* storage blocked: choice lasts this page load */ }
     });
 }
 

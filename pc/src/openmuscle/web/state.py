@@ -1650,12 +1650,12 @@ class AppState:
 
     def start_multiband_recording(self, filename: Optional[str] = None,
                                   window_ms: Optional[int] = None) -> ActiveCapture:
-        """Start a multi-band capture from the role tags set in the Sources panel.
+        """Start a multi-band capture from the arm tags set on each band.
 
         Gathers every flexgrid tagged left/right as a band and the device tagged
         labeler (if any, else auto-pick) as the label source, then delegates to
-        start_recording. The operator tags sources once in the Sources panel and
-        records with one click.
+        start_recording. The operator sets each band's arm once (Left arm /
+        Right arm) and records with one click.
         """
         if not self.discovery:
             raise RuntimeError("discovery is disabled; can't gather role tags")
@@ -1666,8 +1666,8 @@ class AppState:
                  and d.get("role") in ("left", "right")]
         if not bands:
             raise RuntimeError(
-                "no flexgrid bands tagged left/right; tag sources in the "
-                "Sources panel first")
+                "No band has an arm set yet. Use the Left arm / Right arm "
+                "buttons on each band first.")
         # Deterministic order: left band(s) before right, so the trainer's
         # Left||Right concat is stable regardless of discovery iteration order.
         bands.sort(key=lambda b: (b[1] != "left", b[0]))
@@ -1687,7 +1687,7 @@ class AppState:
         """Two-hand capture: the left band is matched to the left-hand VR stream
         and the right band to the right-hand stream.
 
-        Bands come from the Sources-panel role tags (one flexgrid tagged left, one
+        Bands come from the arm tags on each band (one flexgrid tagged left, one
         tagged right). The labelers are the two Quest hand streams the VR client
         sends when opened with ?arm=both: device_ids quest-left / quest-right.
         """
@@ -1699,8 +1699,8 @@ class AppState:
                    and d.get("role") in ("left", "right")}
         if set(by_side) != {"left", "right"}:
             raise RuntimeError(
-                "two-hand capture needs one flexgrid tagged 'left' AND one tagged "
-                "'right' in the Sources panel")
+                "Two-hand recording needs one band set to the Left arm and one "
+                "set to the Right arm. Use the buttons on each band.")
         side_labelers = {}
         for side in ("left", "right"):
             did = f"quest-{side}"
