@@ -18,3 +18,15 @@ def _isolated_data_root(tmp_path_factory, monkeypatch):
     paths.set_data_root(None)
     yield root
     paths.set_data_root(None)
+
+
+@pytest.fixture
+def tiny_training_ok(monkeypatch):
+    """Let the small synthetic recordings most trainer tests use through the
+    pre-train data checks (the real minimums are 150 rows / 10 seconds, and a cell
+    must move more than 5 counts to count as touching the arm)."""
+    from openmuscle.ml import checks
+    monkeypatch.setattr(checks, "MIN_ROWS", 8)
+    monkeypatch.setattr(checks, "MIN_SECONDS", 0.0)
+    # Synthetic sensors live in 0..1, far under the real 5-count flat threshold.
+    monkeypatch.setattr(checks, "FLAT_RANGE_COUNTS", 0.0)

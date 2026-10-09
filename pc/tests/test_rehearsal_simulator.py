@@ -32,6 +32,8 @@ from openmuscle.simulate.rehearsal import (
 )
 from openmuscle.web.state import AppState
 
+pytestmark = pytest.mark.usefixtures("tiny_training_ok")
+
 
 # ---- pure generator ----------------------------------------------------------
 

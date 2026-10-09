@@ -15,6 +15,8 @@ from click.testing import CliRunner
 from openmuscle.ml import verdict as vd
 from openmuscle.ml.verdict import describe_result
 
+pytestmark = pytest.mark.usefixtures("tiny_training_ok")
+
 
 def _metrics(score, method="held_out_capture", per_finger=None, **extra):
     m = {"curl_r2": score, "eval_method": method, "score_space": "curl",

@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from openmuscle.web.state import AppState
+from openmuscle.web.state import AppState, ModelGuardError, TrainDataError
 
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -693,10 +693,20 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 body.role,
                 body.holdout_captures,
             )
+        except TrainDataError as e:
+            # The recordings cannot be trained on: say why, in words. `checks`
+            # carries the full findings for clients that want to list them.
+            return JSONResponse(status_code=400,
+                                content={"detail": str(e), "checks": e.checks})
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Training failed: {e}")
+            # Never hand a library message ("n_samples=0", "Input y contains
+            # NaN") to the person at the screen; the raw text goes to the log.
+            from openmuscle.ml.checks import friendly_error
+            state.log_buffer.error("training", "training failed: {}: {}".format(
+                type(e).__name__, e))
+            raise HTTPException(status_code=500, detail=friendly_error(e))
         return result
 
     @app.get("/api/models")
@@ -718,6 +728,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "active": state.engine is not None,
             "enabled": state.inference_enabled,
             "model": state.engine.name if state.engine else None,
+            "guard": state.model_guard_issues(),
         }
 
     @app.post("/api/inference/model/{role}")
@@ -739,14 +750,24 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
             "active": eng is not None,
             "enabled": state.inference_enabled,
             "model": eng.name if eng else None,
+            "guard": state.model_guard_issues(),
         }
 
     class SetEnabledBody(BaseModel):
         enabled: bool
+        # The operator's explicit "continue anyway" after the model/participant
+        # or band-unit mismatch dialog.
+        force: bool = False
 
     @app.post("/api/inference/enabled")
     async def set_inference_enabled(body: SetEnabledBody):
-        state.set_inference_enabled(body.enabled)
+        try:
+            state.set_inference_enabled(body.enabled, force=body.force)
+        except ModelGuardError as e:
+            # 409: not started. The body carries the sentences for the dialog;
+            # the same call with force=true overrides.
+            return JSONResponse(status_code=409, content={
+                "detail": str(e), "issues": e.issues, "can_override": True})
         return {
             "enabled": state.inference_enabled,
             "model": state.engine.name if state.engine else None,

@@ -44,7 +44,11 @@ class InferenceEngine:
 
         # Sidecar metadata.json next to model.pkl (the registry layout)
         self.metadata: dict = {}
-        meta_path = self.model_path.parent / "metadata.json"
+        # (<stem>.metadata.json wins: `train -o` writes one per pickle so several
+        # models can share a folder.)
+        meta_path = self.model_path.with_name(self.model_path.stem + ".metadata.json")
+        if not meta_path.exists():
+            meta_path = self.model_path.parent / "metadata.json"
         if meta_path.exists():
             try:
                 with open(meta_path) as f:

@@ -31,10 +31,41 @@ def _new_model(model_type: str, n_estimators: int):
     raise ValueError(f"Unknown model type: {model_type}")
 
 
+def _write_output_metadata(output, model, model_type, metrics, extra_meta):
+    """Put metadata.json next to an explicit `-o model.pkl`, so `openmuscle web
+    --model-left model_left.pkl` finds the feature count, hand and plain verdict
+    the same way it does for a registry model.
+
+    Two files are written: <stem>.metadata.json (always this model's, so
+    model_left.pkl and model_right.pkl can share a folder) and metadata.json (the
+    name the registry layout uses; the newest write wins when several models
+    share the folder). The inference engine prefers the per-stem file.
+    """
+    import json
+    from datetime import datetime
+    from openmuscle.ml.verdict import describe_result
+
+    clean = {k: v for k, v in metrics.items() if k != "saved_path"}
+    meta = {
+        "name": model_type,
+        "created": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "dir": output.parent.name,
+        "model_type": type(model).__name__,
+        "metrics": clean,
+        "verdict": describe_result(clean, hand_side=clean.get("role")),
+    }
+    if extra_meta:
+        meta.update(extra_meta)
+    for fname in (output.stem + ".metadata.json", "metadata.json"):
+        with open(output.parent / fname, "w") as f:
+            json.dump(meta, f, indent=2)
+
+
 def train_model(data_path: str, model_type: str = "random_forest",
                 output: str = None, test_split: float = 0.2,
                 n_estimators: int = 100, role: str = None,
-                holdout_captures: list = None, purge_s: float = 1.0) -> tuple:
+                holdout_captures: list = None, purge_s: float = 1.0,
+                extra_meta: dict = None) -> tuple:
     """Train a model from a CSV capture file.
 
     Args:
@@ -52,6 +83,9 @@ def train_model(data_path: str, model_type: str = "random_forest",
         holdout_captures: capture tags to hold out instead of the last N
             (multi-capture files only).
         purge_s: seconds of rows dropped between train and tail (single capture).
+        extra_meta: provenance merged into the model's metadata.json at the top
+            level (participant, band ids, captures...). Written for the registry
+            copy and for an explicit `output` alike.
 
     Returns:
         (model, metrics_dict). metrics keep r2/mse (now HELD-OUT) and add
@@ -136,9 +170,13 @@ def train_model(data_path: str, model_type: str = "random_forest",
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         with open(output, "wb") as f:
             pickle.dump(model, f)
+        _write_output_metadata(Path(output), model, model_type, metrics, extra_meta)
+        metrics["saved_path"] = str(output)
         print(f"Model saved to {output}")
     else:
-        saved_path = registry.save(model, model_type, metrics)
+        saved_path = registry.save(model, model_type, metrics, role=role,
+                                   extra=extra_meta)
+        metrics["saved_path"] = str(saved_path)
         print(f"Model saved to {saved_path}")
 
     if metrics["eval_method"] == "none":
