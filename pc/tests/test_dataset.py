@@ -1,6 +1,6 @@
 """Tests for schema-v2 trainer loading: the bilateral long->wide pivot and the
 role-guard that stops a multi-role capture from silently pooling L+R into a
-single role-agnostic feature set (board #0072/#0073, PROTOCOL.md 8.4).
+single role-agnostic feature set.
 """
 
 import tempfile
@@ -111,7 +111,7 @@ def test_load_training_data_single_role_v2_uses_standard_path():
     assert X.shape == (2, 4)
 
 
-# ---- separate-model-per-hand: the --role filter (Tory 2026-06-27) ---------
+# ---- separate-model-per-hand: the --role filter ---------
 
 def test_role_left_keeps_only_left_single_arm():
     # role=left on a two-hand capture -> the LEFT rows as a single-arm matrix

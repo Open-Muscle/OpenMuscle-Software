@@ -25,8 +25,7 @@ class UDPListener:
         self.bind_ip = bind_ip
         # Requested UDP receive-buffer size. The default OS buffer (~64-256 KB on
         # Windows) overflows and silently drops datagrams when the device streams
-        # at higher rates and the consumer stalls briefly (board #0184: device
-        # emitted 18-19 Hz, the receiver saw ~8 Hz). 4 MB absorbs the bursts; the
+        # at higher rates and the consumer stalls briefly. 4 MB absorbs the bursts; the
         # OS may clamp to its max (raise the registry/sysctl limit for more).
         self.rcvbuf = rcvbuf
         # quiet: skip the "Listening on ..." startup line (the web server prints
@@ -51,7 +50,7 @@ class UDPListener:
     def _listen(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # Enlarge the receive buffer to avoid dropping frames at rate (#0184).
+        # Enlarge the receive buffer to avoid dropping frames at rate.
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self.rcvbuf)
         except OSError:

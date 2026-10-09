@@ -1,10 +1,10 @@
-"""LASK5 finger-labeler -> ratified canonical Tier-1 labels (DATA_SCHEMA.md #0302).
+"""LASK5 finger-labeler -> ratified canonical Tier-1 labels (docs/data-schema.md).
 
 The LASK5 measures finger CURL (4 pistons) plus a 2-axis thumb joystick, so it
 fills the shared Tier-1 core lbl_flex_* directly and NaN-masks the Quest-only
 Tier-2 lbl_ang_* (it cannot measure per-joint angles). This is the PC-side mapping
-(overseer #0303: implement it on the PC too, not only phone; Tory records from
-LASK5 straight on the PC).
+(implemented on the PC as well as the phone, so a LASK5 can be recorded
+straight on the PC).
 
 The still-open details are PARAMETERS, not hardcoded, so the ratified STRUCTURE is
 stable while phone confirms the values:
@@ -15,7 +15,7 @@ stable while phone confirms the values:
 """
 
 # The four fingers a LASK5 piston maps to, in wire order by default. The thumb is
-# the joystick, not a piston. Phone confirms the actual piston order (#0302).
+# the joystick, not a piston. Phone confirms the actual piston order.
 DEFAULT_PISTON_ORDER = ("index", "middle", "ring", "pinky")
 
 

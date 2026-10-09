@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "pc" / "src"))
 from openmuscle import gamepad_channels as gc  # noqa: E402
 
 OUT = Path(__file__).resolve().parent
-DEFAULT_CAP = r"C:/Users/User/data/raw/merged/capture_1783267460_fixed.csv"
+DEFAULT_CAP = r"data/raw/merged/capture_1783267460_fixed.csv"
 
 
 def temporal_split(df):

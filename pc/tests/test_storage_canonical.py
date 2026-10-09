@@ -1,4 +1,4 @@
-"""Tests for the opt-in canonical lbl_* label columns (DATA_SCHEMA.md #0302) in
+"""Tests for the opt-in canonical lbl_* label columns (docs/data-schema.md) in
 CaptureWriter: they append after the raw label_*/imu/forearm columns, mask absent
 DOF, and (being opt-in) leave the default schema-v2 output byte-golden untouched."""
 

@@ -1,6 +1,6 @@
 # LASK5 V2 — Monolithic Firmware Snapshot (2026-05-13)
 
-This is a **verbatim filesystem snapshot** of a working LASK5 V2 labeler device pulled off live hardware on 2026-05-13. It captures the **pre-refactor monolithic firmware** that Tory wrote and got working before the `embedded/devices/lask5_v2/` modular refactor (with `om_*` shared lib + `labeler.py` + `sensor_pistons.py`) landed in this repo.
+This is a **verbatim filesystem snapshot** of a working LASK5 V2 labeler device pulled off live hardware on 2026-05-13. It captures the **pre-refactor monolithic firmware** that the original author wrote and got working before the `embedded/devices/lask5_v2/` modular refactor (with `om_*` shared lib + `labeler.py` + `sensor_pistons.py`) landed in this repo.
 
 Kept here so the working functionality is preserved verbatim — even if the modular version diverges, regresses, or loses a feature, you can come back to this directory and see exactly what was running.
 
@@ -20,7 +20,7 @@ Kept here so the working functionality is preserved verbatim — even if the mod
 ```
 LASK5_Loading_Screen.py     78,538 B  Auto-generated 128×32 OLED splash animation frames (bytearrays)
 boot.py                     17,764 B  Main app — settings, network, menu, UDP send mode, calibration. THIS is what was running.
-replace_boot.py             16,677 B  Alternate boot file with project-wide default creds (OpenMuscle / 3141592653). Looks like a "factory reset" / shareable variant.
+replace_boot.py             16,677 B  Alternate boot file with a project-wide default Wi-Fi network (credentials removed). Looks like a "factory reset" / shareable variant.
 network_manager.py           4,506 B  Wi-Fi STA + UDP send helpers
 settings_manager.py          5,538 B  JSON settings load/save with defaults backfill
 image_loader.py                211 B  Tiny splash-screen loader stub

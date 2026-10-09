@@ -24,7 +24,7 @@
 #
 # Per-chip scale is exposed via scale_dict() so the hub can normalize
 # data.imu raw-counts to a common unit across mixed-fleet sources
-# (per overseer #0217 cross-cutting note + vrpc #0200/#0210 ask).
+# (a cross-cutting requirement of the hub-side fusion).
 #
 # Datasheet refs:
 #   - Bosch BST-BMI160-DS000-09 (BMI160)
@@ -246,9 +246,7 @@ class IMU:
 
     def _read_tokmas(self):
         # 12 bytes: ACC(6 LE) + GYRO(6 LE). TOKMAS temp conversion stays
-        # disabled per V4 imu.py (board #0156: needs verified ROOM_TEMP
-        # formula; raw count surfaces as -1894 C on the wire, which is
-        # garbage).
+        # disabled per V4 imu.py.
         buf = self.i2c.readfrom_mem(self.addr, _TKM_REG_ACC_DATA, 12)
         self.last["ax"]     = _sign16_le(buf[0], buf[1])
         self.last["ay"]     = _sign16_le(buf[2], buf[3])
@@ -264,7 +262,7 @@ class IMU:
     def scale_dict(self):
         """Return the per-chip scale dict the hub fusion needs to normalize
         raw-count data.imu samples across mixed-fleet sources. Shape pinned
-        per overseer #0217. None when no IMU is present."""
+        by the hub contract. None when no IMU is present."""
         if not self.present:
             return None
         if self.variant == VARIANT_BMI160:

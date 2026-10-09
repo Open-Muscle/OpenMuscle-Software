@@ -21,7 +21,7 @@ class CaptureWriter:
     and the writer derives it from the first row.
     """
 
-    # IMU columns (board: LASK5 gyro + flexgrid band orientation into the
+    # IMU columns (LASK5 gyro + flexgrid band orientation into the
     # training set). Two groups per row: the SENSOR band that produced the row,
     # and the matched LABELER (e.g. a LASK5 whose gyro is the supination
     # ground-truth). Appended AFTER the labels so name-addressable readers stay
@@ -31,13 +31,13 @@ class CaptureWriter:
                        "lbl_imu_ax", "lbl_imu_ay", "lbl_imu_az"]
 
     # Forearm-orientation ground-truth derived from the matched Quest hand
-    # (forearm.py): a gravity-relative roll angle + a palm-up flag (board
-    # #0207/#0228, ratified single-column). Appended AFTER the labels + IMU so
+    # (forearm.py): a gravity-relative roll angle + a palm-up flag (ratified
+    # single-column). Appended AFTER the labels + IMU so
     # name-addressable readers stay backward compatible and label-count
     # inference is unaffected. Omitted when the capture has no Quest labeler.
     _FOREARM_COLS = ["forearm_roll_deg", "palm_up"]
 
-    # Ratified canonical LABEL columns (DATA_SCHEMA.md #0302): the schema-aware
+    # Ratified canonical LABEL columns (docs/data-schema.md): the schema-aware
     # training target every source maps onto. Tier-1 shared core = per-finger
     # flexion NORMALIZED [0,1]; Tier-2 Quest-only = per-joint flexion in degrees
     # (empty/NaN-masked when a source cannot fill them). Opt-in + appended AFTER
@@ -72,7 +72,7 @@ class CaptureWriter:
         # "v1" = `timestamp, R{r}C{c}.., label_*` (single source).
         # "v2" = `ts_hub_ms, role, device_id, R{r}C{c}.., label_*` (multi-device,
         # one row per source frame). Byte-for-byte target is the schema-v2 golden
-        # (OpenMuscle-Connect tools/make_golden_csv_v2.py, board #0073).
+        # (OpenMuscle-Connect tools/make_golden_csv_v2.py).
         self._schema_version = schema_version
         # Append raw-IMU columns (sensor band + matched labeler). v2 only; opt-in
         # so the schema-v2 byte golden (no IMU) stays the default.

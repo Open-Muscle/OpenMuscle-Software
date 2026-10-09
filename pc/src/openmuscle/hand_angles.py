@@ -1,14 +1,14 @@
 """Wrist-relative per-finger joint flexion angles from Quest hand-tracking.
 
-The capture-fix target (overseer #0297 sequence step b; ML review #0289 finding 5;
+The capture-fix target (sequence step b of the data-schema plan;
 the TODO(wrist-relative-labels) in web/state.py): raw Quest joints are absolute
 world POSITIONS, so a model trained on them learns where the recordings happened,
 not the hand pose. Joint FLEXION ANGLES (the angle between two adjacent bone
 segments) are inherently invariant to translation AND rotation of the whole hand,
 so they are the location-independent label we actually want to predict.
 
-Names + tiers match the canonical DOF schema (docs/data-schema.md, board #0292 /
-#0295): Tier 1 shared core = per-finger flexion (flex_*, both VR and LASK5 fill);
+Names + tiers match the canonical DOF schema (docs/data-schema.md):
+Tier 1 shared core = per-finger flexion (flex_*, both VR and LASK5 fill);
 Tier 2 VR-only = per-joint angles (ang_*_*). Units: degrees, flexion-positive,
 0 = extended.
 
@@ -70,7 +70,7 @@ def joints_from_flat(values):
 
 def per_joint_angles(positions):
     """Tier-2 per-joint flexion angles in DEGREES (flexion-positive, wrist-
-    relative), or None if too few joints. Ratified keys (DATA_SCHEMA.md #0302,
+    relative), or None if too few joints. Ratified keys (docs/data-schema.md,
     Quest-only): lbl_ang_<finger>_mcp / _pip, plus lbl_ang_thumb_mcp / _ip."""
     if not positions or len(positions) < _MIN_JOINTS:
         return None
@@ -88,7 +88,7 @@ def per_joint_angles(positions):
 
 
 # Nominal full-flex angle per joint type (degrees) used to normalize the Tier-1
-# shared core into [0,1] (0 = extended, 1 = curled) per DATA_SCHEMA.md #0302.
+# shared core into [0,1] (0 = extended, 1 = curled) per docs/data-schema.md.
 # Nominal, not a per-subject calibration: a rough full-curl for each joint so the
 # VR-measured angles land on the same 0..1 scale LASK5 pistons already report.
 # Recalibrate per subject/ROM if needed (the range would then go in capture meta).
@@ -97,7 +97,7 @@ _FULL_FLEX_DEG = {"mcp": 90.0, "pip": 110.0, "ip": 80.0}
 
 def per_finger_flexion(positions):
     """Tier-1 SHARED CORE: per-finger flexion NORMALIZED to [0,1] (0 = extended,
-    1 = curled), wrist-relative. Ratified keys (DATA_SCHEMA.md #0302): lbl_flex_
+    1 = curled), wrist-relative. Ratified keys (docs/data-schema.md): lbl_flex_
     <finger>. Each finger = mean of its joint angles, each normalized by a nominal
     full-flex and clamped to [0,1]. This is the column set BOTH VR and LASK5 fill,
     so it is what a cross-source (pooled) model trains on; None if too few joints.
@@ -126,7 +126,7 @@ def canonical_labels(positions):
     """All ratified canonical labels from 25 joint positions, or None: Tier-1
     lbl_flex_* (normalized [0,1]) + Tier-2 lbl_ang_* (degrees). Tier-2 is VR-only;
     a LASK5 capture NaN-masks the lbl_ang_* columns and fills only the lbl_flex_*
-    core (DATA_SCHEMA.md #0302)."""
+    core (docs/data-schema.md)."""
     tier2 = per_joint_angles(positions)
     if tier2 is None:
         return None

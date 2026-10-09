@@ -20,7 +20,7 @@ Three discovery paths, because no single one is sufficient:
 Discovered + reachable devices are auto-subscribed when auto_subscribe is set.
 The contract this implements is documented in FlexGridV4-Firmware/lib/
 {discovery,commands,subscribers,network_manager}.py and confirmed on the
-coordination board (vrpc #0008).
+coordination board.
 """
 
 import json
@@ -116,9 +116,9 @@ class DiscoveredDevice:
         # untagged. Persisted per device_id so it survives restarts + churn.
         self.role = role
         # Per-chip IMU scale the firmware advertises on announce/get_info
-        # (#0217/#0219): {chip, gyro_dps_per_lsb, accel_g_per_lsb}. Captured into
+        # as {chip, gyro_dps_per_lsb, accel_g_per_lsb}. Captured into
         # the recording meta so the trainer can normalize the RAW counts the CSV
-        # stores (Option A, board #0220/#0245). {} until the device advertises it.
+        # stores (Option A). {} until the device advertises it.
         self.imu = dict(imu or {})
 
     def to_cache(self):

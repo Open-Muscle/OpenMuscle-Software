@@ -17,7 +17,7 @@
 // counts->rad/s scale is pinned with firmware.
 //
 // AXIS MAPPING (ACCEL_TO_MODEL_UP) is the one convention to align with the phone
-// + VR hubs so all three show the band identically (board #0197). It is isolated
+// + VR hubs so all three show the band identically. It is isolated
 // as a single function below; only that needs to change to match phone.
 
 import * as THREE from 'three';
@@ -30,7 +30,7 @@ const COLOR_GRAV = 0x34d399;     // emerald gravity arrow
 // At rest the band reads accel ~[-440, 0, 2150] (gravity along sensor +Z), and we
 // want the band to appear FLAT (model up = +Y). So sensor +Z -> model +Y,
 // sensor +X -> model +X, sensor +Y -> model -Z. TUNABLE: flip axes/signs here to
-// match the phone widget (board #0197).
+// match the phone widget.
 function accelToModelUp(ax, ay, az, out) {
     return out.set(ax, az, -ay);
 }

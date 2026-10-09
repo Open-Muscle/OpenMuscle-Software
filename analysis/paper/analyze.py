@@ -38,15 +38,15 @@ OUT = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------------------
 # Dataset registry: (wearer, session label) -> capture files.
-# Clark J2 take 3 (capture_1783113997) is EXCLUDED: 29.5 s simultaneous label
-# dead gap (Quest tracking loss, 23% of the take; see the Jul-3 data audit).
-# Clark morning capture_1783111868 is EXCLUDED: left-band-only 9.7 s fragment.
+# W2 session-1 take 3 (capture_1783113997) is EXCLUDED: 29.5 s simultaneous label
+# dead gap (Quest tracking loss, 23% of the take; see the data audit).
+# W2 session-1 first capture_1783111868 is EXCLUDED: left-band-only 9.7 s fragment.
 SESSIONS = {
-    ("tory", "T-jun28"): [
+    ("w1", "W1-s1"): [
         "capture_1782662414.csv", "capture_1782662954.csv", "capture_1782663139.csv"],
-    ("clark", "C-jul3am"): ["capture_1783111763.csv"],
-    ("clark", "C-jul3pm"): ["capture_1783113626.csv", "capture_1783113806.csv"],
-    ("tory", "T-jul3"): ["capture_1783114480.csv", "capture_1783114592.csv"],
+    ("w2", "W2-s1"): ["capture_1783111763.csv"],
+    ("w2", "W2-s2"): ["capture_1783113626.csv", "capture_1783113806.csv"],
+    ("w1", "W1-s2"): ["capture_1783114480.csv", "capture_1783114592.csv"],
 }
 
 FLEX = ["lbl_flex_thumb", "lbl_flex_index", "lbl_flex_middle",
@@ -149,10 +149,10 @@ def main():
         print(f"  within-session done: {key}")
 
     # E3: cross-session, same wearer (train the whole source session)
-    pairs = [(("tory", "T-jun28"), ("tory", "T-jul3")),
-             (("tory", "T-jul3"), ("tory", "T-jun28")),
-             (("clark", "C-jul3am"), ("clark", "C-jul3pm")),
-             (("clark", "C-jul3pm"), ("clark", "C-jul3am"))]
+    pairs = [(("w1", "W1-s1"), ("w1", "W1-s2")),
+             (("w1", "W1-s2"), ("w1", "W1-s1")),
+             (("w2", "W2-s1"), ("w2", "W2-s2")),
+             (("w2", "W2-s2"), ("w2", "W2-s1"))]
     for src, dst in pairs:
         for hand in ("left", "right"):
             if hand not in data[src] or hand not in data[dst]:
@@ -178,9 +178,9 @@ def main():
                     per[hand] = (X, Y)
         return per
 
-    tory, clark = wearer_all("tory"), wearer_all("clark")
-    for (src_name, src), (dst_name, dst) in [(("tory", tory), ("clark", clark)),
-                                             (("clark", clark), ("tory", tory))]:
+    w1, w2 = wearer_all("w1"), wearer_all("w2")
+    for (src_name, src), (dst_name, dst) in [(("w1", w1), ("w2", w2)),
+                                             (("w2", w2), ("w1", w1))]:
         for hand in ("left", "right"):
             if hand not in src or hand not in dst:
                 continue

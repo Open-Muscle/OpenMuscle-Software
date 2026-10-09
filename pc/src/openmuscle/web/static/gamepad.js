@@ -5,11 +5,10 @@
 // the pad here and pushes axis/button frames over /ws/gamepad, where the server
 // synthesizes a device_type="gamepad" label device (ingest_gamepad_packet).
 // The controller then behaves like any other label source: pick "Controller" in
-// the Labels select, tag a band, hit Record (Tory's ask: plug in a controller
-// and capture its inputs as labels).
+// the Labels select, tag a band, hit Record.
 //
-// Rendering: Tory asked for "a virtual controller ... to mimic the look of a
-// controller with joysticks and buttons". When the pad reports the Gamepad API
+// Rendering: a virtual controller that mimics the look of a controller
+// with joysticks and buttons. When the pad reports the Gamepad API
 // "standard" mapping (Xbox pads in Chrome/Edge do) with the full standard shape
 // (>= 4 axes and >= 16 buttons), we draw an Xbox-style face as inline SVG:
 // sticks that translate with the axes, ABXY diamond, d-pad cross, bumpers, and

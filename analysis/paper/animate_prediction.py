@@ -1,6 +1,6 @@
 """Website animation: real vs predicted VR hand from forearm pressure.
 
-Uses the best-performing configuration (right hand, wearer T, Jul-3 session)
+Uses the best-performing configuration (right hand, wearer W1, session 2)
 HONESTLY: the model trains on take 1 (capture_1783114480) and the animation
 runs it on a segment of take 2 (capture_1783114592), which it never saw.
 Green skeleton = VR-tracked ground truth; amber = predicted from the 60

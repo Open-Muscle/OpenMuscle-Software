@@ -13,7 +13,7 @@ defaults = {
     'calibration_data': [],
     'sensor_threshold': 0.5,
     'SSID':'OpenMuscle',
-    'Pass':'3141592653',
+    'Pass':'YOUR_WIFI_PASSWORD',
     'PCIP': '192.168.1.48',
     'device_name': 'OpenMuscle Sensor',
     'ledPIN' : 8,

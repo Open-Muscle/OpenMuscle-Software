@@ -1,6 +1,6 @@
 """Forearm supination/pronation from Quest hand-tracking joint POSITIONS.
 
-Derivation engine for the schema-v2 forearm-orientation columns (board #0207):
+Derivation engine for the schema-v2 forearm-orientation columns:
 a continuous forearm-roll angle + a palm-up/down flag, as VR ground-truth for the
 muscle -> forearm-rotation model.
 
@@ -10,15 +10,15 @@ depend on the WebXR XRHand joint-frame convention. Handedness flips the palm-nor
 sign (a right hand's cross product points out the back of the hand; a left hand
 mirrors it).
 
-REFERENCE FRAME NOTE (surfaced for #0207 ratification): a TRUE anatomical roll
+REFERENCE FRAME NOTE (surfaced for spec ratification): a TRUE anatomical roll
 (0 = forearm neutral) needs the elbow/forearm direction, which Quest hand tracking
 does NOT provide. What IS computable from the hand alone is the palm orientation
 relative to GRAVITY. So `forearm_roll` here is GRAVITY-RELATIVE: 0 = palm-up (palm
 normal aligned with world up), +/-180 = palm-down, +/-90 = palm vertical. The
 ratified spec's zero/sign is then a fixed offset applied on top (one constant).
 
-NOT wired to capture/disk - the column write waits for spec ratification (overseer
-#0201: do not write to disk until ratified). This module is the derivation + tests.
+NOT wired to capture/disk - the column write waits for spec ratification (do not
+write to disk until ratified). This module is the derivation + tests.
 """
 
 import math
@@ -80,7 +80,7 @@ def forearm_roll(positions, handedness="right", gravity_up=(0.0, 1.0, 0.0)):
 
     forearm_roll_deg: gravity-relative roll in [-180, 180]. 0 = palm-up (palm
         normal aligned with world up); magnitude grows toward palm-down (+/-180).
-        The ratified anatomical zero/sign (#0207) is a fixed offset on this.
+        The ratified anatomical zero/sign is a fixed offset on this.
     palm_up: bool, the palm faces up (palm normal has a positive up component).
     """
     if not positions or len(positions) < _MIN_JOINTS:

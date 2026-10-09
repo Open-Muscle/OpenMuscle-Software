@@ -106,7 +106,7 @@ class TestQuestRecordingRectangular:
             # Schema v2 width = 3 lead (ts_hub_ms, role, device_id) + 60 sensor
             # + 175 label (25 joints * 7) + 12 IMU (imu_* band + lbl_imu_*
             # labeler; with_imu defaults on) + 2 forearm (forearm_roll_deg +
-            # palm_up) + 15 canonical lbl_* (DATA_SCHEMA #0302, Quest capture).
+            # palm_up) + 15 canonical lbl_* (docs/data-schema.md, Quest capture).
             # Rectangularity holds.
             assert len(header) == 3 + 60 + 175 + 12 + 2 + 15, len(header)
             assert header[:3] == ["ts_hub_ms", "role", "device_id"], header[:3]
@@ -227,7 +227,7 @@ class TestRecordingDefaults:
             assert meta["auto"]["window_ms"] == 100
 
     def test_v2_interop_meta_keys_top_level(self):
-        # Phone interop keys (board #0097) live at the TOP LEVEL, matching the
+        # Phone interop keys live at the TOP LEVEL, matching the
         # phone meta.json shape, not nested under auto/extras.
         with tempfile.TemporaryDirectory() as d:
             s = _make_state(Path(d))
@@ -523,7 +523,7 @@ class TestRecordingDefaults:
             assert dev["imu"]["accel"] == [-440, 0, 2150]
 
     def test_imu_scale_captured_into_meta(self):
-        # Option A (#0220/#0245): the per-device firmware scale_dict advertised
+        # Option A: the per-device firmware scale_dict advertised
         # on discovery (announce/get_info) is recorded into meta.auto.imu_scale
         # so the trainer can normalize the RAW imu counts the CSV stores.
         scale = {"chip": "icm42688", "gyro_dps_per_lsb": 0.0305,
@@ -549,7 +549,7 @@ class TestRecordingDefaults:
 
     def test_forearm_columns_written_for_quest_capture(self):
         # A quest_hand labeler -> forearm_roll_deg + palm_up columns derived from
-        # the matched hand each frame (board #0228, gravity-relative orientation).
+        # the matched hand each frame.
         def _hand():
             j = [{"name": f"j{i}", "pos": [0.0, 0.0, 0.0], "rot": [0, 0, 0, 1]}
                  for i in range(26)]
@@ -584,7 +584,7 @@ class TestRecordingDefaults:
             assert data[0][fi] != "" and data[0][pi] in ("0", "1")   # real forearm values
             assert s.read_capture_meta("fa.csv")["auto"]["forearm_columns"] is True
             # The canonical lbl_* columns follow forearm and are POPULATED at
-            # capture time (the keeper-schema wiring, DATA_SCHEMA #0302).
+            # capture time (the keeper-schema wiring, docs/data-schema.md).
             assert header[-1] == "lbl_ang_pinky_pip"
             assert data[0][header.index("lbl_flex_index")] != ""
             assert s.read_capture_meta("fa.csv")["auto"]["canonical_columns"] is True

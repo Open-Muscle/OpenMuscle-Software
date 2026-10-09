@@ -16,7 +16,7 @@ Verbatim copy of the `boot.py` running on the OpenMuscle hand controller (OM-HAN
 The original firmware presents a 4-item menu:
 
 1. **ESP-NOW Listen** — listens for ESPNow broadcasts, parses, drives servos
-2. **UDP Listen** — connects to WiFi `OpenMuscle`/`3141592653`, listens on port 3145
+2. **UDP Listen**: connects to the configured Wi-Fi network (credentials removed from this archive), listens on port 3145
 3. **Servo Test** — wiggles each finger
 4. **Release All** — releases all servos
 

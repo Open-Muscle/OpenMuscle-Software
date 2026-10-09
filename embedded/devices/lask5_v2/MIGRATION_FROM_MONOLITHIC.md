@@ -1,8 +1,8 @@
 # Migration Plan — LASK5 monolithic → modular firmware
 
 **Status:** planned, not started. Created 2026-05-13 as a hand-off so the next session can resume cold.
-**Target device:** LASK5 V2 currently running monolithic firmware v0.2.0 (Tory's hand-written single-file `boot.py`).
-**Migration goal:** Replace the live firmware with this directory's modular version (`labeler.py` + shared `om_*` lib), preserving the features Tory got working, and matching the packet/port conventions used by `openmuscle web` so the new LASK5 panel works out of the box.
+**Target device:** LASK5 V2 currently running monolithic firmware v0.2.0.
+**Migration goal:** Replace the live firmware with this directory's modular version (`labeler.py` + shared `om_*` lib), preserving the features that already worked, and matching the packet/port conventions used by `openmuscle web` so the new LASK5 panel works out of the box.
 
 ---
 
@@ -12,7 +12,7 @@
   [`archive/lask5_v2_monolithic_2026-05-13/`](../../../archive/lask5_v2_monolithic_2026-05-13/).
   That snapshot is the authority on "what works today".
 - We patched ONE line of the live device's `boot.py` (line 334) so its
-  hardcoded UDP target now points at `10.0.0.102` instead of `192.168.2.103`.
+  hardcoded UDP target now points at `<your PC LAN IP>` instead of `192.168.2.103`.
   This was a stop-gap so the existing firmware would talk to the web UI for
   a single session — **do not preserve this hack in the migration**. The
   modular firmware already does this correctly via `settings.json.udp_target_ip`.
@@ -52,7 +52,7 @@ These are the bits where the monolithic and modular diverge and we need to pick 
 1. **Continuous UDP streaming, not menu-gated.** Eliminates the "device looks dead in the web UI until the operator presses a menu button" failure mode. Power impact is negligible at 25 Hz.
 2. **UDP port 3141.** Same port as FlexGrid. Means `openmuscle web` doesn't need to listen on multiple ports, and any future device can default to 3141 too.
 3. **Settings key renames.** `SSID`→`wifi_ssid`, `Pass`→`wifi_password`, `PCIP`→`udp_target_ip`, `sclPIN`→`scl_pin`, etc. (the modular naming convention). Provide a one-shot migration script in `tools/` or have the boot code accept either set with a deprecation warning.
-4. **Calibration UX preserved.** Tory uses it, we keep it. Implement as the first non-Live menu item.
+4. **Calibration UX preserved.** Operators rely on it, so we keep it. Implement as the first non-Live menu item.
 5. **Splash optional.** Show it at boot if `display_lask5.py:play_splash` succeeds; if the module/frame data isn't on the device, just skip silently. Don't make boot fail if the splash file is missing.
 6. **`replace_boot.py` archive-only.** Don't bring this into the modular tree — it was a "factory reset to project-wide defaults" trick that's now naturally covered by `config/defaults.json`.
 
@@ -68,7 +68,7 @@ Mapping table (live → modular):
 |---|---|---|---|
 | `SSID` | (operator's network) | `wifi_ssid` | |
 | `Pass` | (operator's password) | `wifi_password` | |
-| `PCIP` | `10.0.0.102` | `udp_target_ip` | |
+| `PCIP` | `<your PC LAN IP>` | `udp_target_ip` | |
 | — | — | `udp_port` | New, set to `3141` |
 | `device_name` | `"OpenMuscle Labeler"` | `device_id` | `"lask5-01"` or similar |
 | `sclPIN` | `9` | `scl_pin` | |

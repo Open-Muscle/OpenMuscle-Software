@@ -147,7 +147,7 @@ def test_set_model_role_loads_per_hand_slot(tmp_path, monkeypatch):
     import pytest
     from openmuscle.web.state import AppState
 
-    # Isolate the data root: startup auto-restore (#0314.1) scans the models folder,
+    # Isolate the data root: startup auto-restore scans the models folder,
     # and a real ~/OpenMuscle may hold role-tagged models.
     monkeypatch.setenv("OPENMUSCLE_HOME", str(tmp_path))
     left_path, _ = _make_model(tmp_path, n_labels=3, subdir="L")

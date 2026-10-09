@@ -6,7 +6,7 @@ re-reading every CSV:
   - rows / duration_s: persisted by stop_recording() into meta auto.final,
     used for junk detection (short takes hide by default)
   - created_ms: recording-time epoch ms, preferred over file mtime for the
-    date chips (OneDrive sync can rewrite mtimes)
+    date chips (cloud sync can rewrite mtimes)
 
 Legacy captures (no meta sidecar, or meta without auto.final) must return
 None for all of these so the frontend falls back to size_bytes / mtime.

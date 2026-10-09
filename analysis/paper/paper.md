@@ -1,6 +1,6 @@
-# OpenMuscle: Forearm Force-Myography with VR Hand-Tracking Ground Truth — Dataset and Honest Baselines
+# OpenMuscle: Forearm Force-Myography with VR Hand-Tracking Ground Truth: Dataset and Honest Baselines
 
-**Authors:** Tory (TURFPTAx) et al. — DRAFT v0.1, 2026-07-03
+**Authors:** TURFPTAx et al. (DRAFT v0.1, 2026-07-03)
 **Artifacts:** open hardware (FlexGrid V4), open-source pipeline (OpenMuscle-Software), dataset + this analysis (`analysis/paper/`)
 
 ## Abstract
@@ -20,7 +20,7 @@ sessions, 0.16-0.33 when the band is re-donned in a new session, and 0.27
 across wearers. Two conclusions follow. First, random splits overstate
 within-session skill by ~2.6x through adjacent-frame leakage. Second, and more
 consequential for the field: donning variance rivals wearer identity as the
-dominant obstacle — a model tested five days later on the *same* wearer
+dominant obstacle: a model tested five days later on the *same* wearer
 degraded as much as one tested on a *different* wearer. We release the
 hardware, dataset, capture pipeline (with per-session provenance and live
 data-quality verdicts), and all analysis code.
@@ -29,9 +29,9 @@ data-quality verdicts), and all analysis code.
 
 Hand pose is the highest-bandwidth human output channel, yet capturing it
 outside the lab still requires cameras with line-of-sight or instrumented
-gloves. Forearm-mounted sensing — surface EMG or, as here, force myography
+gloves. Forearm-mounted sensing, whether surface EMG or, as here, force myography
 (FMG: pressure distribution over the forearm surface produced by muscle and
-tendon displacement) — promises an unobtrusive alternative, but the field has
+tendon displacement), promises an unobtrusive alternative, but the field has
 two chronic problems: ground-truth labels are expensive, and reported accuracy
 often fails to survive a change of session or user.
 
@@ -76,16 +76,16 @@ including sessions predating that feature.
 
 ## 3. Dataset
 
-Two wearers (T, C - siblings), four sessions, eight two-hand captures, all
+Two wearers (W1, W2), four sessions, eight two-hand captures, all
 with both bracelets and two-hand labeling. After dropping rows without a full
 25-joint label, the analysis set is:
 
 | Wearer | Session | Date | Hands | Rows (L/R) | Notes |
 |---|---|---|---|---|---|
-| T | T-jun28 | Jun 28 | both | 3,010 / 3,013 | 3 captures |
-| C | C-jul3am | Jul 3 (am) | both | 934 / 929 | 1 capture |
-| C | C-jul3pm | Jul 3 (pm) | both | 4,361 / 4,350 | 2 captures |
-| T | T-jul3 | Jul 3 (pm) | both | 2,840 / 2,854 | 2 captures |
+| W1 | W1-s1 | Jun 28 | both | 3,010 / 3,013 | 3 captures |
+| W2 | W2-s1 | Jul 3 (am) | both | 934 / 929 | 1 capture |
+| W2 | W2-s2 | Jul 3 (pm) | both | 4,361 / 4,350 | 2 captures |
+| W1 | W1-s2 | Jul 3 (pm) | both | 2,840 / 2,854 | 2 captures |
 | **Total** | | | | **11,145 / 11,146** | ~22.3k paired frames |
 
 Excluded (documented in the audit): one 9.7 s single-band fragment and one
@@ -129,14 +129,14 @@ the training set. Reported wearable-sensing accuracy that relies on random
 splits should be read with this factor in mind.
 
 **(2) Donning variance rivals wearer identity.** Re-donning by the same wearer
-on the same day (C-jul3am <-> C-jul3pm) costs 0.16 flexion MAE; five days and
-a re-donning apart (T-jun28 <-> T-jul3) costs 0.25-0.42 — *as bad as or worse
+on the same day (W2-s1 <-> W2-s2) costs 0.16 flexion MAE; five days and
+a re-donning apart (W1-s1 <-> W1-s2) costs 0.25-0.42, *as bad as or worse
 than* transferring across wearers (0.27). The dominant failure mode of this
 sensing modality is not "your muscles differ from mine" but "the band never
 sits in the same place twice." An earlier world-frame analysis of the same
 sessions measured a 47x error inflation for cross-wearer inference; in the
 frame-invariant angle space used here the honest factor is ~2.5x over the
-within-session temporal baseline — still decisive, but the frame-invariant
+within-session temporal baseline; still decisive, but the frame-invariant
 representation absorbs much of the raw catastrophe.
 
 **(3) Within-session, FMG is usable today.** ~5 deg per-joint MAE (random) and
@@ -149,7 +149,7 @@ minute on consumer hardware).
 ![Fig 2: per-finger error](fig2_per_finger.png)
 
 Within-session (temporal), the four long fingers land between 0.11 and 0.14
-flexion MAE and collapse uniformly to 0.30-0.34 under cross-wearer transfer —
+flexion MAE and collapse uniformly to 0.30-0.34 under cross-wearer transfer;
 no long finger transfers meaningfully better than the others. The thumb
 *appears* dramatically easier (0.036 within, 0.050 cross-wearer), but this is
 largely a target-variance artifact: with flexion defined as the mean of the
@@ -160,8 +160,8 @@ the raw per-finger distributions with the dataset.
 
 ### 4.3 Session-length effect
 
-The shortest session (C-jul3am, 49 s per hand) shows the worst temporal-split
-scores (negative R^2) despite competitive random-split scores — with less than
+The shortest session (W2-s1, 49 s per hand) shows the worst temporal-split
+scores (negative R^2) despite competitive random-split scores; with less than
 a minute of data, the last 20% of the timeline contains poses the first 80%
 never visited. Session length matters more than take count.
 
@@ -184,7 +184,7 @@ the released code, because dataset papers rarely say how the sausage was made:
 
 ## 6. Limitations
 
-Two wearers (siblings), four sessions, one hardware revision; conclusions
+Two wearers, four sessions, one hardware revision; conclusions
 about cross-wearer transfer are directional, not definitive. The baseline is
 deliberately frame-wise; temporal models (TCN/GRU) and per-session calibration
 are expected to lift every rung of the ladder and are the obvious next
@@ -197,7 +197,7 @@ captured but not yet used as a feature.
 ## 7. Conclusion
 
 OpenMuscle shows that consumer VR hand tracking turns FMG data collection from
-an annotation problem into an afternoon activity — and that the resulting
+an annotation problem into an afternoon activity, and that the resulting
 honesty, applied to our own system, relocates the field's central challenge
 from decoding accuracy to *placement and session robustness*. Within a
 session, a 100-tree forest on 60 pressure cells tracks fifteen finger DOFs to

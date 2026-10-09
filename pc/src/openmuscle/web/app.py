@@ -162,7 +162,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     async def vr_page():
         return FileResponse(STATIC_DIR / "vr" / "index.html")
 
-    # Compact, read-only "stream view" for OBS. Tory captures this window while
+    # Compact, read-only "stream view" for OBS. Capture this window while
     # livestreaming a game played with the forearm bracelets: two band heatmaps,
     # the frames-captured counter, and the virtual controller. It is DISPLAY
     # ONLY: it connects to /ws/live and renders from the server snapshot, and it
@@ -793,7 +793,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         gestures: Optional[list] = None  # planned gesture set, free-form strings
         notes: Optional[str] = ""
         tags: Optional[list] = None
-        # Labeled-recording context (board #0284): a self-describing session.
+        # Labeled-recording context: a self-describing session.
         wearer: Optional[str] = ""              # who is wearing the band(s)
         take: Optional[int] = None              # take number (frontend prefills last+1)
         labeler_source: Optional[str] = ""      # lask5 | vr | both | gamepad | webcam | ""

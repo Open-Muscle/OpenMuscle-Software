@@ -82,8 +82,8 @@ def pivot_bilateral(df: pd.DataFrame,
     For each LEFT frame, pair the nearest RIGHT frame within `window_ms` by
     `ts_hub_ms`, concatenate features Left-then-Right (60 + 60 = 120 for two V4
     bands), and take labels from the left row (the labeler value matched nearest
-    the group ts). Left frames with no right within the window are DROPPED
-    (board #0072/#0073). Uses pandas merge_asof for the nearest temporal join,
+    the group ts). Left frames with no right within the window are DROPPED.
+    Uses pandas merge_asof for the nearest temporal join,
     the static-DataFrame analogue of the streaming TemporalMatcher.
 
     Returns (X, y): X columns are `<feat>_L` then `<feat>_R`; y is the labels.
@@ -129,14 +129,14 @@ def load_training_frame(csv_path: str,
     """Load a capture CSV and split into features (X) and labels (y).
 
     Schema-v2 multi-role (bilateral) captures are pivoted to the wide
-    Left||Right matrix. This is also the GUARD (board #0072/#0073): a bilateral
+    Left||Right matrix. This is also the GUARD: a bilateral
     long CSV must NEVER fall through to the single-source path, which would
     silently pool left + right rows into one role-agnostic 60-feature set.
 
-    `role` (left/right) selects the SEPARATE-MODEL-PER-HAND path (Tory directive
-    2026-06-27): keep only that role's rows, then train a normal single-arm model
-    on its own 60 muscle features -> its own hand labels. Run twice (left, right)
-    to get two independent models. This deliberately SKIPS the bilateral pivot --
+    `role` (left/right) selects the SEPARATE-MODEL-PER-HAND path: keep only
+    that role's rows, then train a normal single-arm model on its own 60 muscle
+    features -> its own hand labels. Run twice (left, right) to get two
+    independent models. This deliberately SKIPS the bilateral pivot --
     we are NOT concatenating L||R into one model; each hand gets its own.
 
     Returns:
