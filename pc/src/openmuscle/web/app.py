@@ -30,6 +30,7 @@ from openmuscle import doctor, netutil
 from openmuscle.web.state import AppState, ModelGuardError, TrainDataError
 from openmuscle import assets as om_assets
 from openmuscle import paths
+from openmuscle.web import help as help_pages
 from openmuscle.web import setup_api
 
 
@@ -242,6 +243,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # kept loading stale JS even after the file changed on disk.
         if (path == "/" or path == "/vr" or path == "/stream"
                 or path == "/webcam" or path == "/setup"
+                or path == "/help" or path.startswith("/help/")
                 or path.startswith("/static/")):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
@@ -305,6 +307,27 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/setup")
     async def setup_page():
         return FileResponse(STATIC_DIR / "setup" / "index.html")
+
+    # In-app Help: the guides in docs/*.md rendered to HTML, so they stay
+    # readable on the band's own Wi-Fi where the laptop has no internet. Pages
+    # are found in the docs folder per request (web/help.py), so a new
+    # docs/<name>.md shows up without any wiring here.
+    @app.get("/help", response_class=HTMLResponse)
+    async def help_index():
+        status, body = help_pages.render_page(None)
+        return HTMLResponse(body, status_code=status)
+
+    @app.get("/help/files/{rel:path}")
+    async def help_file(rel: str):
+        p = help_pages.find_file(rel)
+        if p is None:
+            raise HTTPException(status_code=404, detail="No such file")
+        return FileResponse(p, media_type=help_pages.IMAGE_TYPES.get(p.suffix.lower()))
+
+    @app.get("/help/{page}", response_class=HTMLResponse)
+    async def help_page(page: str):
+        status, body = help_pages.render_page(page)
+        return HTMLResponse(body, status_code=status)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
