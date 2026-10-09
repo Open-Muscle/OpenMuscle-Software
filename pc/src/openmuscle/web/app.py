@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from openmuscle.web import setup_api
 from openmuscle.web.state import AppState
 
 
@@ -144,7 +145,8 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # pointed at app.js without the version querystring), so refreshes
         # kept loading stale JS even after the file changed on disk.
         if (path == "/" or path == "/vr" or path == "/stream"
-                or path == "/webcam" or path.startswith("/static/")):
+                or path == "/webcam" or path == "/setup"
+                or path.startswith("/static/")):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
@@ -183,6 +185,13 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/webcam")
     async def webcam_page():
         return FileResponse(STATIC_DIR / "webcam" / "index.html")
+
+    # Device setup wizard: walks a non-engineer through putting a band (or the
+    # optional labeler) on their Wi-Fi. Its device calls go through the
+    # loopback-only /api/setup/* routes (web/setup_api.py).
+    @app.get("/setup")
+    async def setup_page():
+        return FileResponse(STATIC_DIR / "setup" / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -409,6 +418,10 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 detail=f"could not set role for {body.device_id} "
                        f"(unknown device, or invalid role)")
         return {"device_id": body.device_id, "role": (body.role or "").strip().lower()}
+
+    # ----- REST: device setup wizard (loopback only) -----
+
+    setup_api.register(app, state)
 
     # ----- REST: recording -----
 
