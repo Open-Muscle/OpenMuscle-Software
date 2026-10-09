@@ -170,6 +170,7 @@
         errNameLong: 'The Wi-Fi name can be at most 32 characters.',
         errPasswordShort: 'A Wi-Fi password has at least 8 characters.',
         errPasswordLong: 'A Wi-Fi password has at most 63 characters.',
+        errLocalOnly: 'Setup only works in the browser on the computer that is running OpenMuscle. Open http://localhost:8000/setup on that computer.',
         errOffline: 'This page lost contact with OpenMuscle. Is the program still running?',
     };
 
@@ -382,7 +383,7 @@
             case 'restart':   // from the troubleshooting list: same device, one more go
                 return assign(state, {
                     step: 'join', device: null, rejectedId: '', idConfirmed: false, notice: null, error: null,
-                    sentId: '', sentAt: null, since: null, found: null, useSaved: false,
+                    sentId: '', sentAt: null, since: null, found: null, creds: null, useSaved: false,
                 });
 
             default:

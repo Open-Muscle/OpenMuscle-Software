@@ -212,12 +212,27 @@ def is_loopback(host):
     return ip.is_loopback
 
 
+def _host_name(host_header):
+    """The host part of a Host header value, without port or [] brackets."""
+    h = host_header.strip().lower()
+    if h.startswith("["):
+        return h[1:].split("]", 1)[0]
+    if h.count(":") == 1:
+        return h.split(":", 1)[0]
+    return h
+
+
 def require_local(request: Request):
     """403 unless the request comes from this computer's own browser."""
     client = request.client.host if request.client else ""
     if not is_loopback(client):
         raise HTTPException(status_code=403,
                             detail="Device setup only works from the computer running OpenMuscle.")
+    # A DNS-rebinding page reaches this server under its own host name with no
+    # Origin header, so the Host header has to be a local name as well.
+    host_header = request.headers.get("host")
+    if host_header and _host_name(host_header) not in LOCAL_ORIGIN_HOSTS:
+        raise HTTPException(status_code=403, detail="Cross-site request refused.")
     origin = request.headers.get("origin")
     if origin and origin != "null":
         try:

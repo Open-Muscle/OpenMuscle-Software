@@ -216,6 +216,16 @@ test('restart from the troubleshooting list drops the saved details and goes bac
     s = W.reduce(s, { type: 'restart' });
     assert.equal(s.step, 'join');
     assert.equal(s.useSaved, false);
+    assert.equal(s.creds, null);
+});
+
+test('restart clears typed details too, so a wrong password is never offered again', () => {
+    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true },
+        { type: 'send', ssid: 'Home', password: 'wrong guess' }, { type: 'sendOk', id: 'flexgrid-aaaaaa', now: 0 }]);
+    assert.equal(s.creds.password, 'wrong guess');
+    s = W.reduce(s, { type: 'restart' });
+    assert.equal(s.creds, null);
+    assert.equal(s.useSaved, false);
 });
 
 test('back moves one step and never past the first', () => {

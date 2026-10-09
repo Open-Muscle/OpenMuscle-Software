@@ -303,6 +303,26 @@ def test_foreign_origin_is_refused_even_from_loopback(web):
     assert status == 200
 
 
+def test_foreign_host_header_is_refused_even_from_loopback(web):
+    # DNS rebinding: a page on attacker.example (resolving to 127.0.0.1) sends no Origin
+    for path in ("/api/setup/probe", "/api/setup/scan", "/api/setup/wifi-hint",
+                 "/api/setup/wait?device_id=x&timeout=0"):
+        for host in ("attacker.example:%d" % web.port, "attacker.example", "192.168.1.9:8000"):
+            status, _, _ = web.call("GET", path, headers={"Host": host})
+            assert status == 403, (path, host)
+    for host in ("localhost:%d" % web.port, "127.0.0.1:%d" % web.port, "localhost"):
+        status, _, _ = web.call("GET", "/api/setup/probe", headers={"Host": host})
+        assert status == 200, host
+
+
+@pytest.mark.parametrize("value,name", [
+    ("localhost:8000", "localhost"), ("127.0.0.1:8000", "127.0.0.1"), ("LocalHost", "localhost"),
+    ("[::1]:8000", "::1"), ("[::1]", "::1"), ("attacker.example:80", "attacker.example"),
+])
+def test_host_name(value, name):
+    assert setup_api._host_name(value) == name
+
+
 # ---- wifi hint ------------------------------------------------------------------
 
 NETSH = """

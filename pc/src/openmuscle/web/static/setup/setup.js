@@ -82,6 +82,10 @@
         const prev = state;
         state = W.reduce(state, ev);
         if (state === prev) return false;
+        // Keep the details only once a device has really come online with them,
+        // and drop them again on "start over" (the password may have been wrong).
+        if (ev.type === 'found') saveRemembered(state.creds);
+        else if (ev.type === 'restart') saveRemembered(null);
         if (state.step !== prev.step || ev.type === 'confirmId' || ev.type === 'pick'
             || ev.type === 'probe' || ev.type === 'changeWifi' || ev.type === 'send'
             || ev.type === 'sendFail' || ev.type === 'restart' || ev.type === 'nextDevice') {
@@ -194,6 +198,7 @@
             const r = await api('GET', '/api/setup/probe');
             if (state.step !== 'join') return;
             if (r.offline) { hintLine.textContent = T.errOffline; return; }
+            if (r.status === 403) { hintLine.textContent = T.errLocalOnly; return; }
             if (r.ok && r.data) dispatch({ type: 'probe', result: r.data });
             if (state.step !== 'join') return;
             await refreshHint();
@@ -308,7 +313,6 @@
         if (r.offline) { dispatch({ type: 'sendFail', code: 'offline', message: T.errOffline }); return; }
         const d = r.data || {};
         if (r.ok && d.ok) {
-            saveRemembered(state.creds);
             typedPassword = '';
             dispatch({ type: 'sendOk', id: d.id, since: d.since, now: Date.now() });
         } else {
