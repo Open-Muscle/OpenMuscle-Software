@@ -1565,6 +1565,19 @@ body.debug .debug-only { display: block; }
 .cap-verdict.cap-bad  { background: rgba(255, 90, 107, 0.20); color: var(--red); }
 .cap-warn-line { color: var(--orange); font-size: 12px; margin-top: 2px; }
 
+/* Captures-table Quality column: dot + word + one badge per problem. */
+.q-cell { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.q-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--fg-faint); flex: none; }
+.q-dot.q-good  { background: var(--green); }
+.q-dot.q-check { background: var(--orange); }
+.q-dot.q-bad   { background: var(--red); }
+.q-word { font-weight: 600; }
+.q-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+    background: rgba(255, 164, 44, 0.18); color: var(--orange);
+}
+.q-badge.q-bad { background: rgba(255, 90, 107, 0.20); color: var(--red); }
+
 /* Multi-band LIVE band rows: one [band card | heatmap] row per streaming
    flexgrid (Tory's redesign: the flexgrid square sits to the LEFT of its own
    heatmap, in line). Two-hand sessions tile the rows side by side (board

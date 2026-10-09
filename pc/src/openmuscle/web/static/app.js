@@ -1440,26 +1440,14 @@ function renderRecording() {
             : `sensor: <b>${escapeHtml(r.sensor_device_id || '?')}</b>`;
 
         // At-a-glance capture-quality verdict so a bad take is caught in real time
-        // (data-capture quality is goal #1, board #0297) instead of after the fact.
-        // Joints dropping mid-capture pad/truncate the label row -> a quality hit.
-        const widthMiss = r.label_width_mismatch ?? 0;
+        // (data-capture quality is goal #1, board #0297). The verdict and its
+        // plain reasons come from the server (quality.py), the same code that
+        // persists the final verdict with the take, so they cannot drift.
         const seen = r.sensor_frames_seen ?? 0;
-        // band_flat (server-side): most cells never moved = band not engaged.
-        // The capture_1779731309 dud class -- looks like a normal file, trains
-        // nothing (board #0311.4).
-        const bandFlat = r.band_flat === true;
-        let verdict = 'GOOD', vCls = 'cap-good';
-        if (bandFlat || rate < 0.5 || (seen > 20 && (r.matched ?? 0) === 0)) {
-            verdict = 'BAD'; vCls = 'cap-bad';
-        } else if (rate < 0.9 || widthMiss > 0) {
-            verdict = 'DEGRADED'; vCls = 'cap-warn';
-        }
-        const widthLine = widthMiss > 0
-            ? `<div class="cap-warn-line">⚠ ${widthMiss} frame(s) had joints drop mid-capture (label width padded/truncated)</div>`
-            : '';
-        const flatLine = bandFlat
-            ? `<div class="cap-warn-line">⚠ band not engaged: ${r.flat_cells}/${r.cells_total} cells flat — is the band on the arm?</div>`
-            : '';
+        const q = r.quality || { verdict: 'good', reasons: [] };
+        const vCls = QUALITY_CAP_CLS[q.verdict] || 'cap-good';
+        const verdict = (QUALITY_WORD[q.verdict] || 'Good').toUpperCase();
+        const reasonLines = qualityReasonsHtml(q);
 
         recordStatus.innerHTML = `
             <div class="cap-verdict ${vCls}">capture: ${verdict}</div>
@@ -1469,7 +1457,7 @@ function renderRecording() {
                  (<span class="${rateCls}">${ratePct}%</span>)
                  · unpaired sensor: ${r.unpaired_sensor ?? 0}
                  · label pkts: ${r.label_packets_seen ?? 0}</div>
-            ${flatLine}${widthLine}
+            ${reasonLines}
         `;
     } else {
         recordBtn.textContent = '● Record';
@@ -1733,27 +1721,47 @@ if (recordAdvancedToggle && recordAdvancedEl) {
     };
 }
 
+// Quality verdict vocabulary (the verdict itself is computed in quality.py).
+const QUALITY_WORD = { good: 'Good', check: 'Check', bad: 'Bad' };
+const QUALITY_CAP_CLS = { good: 'cap-good', check: 'cap-warn', bad: 'cap-bad' };
+
+function qualityReasonsHtml(q) {
+    return ((q && q.reasons) || [])
+        .map(t => `<div class="cap-warn-line">⚠ ${escapeHtml(t)}</div>`).join('');
+}
+
+// Captures-table cell: colored dot + word, a short badge per problem found,
+// full plain-English reasons in the tooltip. Takes recorded before quality was
+// persisted show a "scan" link that asks the server to score the CSV once.
+function renderQualityCell(c) {
+    const q = c.quality;
+    if (!q) {
+        return `<button class="link" data-scan="${escapeHtml(c.name)}" ` +
+               `title="This take predates saved quality. Scan the file once to score it.">scan</button>`;
+    }
+    const tip = (q.reasons && q.reasons.length)
+        ? q.reasons.join('\n') : 'No problems found.';
+    const badges = (q.flags || []).map(f =>
+        `<span class="q-badge q-${escapeHtml(f.severity || 'check')}" ` +
+        `title="${escapeHtml(f.reason || '')}">${escapeHtml(f.word || f.code)}</span>`).join('');
+    return `<span class="q-cell" title="${escapeHtml(tip)}">` +
+           `<span class="q-dot q-${escapeHtml(q.verdict)}"></span>` +
+           `<span class="q-word">${escapeHtml(QUALITY_WORD[q.verdict] || q.verdict)}</span>${badges}</span>`;
+}
+
 // Post-stop result card: keeps the finished take's stats + next actions in
 // the sticky bar until the operator moves on. renderRecording leaves the
 // status line alone while this flag is set; the next start clears it.
 let _postStopCard = false;
 
-function showPostStopCard(result, lastRec) {
-    // Same verdict thresholds as the live block in renderRecording, fed from
-    // the stop result (band_flat only lives in the last live tick snapshot).
+function showPostStopCard(result) {
+    // The verdict is computed server-side at stop and persisted with the take
+    // (quality.py); this card just shows what was saved.
     const rate = result.match_rate ?? 0;
-    const widthMiss = result.label_width_mismatch ?? 0;
-    const seen = result.sensor_frames_seen ?? 0;
-    const bandFlat = !!(lastRec && lastRec.band_flat);
-    let verdict = 'GOOD', vCls = 'cap-good';
-    if (bandFlat || rate < 0.5 || (seen > 20 && (result.matched ?? 0) === 0)) {
-        verdict = 'BAD'; vCls = 'cap-bad';
-    } else if (rate < 0.9 || widthMiss > 0) {
-        verdict = 'DEGRADED'; vCls = 'cap-warn';
-    }
-    const flatLine = bandFlat
-        ? `<div class="cap-warn-line">⚠ band not engaged: ${lastRec.flat_cells}/${lastRec.cells_total} cells flat (was the band on the arm?)</div>`
-        : '';
+    const q = result.quality || { verdict: 'good', reasons: [] };
+    const vCls = QUALITY_CAP_CLS[q.verdict] || 'cap-good';
+    const verdict = (QUALITY_WORD[q.verdict] || 'Good').toUpperCase();
+    const flatLine = qualityReasonsHtml(q);
     const sessionBit = activeSession
         ? ` · linked to ${escapeHtml(activeSession.name || activeSession.id)}`
         : ' · no session (ungrouped)';
@@ -1792,11 +1800,10 @@ function showPostStopCard(result, lastRec) {
 recordBtn.onclick = async () => {
     try {
         if (recordingState) {
-            const lastRec = recordingState;   // last live snapshot (carries band_flat)
             const r = await fetch('/api/recording', { method: 'DELETE' });
             if (!r.ok) throw new Error(await readError(r));
             const result = await r.json().catch(() => null);
-            if (result) showPostStopCard(result, lastRec);
+            if (result) showPostStopCard(result);
             await refreshCaptures();
         } else {
             const plan = deriveRecordPlan();
@@ -2071,13 +2078,14 @@ function renderCaptures(list) {
         activeSession ? activeSession.id : null,
         // meta rides along so an edit re-renders even though mtime is unchanged
         visible.map(c => [c.name, c.mtime, c.session_id || '', c.hands,
-                          c.label_source || '', c.rows, c.duration_s, c.meta]),
+                          c.label_source || '', c.rows, c.duration_s, c.meta,
+                          c.quality]),
     ]);
     if (sig === _capturesSig) { updateSelectionStatus(); return; }
     _capturesSig = sig;
 
     if (!list.length) {
-        capturesBody.innerHTML = '<tr class="empty"><td colspan="6">No captures saved yet.</td></tr>';
+        capturesBody.innerHTML = '<tr class="empty"><td colspan="7">No captures saved yet.</td></tr>';
         updateSelectionStatus();
         return;
     }
@@ -2100,6 +2108,7 @@ function renderCaptures(list) {
         return `<tr${trClass} data-name="${escapeHtml(c.name)}">
             <td class="captures-check"><input type="checkbox" class="cap-check" data-name="${escapeHtml(c.name)}" ${checked}></td>
             <td>${hands} ${escapeHtml(c.name)}${junkTag}</td>
+            <td>${renderQualityCell(c)}</td>
             <td>${metaCell}</td>
             <td>${kb} KB</td>
             <td>${escapeHtml(date)}</td>
@@ -2112,7 +2121,7 @@ function renderCaptures(list) {
         </tr>`;
     }).join('');
     const emptyFiltered = (!visible.length)
-        ? '<tr class="empty"><td colspan="6">No captures match the current filters.</td></tr>' : '';
+        ? '<tr class="empty"><td colspan="7">No captures match the current filters.</td></tr>' : '';
     capturesBody.innerHTML = emptyFiltered + rows;
     capturesBody.querySelectorAll('button[data-del]').forEach(btn => {
         btn.onclick = async () => {
@@ -2133,6 +2142,21 @@ function renderCaptures(list) {
     });
     capturesBody.querySelectorAll('button[data-edit]').forEach(btn => {
         btn.onclick = () => openMetaModal(btn.dataset.edit);
+    });
+    capturesBody.querySelectorAll('button[data-scan]').forEach(btn => {
+        btn.onclick = async () => {
+            btn.disabled = true;
+            btn.textContent = 'scanning...';
+            try {
+                const r = await fetch(`/api/captures/${encodeURIComponent(btn.dataset.scan)}/quality`);
+                if (!r.ok) throw new Error(await readError(r));
+                await refreshCaptures();
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'scan';
+                alert('Could not score this take: ' + (e.message || e));
+            }
+        };
     });
     capturesBody.querySelectorAll('button[data-reveal]').forEach(btn => {
         btn.onclick = () => revealCaptureFolder(btn.dataset.reveal);
@@ -2329,6 +2353,19 @@ async function autoEnablePrediction() {
     }
 }
 
+// Train still accepts bad takes, but says which ones they are and why. The
+// server scores every selected capture (stored verdict, or a one-time scan for
+// older takes) and returns the bad ones in `bad_captures`.
+function badTakesNote(results) {
+    const seen = new Map();
+    for (const res of results) {
+        for (const b of (res.bad_captures || [])) seen.set(b.name, b.reasons || []);
+    }
+    if (!seen.size) return '';
+    const list = [...seen].map(([n, why]) => `${n}${why.length ? ' (' + why[0] + ')' : ''}`).join('; ');
+    return ` · ⚠ ${seen.size} bad take(s) included, consider unticking: ${list}`;
+}
+
 trainBtn.onclick = async () => {
     if (selectedCaptures.size === 0) return;
     const captures = [...selectedCaptures];
@@ -2367,7 +2404,8 @@ trainBtn.onclick = async () => {
             } else {
                 await autoEnablePrediction();
                 trainStatus.className = 'train-status ok';
-                trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}`;
+                trainStatus.textContent = `✓ Both hands trained + LOADED (L R²=${r2s.left}, R R²=${r2s.right}) · ${trainRunHint()}` +
+                    badTakesNote([results.left, results.right]);
             }
         } else {
             // All-single-band selection: today's pooled/role-less call.
@@ -2391,7 +2429,8 @@ trainBtn.onclick = async () => {
             } else {
                 await autoEnablePrediction();
                 trainStatus.className = 'train-status ok';
-                trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]`;
+                trainStatus.textContent = `✓ Trained on ${nt} rows · ${nf} features → ${nl} labels · R²=${r2} · MSE=${mse} [loaded · ${trainRunHint()}]` +
+                    badTakesNote([result]);
             }
         }
         await refreshModels();
