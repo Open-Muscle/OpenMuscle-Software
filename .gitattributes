@@ -1,0 +1,10 @@
+# Launcher scripts must keep the line endings their operating system expects,
+# whatever the person's git settings are and whether they cloned or downloaded
+# the zip. A .bat saved with LF lines misbehaves on Windows; a .sh or .command
+# saved with CRLF fails on macOS and Linux ("bad interpreter", "^M"). The CI
+# smoke test (scripts/ci_smoke.py) checks these on every operating system.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.sh        text eol=lf
+*.command   text eol=lf
+*.desktop   text eol=lf
