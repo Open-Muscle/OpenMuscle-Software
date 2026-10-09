@@ -90,6 +90,21 @@ header.topbar .topbar-right .setup-link:hover {
     background: var(--accent);
     color: #04121a;
 }
+/* "Help": the guides served from this computer (/help). Always visible. */
+header.topbar .topbar-right .help-link {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+    text-decoration: none;
+    padding: 4px 12px;
+    border: 1px solid var(--fg-dim);
+    border-radius: 6px;
+    white-space: nowrap;
+}
+header.topbar .topbar-right .help-link:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
 
 /* ===== Sticky control bar (Record | Predict | Session | signal pills) =====
    The record -> train -> predict loop stays reachable while scrolled anywhere.
