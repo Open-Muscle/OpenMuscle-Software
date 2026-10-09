@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,6 +72,59 @@ from openmuscle import hand_angles
 from openmuscle.quality import CellActivityTracker
 from openmuscle.web.inference import InferenceEngine
 from openmuscle.web.log_buffer import LogBuffer, install as install_log_handler
+
+
+# ----- capture file naming -----
+#
+# A take is a set of files sharing one stem: <stem>.csv plus sidecars. These
+# helpers keep user-typed names safe to use as a file name on every OS and make
+# sure a new recording can never land on top of an existing take.
+CAPTURE_SIDECAR_SUFFIXES = (".csv", ".sensor.jsonl", ".label.jsonl",
+                            ".meta.json", ".labels.schema.json")
+_MAX_CAPTURE_STEM = 80
+_WINDOWS_RESERVED = {"con", "prn", "aux", "nul",
+                     *(f"com{i}" for i in range(1, 10)),
+                     *(f"lpt{i}" for i in range(1, 10))}
+
+
+def sanitize_capture_stem(name: Optional[str]) -> str:
+    """Turn a requested capture name into a safe file stem (no extension).
+
+    Strips any path parts, drops a trailing .csv, replaces spaces and every
+    character that is not a letter, digit, '_' or '-' (dots included, so the
+    sidecar suffixes can never be confused with part of the name) with '-',
+    collapses runs of '-', trims leading/trailing '-', caps the length and
+    avoids Windows reserved device names. Returns "" when nothing usable is
+    left, so the caller can fall back to a generated name.
+    """
+    if not name:
+        return ""
+    parts = [p for p in re.split(r"[\\/]", str(name).strip()) if p.strip()]
+    stem = parts[-1] if parts else ""
+    if stem.lower().endswith(".csv"):
+        stem = stem[:-4]
+    stem = re.sub(r"[^\w\-]", "-", stem)        # \w is unicode-aware: keeps accents
+    stem = re.sub(r"-{2,}", "-", stem).strip("-")
+    stem = stem[:_MAX_CAPTURE_STEM].strip("-")
+    if stem.lower() in _WINDOWS_RESERVED:
+        stem = "take-" + stem
+    return stem
+
+
+def capture_stem_taken(captures_dir: Path, stem: str) -> bool:
+    """True if the CSV or any sidecar for this stem already exists."""
+    return any((captures_dir / (stem + suffix)).exists()
+               for suffix in CAPTURE_SIDECAR_SUFFIXES)
+
+
+def unique_capture_stem(captures_dir: Path, stem: str) -> str:
+    """First of stem, stem-2, stem-3 ... that has no CSV or sidecar on disk."""
+    if not capture_stem_taken(captures_dir, stem):
+        return stem
+    n = 2
+    while capture_stem_taken(captures_dir, f"{stem}-{n}"):
+        n += 1
+    return f"{stem}-{n}"
 
 
 @dataclass
@@ -243,6 +297,9 @@ class ActiveCapture:
     # not derivable from device_type alone -- e.g. quest_hand.
     labels_schema_path: Optional[Path] = None
     labels_schema_written: bool = False
+    # True when the file name differs from what the operator typed (illegal
+    # characters replaced, or -2/-3 added because the name was already taken).
+    name_adjusted: bool = False
     # Label-width lock. quest_hand frames can vary in joint count when hand
     # tracking is partial; writing those varying lengths straight to the CSV
     # produces ragged rows (different column count per row) that break
@@ -1092,6 +1149,7 @@ class AppState:
             r = self.recording
             rec = {
                 "filename": r.path.name,
+                "name_adjusted": r.name_adjusted,
                 "schema_version": "v2",
                 # Hub epoch-ms when the capture started == the clock the CSV's
                 # ts_hub_ms is in. The VR sync slate shows this so a screen-
@@ -1458,10 +1516,17 @@ class AppState:
                 label_device_type or "", self.DEFAULT_WINDOW_MS_FALLBACK)
 
         # Build paths
-        name = filename or f"capture_{int(time.time())}.csv"
-        if not name.endswith(".csv"):
-            name += ".csv"
-        name = Path(name).name  # strip any path components the user submitted
+        # Never overwrite a take: sanitize the requested name, then suffix
+        # -2, -3 ... if the CSV or any of its sidecars already exists.
+        requested = filename
+        stem_name = (sanitize_capture_stem(filename)
+                     or f"capture_{int(time.time())}")
+        stem_name = unique_capture_stem(self.captures_dir, stem_name)
+        name = stem_name + ".csv"
+        name_adjusted = bool(requested and str(requested).strip() not in (stem_name, name))
+        if name_adjusted:
+            self.log_buffer.info("recording",
+                "capture name adjusted: '{}' -> '{}'".format(requested, name))
         csv_path = self.captures_dir / name
         stem = csv_path.with_suffix("")           # data/raw/merged/foo (no .csv)
         sensor_sidecar = stem.with_suffix(".sensor.jsonl")
@@ -1528,6 +1593,7 @@ class AppState:
             label_id_side=label_id_side,
             with_forearm=with_forearm,
             with_canonical=with_canonical,
+            name_adjusted=name_adjusted,
         )
         # Lock the gamepad label width so _record_packet pads/truncates every
         # paired row to the header's column count, keeping the CSV rectangular.
@@ -1831,6 +1897,16 @@ class AppState:
                 "meta": meta_summary,
             })
         return out
+
+    def next_capture_name(self, base: str = "take", start: int = 1) -> str:
+        """Next free take file name for `base`: <base>-take<N>.csv, where N is
+        the first number >= start with no CSV or sidecar on disk. Used by the UI
+        to suggest a name that cannot collide (e.g. after a take was deleted)."""
+        stem = sanitize_capture_stem(base) or "take"
+        n = max(1, int(start or 1))
+        while capture_stem_taken(self.captures_dir, f"{stem}-take{n}"):
+            n += 1
+        return f"{stem}-take{n}.csv"
 
     def capture_path(self, name: str) -> Path | None:
         # Whitelist: only return paths inside captures_dir

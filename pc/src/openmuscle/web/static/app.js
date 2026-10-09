@@ -1461,8 +1461,12 @@ function renderRecording() {
             ? `<div class="cap-warn-line">⚠ band not engaged: ${r.flat_cells}/${r.cells_total} cells flat — is the band on the arm?</div>`
             : '';
 
+        const nameLine = r.name_adjusted
+            ? `<div class="cap-warn-line">Saving as ${escapeHtml(r.filename)} (that name was already used or had characters a file name cannot hold; your earlier take is untouched)</div>`
+            : '';
         recordStatus.innerHTML = `
             <div class="cap-verdict ${vCls}">capture: ${verdict}</div>
+            ${nameLine}
             <div>${escapeHtml(r.filename)} · ${r.rows} paired rows · ${r.duration_s}s · win ${r.window_ms ?? 100}ms</div>
             <div>${sensorLine} &nbsp; label: <b>${escapeHtml(label)}</b></div>
             <div>matched: ${r.matched ?? 0} / ${seen}
@@ -1768,11 +1772,21 @@ function showPostStopCard(result, lastRec) {
         </div>`;
     _postStopCard = true;
     const nextBtn = document.getElementById('rec-next-take');
-    if (nextBtn) nextBtn.onclick = () => {
+    if (nextBtn) nextBtn.onclick = async () => {
         // Re-arm with a suggested take name; the next click on Record starts.
+        // The server picks the first name with no file on disk, so the
+        // suggestion never reuses a take (even after one was deleted).
         const base = activeSession ? (activeSession.name || activeSession.id) : 'take';
         const n = (activeSession ? (activeSession.capture_count || 0) : 0) + 1;
-        captureName.value = `${base}-take${n}`;
+        let suggestion = `${base}-take${n}`;
+        try {
+            const r = await fetch(`/api/captures/next-name?base=${encodeURIComponent(base)}&start=${n}`);
+            if (r.ok) {
+                const j = await r.json();
+                if (j && j.filename) suggestion = j.filename.replace(/\.csv$/i, '');
+            }
+        } catch (e) { /* offline: the server still de-duplicates on Record */ }
+        captureName.value = suggestion;
         _postStopCard = false;
         recordStatus.textContent = '';
         captureName.focus();
