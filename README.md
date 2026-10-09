@@ -49,8 +49,6 @@ OpenMuscle-Software/
         lib/                    Shared firmware library (om_*.py: settings,
                                 network, display, packet, menu, sensor base)
         devices/
-            flexgrid_v1/        Early FlexGrid firmware on the shared library
-                                (reference only; V4 bands run FlexGridV4-Firmware)
             lask5_v2/           LASK5 V2 4-finger labeler + joystick
             openhand_v2/        OpenHand V2 5-finger PCA9685-driven hand
             _template/          Template for new devices
@@ -66,7 +64,7 @@ OpenMuscle-Software/
                                 verbatim so working state is never lost)
 ```
 
-**Firmware lives in more than one place, on purpose.** The shipping band firmware is its own repository, [FlexGridV4-Firmware](https://github.com/Open-Muscle/FlexGridV4-Firmware) (flash it with the `flash.py` described in that repository's README and BRINGUP guide). The LASK5 firmware is [LASK5-Firmware](https://github.com/Open-Muscle/LASK5-Firmware). The `embedded/` folder here holds the shared `om_*` library and device examples for building new devices; do not flash `embedded/devices/flexgrid_v1` onto a V4 band.
+**Firmware lives in more than one place, on purpose.** The shipping band firmware is its own repository, [FlexGridV4-Firmware](https://github.com/Open-Muscle/FlexGridV4-Firmware) (flash it with the `flash.py` described in that repository's README and BRINGUP guide). The LASK5 firmware is [LASK5-Firmware](https://github.com/Open-Muscle/LASK5-Firmware). The `embedded/` folder here holds the shared `om_*` library and device examples for building new devices; V4 bands run the FlexGridV4-Firmware repository above, not anything in `embedded/devices/`.
 
 ## Install for development
 

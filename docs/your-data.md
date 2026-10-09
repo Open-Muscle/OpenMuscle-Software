@@ -16,7 +16,7 @@ It is in your home folder on purpose, and not in Documents, because Documents is
 
 Three ways to find it:
 
-- In the Studio, scroll to **Data and Models**. The lines **Recordings are saved in** and **Trained models are saved in** show the exact folder, with **Open folder** (opens your file manager) and **Copy path** buttons.
+- In the Studio, scroll to **Data & Models**. The lines **Recordings are saved in** and **Trained models are saved in** show the exact folder, with **Open folder** (opens your file manager) and **Copy path** buttons.
 - The window you started OpenMuscle from prints it: `Your data folder: ...`.
 - On the **Captures** list, the small folder icon on a row shows that one file in your file manager. After you stop a recording, **Show file** does the same.
 

@@ -163,11 +163,11 @@ Problems (camera blocked, busy, left and right swapped): [Camera problems](troub
 
 **You should see** a timer while you record, and afterwards a card that says **Saved: Good** (or **Check** or **Bad**, with the reason in plain words) and a new row in the **Captures** list. Takes under 10 seconds are marked **too short**. Aim for 30 seconds or more; make two to four takes, resting between them.
 
-Where it went: the **Recordings are saved in** line in **Data and Models** shows the folder, and **Open folder** opens it. See [your-data.md](your-data.md).
+Where it went: the **Recordings are saved in** line in **Data & Models** shows the folder, and **Open folder** opens it. See [your-data.md](your-data.md).
 
 ## 8. Train your first model
 
-1. Scroll down to **Data and Models**.
+1. Scroll down to **Data & Models**.
 2. In the **Captures** list, tick the takes you want to learn from (not the ones marked **Bad** or **too short**). If you just stopped a take, **Go to Train** on the saved card ticks it for you.
 3. Click **Train**. It takes from a few seconds to about half a minute.
 
