@@ -1,10 +1,22 @@
-# Launcher scripts must keep the line endings their operating system expects,
-# whatever the person's git settings are and whether they cloned or downloaded
-# the zip. A .bat saved with LF lines misbehaves on Windows; a .sh or .command
-# saved with CRLF fails on macOS and Linux ("bad interpreter", "^M"). The CI
-# smoke test (scripts/ci_smoke.py) checks these on every operating system.
-*.bat       text eol=crlf
-*.cmd       text eol=crlf
+# Line endings for the files a person double-clicks.
+#
+# Windows batch files and PowerShell scripts are stored WITH CRLF line endings
+# and never converted ("-text"), so a downloaded ZIP, a git clone with any
+# autocrlf setting, and a CI checkout all hand Windows the bytes it needs. A bare
+# LF in a .bat can make cmd.exe mis-parse labels and multi-line blocks.
+#
+# Shell scripts, macOS .command files and .desktop entries are stored with LF
+# only. A CRLF there breaks the "#!/bin/bash" line ("bad interpreter").
+#
+# Edit these files with an editor that keeps their line endings (or run
+# "git add --renormalize ." and check "git ls-files --eol"). A test in
+# pc/tests/test_installers.py fails when a .bat has a bare LF.
+*.bat   -text
+*.cmd   -text
+*.ps1   -text
 *.sh        text eol=lf
 *.command   text eol=lf
 *.desktop   text eol=lf
+*.ico   binary
+# The CI smoke test (scripts/ci_smoke.py) checks these endings on every operating
+# system, so a wrong setting shows up before a person downloads the zip.

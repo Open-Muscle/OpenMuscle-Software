@@ -76,7 +76,9 @@ def test_gitattributes_pins_launcher_line_endings():
         if len(parts) >= 2 and not line.lstrip().startswith("#"):
             rules[parts[0]] = parts[1:]
     for pat in ("*.bat", "*.cmd"):
-        assert "eol=crlf" in rules[pat], pat
+        # Either convert on checkout (eol=crlf) or store the CRLF bytes as they
+        # are (-text); the files step checks the bytes themselves either way.
+        assert "eol=crlf" in rules[pat] or "-text" in rules[pat], pat
     for pat in ("*.sh", "*.command", "*.desktop"):
         assert "eol=lf" in rules[pat], pat
 
