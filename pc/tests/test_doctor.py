@@ -733,3 +733,13 @@ def test_running_studio_with_no_bands_still_warns(calm):
 
 def test_no_studio_means_no_extra_request(calm):
     assert doctor.studio_bands(_free_tcp_port()) == []
+
+
+def test_device_offline_advice_does_not_assume_a_screen():
+    """The kit bands have no screen, so the advice points at the light."""
+    d = _dev(ip="10.0.0.23", age=3000.0, tcp=False, source="cache", heard=False)
+    for facts in (_facts(devices=[d]), _facts()):
+        cause, _sentence, action = doctor.infer_cause(facts)
+        assert cause == "device_offline"
+        assert "light" in action
+        assert "screen" not in action

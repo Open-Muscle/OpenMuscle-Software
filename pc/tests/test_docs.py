@@ -162,3 +162,27 @@ def test_screen_labels_quoted_in_the_guides_exist():
                   "Find my devices", "Show file", "Record next take", "too short",
                   "Include full raw streams", "Data &amp; Models"):
         assert label in pages, label
+
+
+def test_kit_pages_offer_the_no_screen_path():
+    """The kit bands ship without the small screen: the sticker holds the setup
+    name and password, and the blue two-quick-blinks light is the normal setup
+    pattern. Pages that talk about the screen must say so."""
+    wifi = _read(DOCS / "wifi-setup.md")
+    started = _read(DOCS / "getting-started.md")
+    trouble = _read(DOCS / "troubleshooting.md")
+    for name, text in (("wifi-setup.md", wifi), ("getting-started.md", started),
+                       ("troubleshooting.md", trouble)):
+        assert "sticker" in text, name
+        assert re.search(r"two quick blinks", text), name
+    assert "Setup password" in wifi and "Setup Wi-Fi" in wifi
+    # No "read it off the screen" instruction left without the sticker path.
+    assert "Type the password from the last line of the band's screen" not in wifi
+    assert "shown on the band's screen" not in started
+    # The glossary no longer says every band shows its password on a screen.
+    gloss = _read(DOCS / "glossary.md")
+    assert "sticker" in gloss
+    # The troubleshooting table calls the blink pattern normal, not a fault.
+    row = [l for l in trouble.splitlines()
+           if l.startswith("| Blue, two quick blinks then a pause")]
+    assert row and "normal" in row[0].lower() and "contact support" not in row[0]

@@ -96,12 +96,12 @@ OpenMuscle asks Windows and macOS not to sleep from inactivity, but closing the 
 
 **You should see**, a few seconds after the band joined your Wi-Fi, a row for the band with a heatmap. Instead you see **No band found yet.** Check these in order:
 
-1. **Is the band on and joined?** Its screen should show `WIFI OK` for a few seconds after joining and then the heatmap, with the light green and then pulsing (waiting for a computer) or orange (a computer is receiving). If it says `WIFI SETUP`, it is not on your Wi-Fi yet: see [wifi-setup.md](wifi-setup.md). Tap **MENU** on the band to see its status page with its address.
+1. **Is the band on and joined?** Look at its light. After joining it is green for 2 seconds, then it pulses every 3 seconds (waiting for a computer) or is steady orange (a computer is receiving). If it is still blinking blue, it is not on your Wi-Fi yet: see [wifi-setup.md](wifi-setup.md). (A band with a screen also shows `WIFI OK` and then the heatmap, and tapping **MENU** shows its status page with its address. The kit bands have no screen, so use the light; the band's address is also in your router's list of devices.)
 2. **Is your computer on the same Wi-Fi?** Check the Wi-Fi icon. A computer on the guest network, on another router, on a VPN, or still on the band's `OM-` network cannot see the band. Turn off any VPN while you work.
 3. **Is the Wi-Fi 2.4 GHz and is it a normal network?** See [Wi-Fi problems](#wi-fi-problems). Guest networks and networks with a sign-in page hide devices from each other.
 4. **Is the firewall blocking it?** This is the most common reason on Windows. See [Firewall](#firewall-windows-mac-linux).
 5. **Wait 30 seconds, then use the search buttons.** In the Studio, click **Add a device by IP address** under the band cards, then **Scan subnet**. If you know the band's address (shown on its status page, or on your router's list of devices), type it into the box and press the plus button.
-6. **Restart the band.** Turn it off and on, or unplug and replug USB-C, and wait for `WIFI OK`.
+6. **Restart the band.** Turn it off and on with the power button, or unplug and replug USB-C, and wait for the green light (or `WIFI OK` on a band with a screen).
 7. **Run `openmuscle doctor`** ([above](#run-the-check-first)). The last line names the most likely cause.
 
 If a band was found before and then disappeared, the Studio's band card shows how many seconds ago it last sent data. Check the band is on, charged, and in range of the router.
@@ -113,7 +113,7 @@ The full card is [device-reference.md](device-reference.md). In short:
 | Light | Meaning | What to do |
 |---|---|---|
 | Blue, one blink per second | Setup mode: ready for Wi-Fi details | [wifi-setup.md](wifi-setup.md) |
-| Blue, two quick blinks then a pause | Setup mode, but the screen is not answering | The password cannot be read; contact support |
+| Blue, two quick blinks then a pause | Setup mode on a band without a screen. This is the normal pattern for the kit bands, not a fault | Read the setup name and password from the sticker on the band, then follow [wifi-setup.md](wifi-setup.md) |
 | Blue, steady | Joining your Wi-Fi | Wait up to 20 seconds |
 | Green, steady for 2 seconds | Joined your Wi-Fi | Nothing; it is working |
 | Amber, fast blink | Joining failed, going back to setup | Check the Wi-Fi name and password |
@@ -129,17 +129,25 @@ The full card is [device-reference.md](device-reference.md). In short:
 | Purple, pulsing | Charge mode, charging | Wait; tap SELECT to leave |
 | Purple, steady | Charge mode, battery full | Unplug, or tap SELECT |
 
-Screens: `WIFI SETUP` (set up Wi-Fi), `WIFI FAILED` (it could not join, see the reason on the next line), `WIFI OK` with an address (joined), `PAUSED`, `CHARGING`, `RECORDING`, and `LOW BATTERY`.
+Screens (only on a band that has a screen; the kit bands do not): `WIFI SETUP` (set up Wi-Fi), `WIFI FAILED` (it could not join, see the reason on the next line), `WIFI OK` with an address (joined), `PAUSED`, `CHARGING`, `RECORDING`, and `LOW BATTERY`. Without a screen, the light patterns above say the same things.
+
+### The buttons on the band
+
+- **Power button** (the switch at the top edge): a short press switches the band on, and a short press again switches it off. How the press feels, and whether a press while USB is plugged in switches it off, is still to be confirmed on a band; if it will not switch off, unplug USB-C first.
+- **MENU** and **SELECT**: the two buttons the band itself reads. Hold MENU for 2 seconds for charge mode, tap SELECT to leave it (or to pause and resume), and hold both together for 3 seconds to forget the Wi-Fi.
+- **The switch printed BOOT**: restarts the band, like a reset button. It does not erase your Wi-Fi settings.
+- **The switch printed SW_RST1 at the bottom left**: not used in normal use. Holding it while pressing BOOT puts the chip in download mode so that a stuck board can be reflashed. If you did that by accident, press BOOT alone to restart.
+- **The charger light**: the charger chip drives a small light of its own on the board. Its colour is not yet confirmed, so rely on the band's status light for charging (see [Battery and charging](#battery-and-charging)).
 
 ## Wi-Fi problems
 
-### The band keeps going back to `WIFI SETUP`
+### The band keeps going back to setup mode
 
-It could not join. The top line shows `LAST TRY FAILED` and a reason: `check password` (retype it), `network not found or 5 GHz` (check the name, move closer, use a 2.4 GHz network) or `join timed out` (check the router). Run [wifi-setup.md](wifi-setup.md) again. Use **Show** in the wizard to see what you typed.
+It could not join. Its light shows an amber fast blink and then the blue setup pattern again. A band with a screen shows `WIFI SETUP` and, on its top line, `LAST TRY FAILED` and a reason: `check password` (retype it), `network not found or 5 GHz` (check the name, move closer, use a 2.4 GHz network) or `join timed out` (check the router). Run [wifi-setup.md](wifi-setup.md) again. Use **Show** in the wizard to see what you typed.
 
 ### I typed the wrong Wi-Fi and it joined something else
 
-Hold **MENU** and **SELECT** together for 3 seconds. The light blinks magenta, and when you let go at 3 seconds the band forgets its Wi-Fi and shows `WIFI SETUP`. Then run the setup again.
+Hold **MENU** and **SELECT** together for 3 seconds. The light blinks magenta, and when you let go at 3 seconds the band forgets its Wi-Fi and goes back to the blue setup pattern (`WIFI SETUP` on a band with a screen). Its setup name and password are still the ones on its sticker. Then run the setup again.
 
 ### My computer has no internet after joining `OM-flexgrid-...`
 
@@ -147,7 +155,7 @@ That is expected while you are joined to the band's own network. Rejoin your nor
 
 ### The setup page at 192.168.4.1 will not open
 
-Check, in order: you are joined to the band's `OM-flexgrid-...` network (not your normal one); you typed `http://192.168.4.1` with `http`, not `https`; you turned off mobile data on a phone and any VPN on a computer; and the band still shows `WIFI SETUP`. On a phone, answer yes if it asks to stay connected to a network without internet.
+Check, in order: you are joined to the band's `OM-flexgrid-...` network (not your normal one); you typed `http://192.168.4.1` with `http`, not `https`; you turned off mobile data on a phone and any VPN on a computer; and the band's light is still blinking blue (setup mode). On a phone, answer yes if it asks to stay connected to a network without internet.
 
 ### The Wi-Fi is 5 GHz only
 
@@ -159,7 +167,7 @@ Bands cannot sign in to a web page, and guest networks keep devices apart. This 
 
 ### Is the band really on my Wi-Fi?
 
-The band's screen shows `WIFI OK` and an address; tap **MENU** to see it again. Its light is green, then pulses or turns orange.
+Look at its light: green for 2 seconds after joining, then a pulse every 3 seconds or steady orange. The Studio also shows a band card for it, and the band's address is in your router's list of devices. (A band with a screen shows `WIFI OK` and an address; tap **MENU** to see it again.)
 
 ## Firewall (Windows, Mac, Linux)
 
@@ -263,9 +271,9 @@ The Camera panel says in plain words what happened. The causes and fixes (camera
 
 ## Battery and charging
 
-- Plug in USB-C. The band charges whenever USB is connected. For the fastest charge, hold **MENU** for 2 seconds to enter charge mode (the screen says `CHARGING`, the Wi-Fi turns off, and the light pulses purple, then turns steady purple when full). Leaving charge mode restarts the band.
+- Plug in USB-C. The band charges whenever USB is connected. For the fastest charge, hold **MENU** for 2 seconds to enter charge mode (the Wi-Fi turns off and the light pulses purple, then turns steady purple when full; a band with a screen also says `CHARGING`). Leaving charge mode restarts the band.
 - If it does not charge, try another cable and another USB port or a phone charger.
-- A band with a low battery shows an amber blink (once a second) and `LOW BATTERY` on its screen.
+- A band with a low battery shows an amber blink (once a second), and `LOW BATTERY` on its screen if it has one.
 
 ## Still stuck
 
@@ -276,6 +284,6 @@ Make a report to send to the maintainers, then open an issue at [github.com/Open
    - the report file,
    - your computer (Windows, Mac or Linux, and the version),
    - what you did, what you expected and what happened instead,
-   - what the band's screen and light show,
+   - what the band's light shows (and its screen, if it has one),
    - for a band that will not appear: whether your Wi-Fi is 2.4 GHz, whether it is a guest or hotel-style network, and whether the firewall prompt was answered.
 3. Do not attach recordings, and do not put anyone's name in the issue. Describe the problem; you can send a recording separately if asked ([your-data.md](your-data.md)).

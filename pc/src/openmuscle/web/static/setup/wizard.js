@@ -43,12 +43,12 @@
         prepareReady: 'I am ready',
 
         kindTitle: 'What are you setting up?',
-        kindIntro: 'Turn the device on and look at its screen.',
+        kindIntro: 'Turn the device on and check its light. The kit bands have no screen: their name and password are on the sticker on the band.',
         kinds: {
             band: {
                 title: 'A band',
-                look: 'The screen says WIFI SETUP and the light is blinking blue.',
-                reset: 'Not showing that? Hold MENU and SELECT together for 3 seconds. The screen then says WIFI SETUP.',
+                look: 'The light blinks blue, two quick blinks then a pause. That is normal for a band without a screen. (A band with a screen says WIFI SETUP.)',
+                reset: 'Not blinking blue? If the light is off, press the power button once. Otherwise hold MENU and SELECT together for 3 seconds. The light then goes back to blinking blue.',
             },
             labeler: {
                 title: 'A finger labeler (optional)',
@@ -63,23 +63,23 @@
             windows: [
                 'Click the Wi-Fi icon at the bottom right of the screen.',
                 'Choose the network whose name starts with OM-.',
-                'Type the password from the last line of the device screen (the part after PW), or from its label, then connect.',
+                'Type the Setup password from the sticker on the device (on a device with a screen, the part after PW), then connect.',
             ],
             mac: [
                 'Click the Wi-Fi icon in the bar at the top of the screen.',
                 'Choose the network whose name starts with OM-.',
-                'Type the password from the last line of the device screen (the part after PW), or from its label, then join.',
+                'Type the Setup password from the sticker on the device (on a device with a screen, the part after PW), then join.',
             ],
             linux: [
                 'Open the network menu from the top or bottom bar and choose Wi-Fi.',
                 'Choose the network whose name starts with OM-.',
-                'Type the password from the last line of the device screen (the part after PW), or from its label, then connect.',
+                'Type the Setup password from the sticker on the device (on a device with a screen, the part after PW), then connect.',
             ],
         },
         joinBrief: 'This computer will briefly leave your usual Wi-Fi, so web pages may stop loading for a few minutes. This page keeps working. We bring you back at the end.',
         joinWaiting: 'Looking for the device. This ticks green as soon as your computer is connected to it.',
         joinFound: title => 'Found ' + title,
-        joinConfirm: tail => 'Does the screen end with ' + tail + '?',
+        joinConfirm: tail => 'Does the name end with ' + tail + '? Compare with the Setup Wi-Fi line on the sticker (or the device screen).',
         joinYes: 'Yes, that is the one',
         joinNo: 'No, it is different',
         joinWrongOne: 'That is not the device you wanted. Turn off other devices in setup mode, or move them away, so only the one you are setting up is on. Then join its network again, or press Back to start this step over.',
@@ -126,7 +126,7 @@
         troubleSteps: {
             password: {
                 title: 'The Wi-Fi password was wrong',
-                body: 'The device goes back to WIFI SETUP by itself when it cannot join. If its screen still shows your Wi-Fi name, hold MENU and SELECT for 3 seconds. Then start again and retype the password with Show turned on.',
+                body: 'The device goes back to setup mode by itself when it cannot join (its light returns to blinking blue). If it joined a network by mistake, hold MENU and SELECT for 3 seconds. Then start again and retype the password with Show turned on.',
             },
             band: {
                 title: 'The network is 5 GHz only, or asks you to sign in',
@@ -441,7 +441,7 @@
         firewall: 'This computer\'s firewall looks like it is blocking the device. Allow Python through the firewall for private networks, then try again.',
         different_network: 'This computer and the device do not seem to be on the same network. Check the Wi-Fi icon on this computer.',
         client_isolation: 'Your router may be keeping devices apart (client isolation or a guest network). Turn that off or use a normal network.',
-        device_offline: 'The device is not answering. Check that it is on and that its screen shows it joined a Wi-Fi network.',
+        device_offline: 'The device is not answering. Check that it is on and that its light shows it joined a Wi-Fi network (green, then a pulse every 3 seconds or steady orange).',
     };
 
     function describeDiagnose(obj) {

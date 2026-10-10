@@ -295,3 +295,18 @@ test('describeDiagnose is tolerant', () => {
     assert.deepEqual(d.lines, ['OK: Listener', 'Problem: Rule: Add it']);
     assert.equal(W.describeDiagnose({ likely_cause: 'unknown_thing' }), null);
 });
+
+// ---- the kit bands have no screen ----
+test('the setup wording offers the sticker and the no-screen light pattern', () => {
+    assert.match(T.kindIntro, /sticker/i);
+    assert.match(T.kinds.band.look, /two quick blinks then a pause/i);
+    assert.match(T.kinds.band.reset, /light/i);
+    ['windows', 'mac', 'linux'].forEach(os => {
+        const pw = T.joinOs[os].filter(l => /password/i.test(l)).join(' ');
+        assert.match(pw, /sticker/i, os);
+        assert.match(pw, /Setup password/, os);
+    });
+    assert.match(T.joinConfirm('d7af0b'), /sticker/i);
+    assert.doesNotMatch(T.joinConfirm('d7af0b'), /^Does the screen/);
+    assert.doesNotMatch(T.troubleSteps.password.body, /its screen still shows/i);
+});

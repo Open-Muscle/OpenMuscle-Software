@@ -147,8 +147,10 @@ A model is saved as files in the models folder and can be loaded again later.
 
 ## O
 
-**OLED** The small screen on a band or labeler that shows its name, Wi-Fi status
-and setup details.
+**OLED** The small screen on a labeler, and on a band that has one, that shows
+its name, Wi-Fi status and setup details. The kit bands do not have this screen:
+read the setup name and password from the band's sticker and watch its light
+instead.
 
 ## P
 
@@ -171,8 +173,9 @@ readings alone. Starting it is done with **Predict**. Also called inference.
 **Pressure myography** Reading muscle activity by sensing the pressure that
 working muscles put on the skin. It is how the bands work.
 
-**PSK** The temporary password a band shows on its screen for its own setup Wi-Fi.
-Short for "pre-shared key".
+**PSK** The temporary password for a band's own setup Wi-Fi. It is printed on the
+band's sticker (the **Setup password** line) and, on a band that has a screen,
+shown on the screen after `PW`. Short for "pre-shared key".
 
 ## Q
 
@@ -203,6 +206,8 @@ arm remembered. Start one with **New session**.
 
 **Setup mode** What a band does when it has no Wi-Fi to join. It makes its own
 temporary network (an access point), named `OM-...`, so you can tell it your Wi-Fi.
+Its light blinks blue; on a band without a screen the pattern is two quick blinks
+then a pause.
 
 **Sidecar files** Small companion files saved next to a recording's CSV. They end
 in `.meta.json` (who, which arm, how it went), `.sensor.jsonl` (every band reading

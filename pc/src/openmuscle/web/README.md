@@ -35,8 +35,8 @@ For a second instance during development use other ports (`--port 8020 --udp-por
 The **Set up a device** link in the top bar (and the empty state on the live view) opens a step-by-step page at `http://localhost:8000/setup` that puts a band, or the optional finger labeler, on your Wi-Fi. The user-facing walkthrough is [wifi-setup.md](../../../../docs/wifi-setup.md); the steps in code are:
 
 1. **Get ready:** a 2.4 GHz Wi-Fi, its name and password, no sign-in page (phone hotspot help included).
-2. **Choose** band or labeler, with the exact text to look for on the device screen and how to get it into setup mode.
-3. **Join** the device's own `OM-...` network from this computer's Wi-Fi menu. The page notices when it is connected, shows the device id, and asks you to check it against the end of the code on the device screen.
+2. **Choose** band or labeler, with the sticker name and light pattern to look for (and the screen text, if your device has one) and how to get it into setup mode.
+3. **Join** the device's own `OM-...` network from this computer's Wi-Fi menu. The page notices when it is connected, shows the device id, and asks you to check it against the end of the name on the sticker (or the code on the device screen, if it has one).
 4. **Your Wi-Fi:** pick the name from the list the device sees (or type it), enter the password (Show/Hide), and send. "Remember for the next device" keeps the details in this browser tab only (`sessionStorage`; never `localStorage`, never on disk), so the second band needs no typing.
 5. **Finish:** reconnect this computer to your usual Wi-Fi; a checklist follows the restart and ends with "Band ... is online at <address>". After 60 seconds without the device it shows an ordered troubleshooting list (wrong password, 5 GHz or sign-in network, different network, firewall, router client isolation, add by address).
 

@@ -469,11 +469,12 @@ def infer_cause(facts):
         d = real[0]
         return ("device_offline",
                 "A band was seen before at %s but does not answer now." % d["ip"],
-                "Check the band is powered on and shows it joined the Wi-Fi.")
+                "Check the band is powered on and its light shows it joined the Wi-Fi.")
     return ("device_offline",
             "No band has answered on this network.",
-            "Check the band is powered on and shows it joined your Wi-Fi, and "
-            "that this computer is on the same Wi-Fi.")
+            "Check the band is powered on and its light shows it joined your Wi-Fi "
+            "(green, then a pulse or steady orange; blinking blue means it is "
+            "still in setup), and that this computer is on the same Wi-Fi.")
 
 
 def firewall_advice(plat, fwinfo=None):
