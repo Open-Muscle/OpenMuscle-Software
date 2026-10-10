@@ -57,9 +57,12 @@ DISCOVER_PROBE = {"v": "1.0", "type": "cmd", "data": {"verb": "discover"}}
 
 
 def default_cache_path():
-    """~/.openmuscle/discovered_devices.json (override via DiscoveryManager)."""
-    return os.path.join(os.path.expanduser("~"), ".openmuscle",
-                        "discovered_devices.json")
+    """<data root>/devices.json (override via DiscoveryManager(cache_path=...)).
+
+    The first call under a data root with no such file copies the older
+    ~/.openmuscle/discovered_devices.json there once."""
+    from openmuscle import paths
+    return str(paths.migrate_devices_cache())
 
 
 def subnet_base(ip):

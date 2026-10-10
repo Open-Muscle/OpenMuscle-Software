@@ -16,11 +16,15 @@ Layout:
     <root>/models     trained model folders
     <root>/exports    prediction exports, shareable archives
     <root>/logs       server logs
+    <root>/devices.json  the bands this computer has seen before (a small
+                      file, not a folder; copied once from the older
+                      ~/.openmuscle/discovered_devices.json location)
     <root>/assets     optional offline copies of the hand tracker and 3D viewer
                       (created by `openmuscle assets fetch`)
 """
 
 import os
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -73,6 +77,34 @@ def logs_dir() -> Path:
 def assets_dir() -> Path:
     """Offline browser assets. Not in SUBDIRS: only `assets fetch` creates it."""
     return data_root() / "assets"
+
+
+def devices_cache_path() -> Path:
+    """The remembered-bands file. It follows the data root, so a different
+    --data-dir or OPENMUSCLE_HOME never shows bands seen under another root."""
+    return data_root() / "devices.json"
+
+
+def legacy_devices_cache_path() -> Path:
+    """Where earlier versions kept the remembered bands: in the user profile,
+    whatever the data root was."""
+    return Path(os.path.join(os.path.expanduser("~"), ".openmuscle",
+                             "discovered_devices.json"))
+
+
+def migrate_devices_cache() -> Path:
+    """Return the remembered-bands path, first copying the older profile file
+    there once. Only when the new file does not exist and the old one does; the
+    old file is left in place and never touched again. Never raises."""
+    new = devices_cache_path()
+    try:
+        old = legacy_devices_cache_path()
+        if not new.exists() and old.is_file():
+            new.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(old), str(new))
+    except OSError:
+        pass
+    return new
 
 
 def ensure_data_dirs() -> Path:

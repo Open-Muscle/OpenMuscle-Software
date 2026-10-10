@@ -31,11 +31,14 @@ OpenMuscle/
     models/      trained models (one folder per model)
     exports/     zip files you made to send to someone, and support reports
     logs/        the installer's log (install.log); otherwise usually empty
+    devices.json the bands this computer has seen before (a small file, so the Studio can say "last seen at ...")
     assets/      optional offline copy of the hand tracker (made by "openmuscle assets fetch")
     app/         the program itself (made by the installer; do not edit or copy it)
 ```
 
 Only `captures`, `sessions`, `models` and `exports` hold your work. `app` and `assets` can be recreated by running the installer again.
+
+`devices.json` is a remembered list of bands, not a recording. It lives in the data folder, so using a different `--data-dir` starts with a clean list. The first time you run this version, an older copy kept in your user profile (`.openmuscle/discovered_devices.json`) is copied across once and then left alone. Deleting `devices.json` is safe: bands show up again as soon as they announce themselves. The Studio lists it under **Remembered bands are listed in**, and `openmuscle doctor` shows its path.
 
 ## The files for one take
 
