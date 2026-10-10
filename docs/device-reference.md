@@ -84,7 +84,7 @@ Every line below was checked against the firmware source (file and function in t
 | Charge mode | Hold MENU for 2 s (or, when USB is detected, wait 5 minutes with no computer connected). Wi-Fi radio off, processor slowed to 80 MHz, so nearly all the charger's current goes into the battery. Screen: `CHARGING / Wi-Fi off / unplug to resume / or tap SELECT`. Light: purple pulse, solid purple when full. Leaving charge mode restarts the band (it rejoins Wi-Fi in about 20 s). Unplugging USB also leaves it. |
 | Charging while streaming | The battery also charges while the band streams on USB, only more slowly because the radio is on (orange light with a cyan flash every 5 s). |
 | "Full" | Solid purple appears in charge mode when USB is detected and the battery has read 4.18 V or more for 5 seconds in a row. |
-| Percent | A straight line from 3.50 V (0 percent) to 4.20 V (100 percent). A rough guide only; lithium cells do not discharge in a straight line. Shown on status page 2 as `BAT 87% 3.95V`. |
+| Percent | A straight line from 3.50 V (0 percent) to 4.20 V (100 percent). A rough guide only; lithium cells do not discharge in a straight line. Shown on status page 2 as `BAT 87% 4.11V`. |
 | Low battery | Under 3.55 V with USB not detected: amber light blinking once a second, and a `LOW BATTERY / ... / charge soon` notice on screen for 4 s, repeated every 5 minutes. It clears again above 3.65 V. |
 | Battery life and charge time | Not measured for this document. See the confirm list. |
 | Auto charge setting | `auto_charge_idle_s` (default 300). Set it to `0` to stop the band switching to charge mode by itself. |
@@ -178,7 +178,7 @@ The screen is 128x32 pixels: four lines of 16 characters. Every screen below is 
 | Boot | Switching on, while joining | `OpenMuscle V4` / the band's id (`flexgrid-d7af0b`) / `Joining Wi-Fi...` / your network name |
 | Join failed (about 2 s) | First join did not work | `WIFI FAILED` / the reason (one or two lines) / `back to setup` |
 | Status page 1 | MENU tap; also the first 15 s after the band joins | `WIFI OK` / the band's **IP address** / the id / `role: left` (or `no role set`) |
-| Status page 2 | Second MENU tap | `BAT 87% 3.95V` (or `LOW 12% 3.42V`) / `MODE STREAM` / `HUBS 1` / `NET ` and your network name |
+| Status page 2 | Second MENU tap | `BAT 87% 4.11V` (or `LOW 12% 3.42V`) / `MODE STREAM` / `HUBS 1` / `NET ` and your network name |
 | Live grid | Normal running | The 15 x 4 pressure heatmap (see below) |
 | Paused | Tap SELECT | `PAUSED` / `Wi-Fi is on` / `not streaming` / `SELECT to resume` |
 | Charging | Hold MENU 2 s, or USB plugged in and idle | `CHARGING` / `Wi-Fi off` / `unplug to resume` / `or tap SELECT` |
