@@ -6,9 +6,11 @@ turns the picture into joint positions, and those are saved next to the band dat
 This is how a recording gets the finger information a model learns from, with no
 extra hardware.
 
-You can also train from a VR headset or a LASK5 finger labeler if you have one.
-Recording with no labeler at all works too, but a take without finger data cannot
-be used to train a model.
+For the starter kit the camera is the labeler: it is the way to get a trained model
+without extra hardware. You can also train from a VR headset or the optional LASK5
+finger labeler if you have one. Recording with no labeler at all works too, but a
+take without finger data cannot be used to train a model; see
+[No camera](#no-camera-recording-bands-only).
 
 ## Your first labelled recording
 
@@ -66,6 +68,29 @@ Where the files come from and their licences are written to `NOTICE.txt` in that
 folder: MediaPipe tasks-vision 0.10.14 (Apache-2.0), the MediaPipe Hand Landmarker
 model published by Google, and three.js 0.160.0 (MIT).
 
+## No camera: recording bands only
+
+If you have no camera, or only want to watch and save what the bands feel, set
+**Finger data from** to **No labeler (bands only; cannot be used to train)**. The
+line beside the Record button then reads:
+
+> Ready: 2 bands (left arm, right arm), no finger data (cannot be used to train). Press Record.
+
+Press **Record** and **Stop** as usual. The take is saved with its band readings,
+and it is tagged **no labels** with the word **Check**, because there are no finger
+positions in it. That is expected, not a fault.
+
+What a bands-only take is good for: watching the heatmaps, checking the fit of the
+bands, practising the routine, keeping the readings, and exporting them with
+**Export session**. What it cannot do: **Train** will not use it. If you try, the
+card **Could not train yet** says the recordings have no finger labels and to record
+again with the webcam or finger labeler turned on.
+
+Finger positions cannot be added to a take afterwards, so to get a model, record
+again with a camera (any laptop camera or USB webcam will do), a LASK5 or a headset.
+The camera is only needed while recording the takes you train from. Once a model
+exists, live prediction runs from the bands alone.
+
 ## Getting good labels
 
 - Palm facing the camera, all five fingers visible, about an arm's length away.
@@ -89,12 +114,14 @@ The camera panel says in plain words what happened. The usual cases:
 | What you see | What it means | What to do |
 |---|---|---|
 | "The browser was not allowed to use the camera" | You chose Block, or the system blocks the browser | Click the camera icon in the address bar and choose Allow. On Windows also check Settings > Privacy & security > Camera; on a Mac, System Settings > Privacy & Security > Camera. |
-| "The camera is busy" | Another program or tab has it | Close Zoom, Teams, FaceTime, the Camera app, or other tabs using the camera, then Start camera again. |
+| "The camera is busy or could not be opened" | Another program or tab has it | Close Zoom, Teams, FaceTime, the Camera app, or other tabs using the camera, then Start camera again. |
 | "No camera was found" | Nothing plugged in, or switched off | Plug in or switch on a webcam, check the system lists it, then Start camera again. |
 | "Could not download the hand tracker, check internet access" | The tracker comes from the internet and there is none | Connect once and run `openmuscle assets fetch`, or check the connection. |
 | "Graphics acceleration did not work here" (a note, not an error) | The graphics card cannot run the tracker | Nothing. It switched to the processor automatically; it works but may track fewer frames per second. |
 | "The hand tracker stopped working" | It failed again after switching to the processor | Press Start camera. If it repeats, close other programs that use the camera or graphics card and reload. |
-| "The camera only works at http://localhost..." | The page was opened by another address, such as the computer's network address | On the computer with the camera, open the `http://localhost:8000` address. |
+| "The camera only works when this page is opened on the computer that has the camera" (in the dashboard Camera panel) or "The browser blocks the camera on this address" (on the `/webcam` page) | The page was opened by another address, such as the computer's network address | On the computer with the camera, open the `http://localhost:8000` address. |
+| "That camera cannot give the picture size this page asks for" | The chosen camera does not offer the picture size the page asks for | In the **Camera** list choose **default camera**, then press **Start camera**. |
+| "The hand tracker could not start in this browser" | The browser cannot run the tracker | Use the current Chrome or Edge, then press **Start camera** again. |
 | "Cannot reach the OpenMuscle server" | The page cannot connect, or it was opened from another device | Check `openmuscle web` is still running; open the page on the same computer. |
 | Hand skeleton on the wrong side | Some cameras mirror the picture | Tick **Swap left and right**. |
 | "Tracking was paused ... window in the background" | The tab was hidden, so no labels were sent | Keep the window visible; use the Camera panel in the dashboard. |
@@ -103,14 +130,47 @@ Camera labels can only come from the computer running OpenMuscle: the labeler
 socket refuses connections from any other device, so another computer on your
 network cannot add or change labels in a recording.
 
-## Browser support
+## Browser and computer support
 
-The camera page is built for current Chrome and Edge on Windows, macOS and Linux.
-Firefox and Safari have not been tested; if the camera or the tracker does not
-start in one of them, use Chrome or Edge. A browser too old to run the page says
-so on the page. (The checks in this repository run the page logic and the server
-under Node and Python; the live camera and hand tracker have not been run on every
-browser and operating system combination.)
+The camera page needs a current browser on the computer that has the camera, opened
+at `http://localhost:8000` (or the page on its own at `http://localhost:8000/webcam`).
+It uses three things every current browser has: the camera, WebAssembly (to run the
+hand tracker) and modern scripts. The table says what has actually been checked.
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| **Chrome** | Built for it; partly checked | Expected to work | Expected to work |
+| **Edge** | Expected to work | Expected to work | Expected to work |
+| **Firefox** | Untested | Untested | Untested |
+| **Safari** | Not available | Untested | Not available |
+
+What the words mean:
+
+- **Built for it; partly checked.** The page logic and the server are tested by
+  automatic checks, and the full flow (camera panel, Start, a fallback from graphics
+  chip to main processor, recording) was run in Chrome on Windows with a stand-in
+  camera and a stand-in tracker. A real hand with the real tracker has not yet been
+  run on every combination.
+- **Expected to work.** Same browser engine as Chrome, so it should behave the same,
+  but it has not been run.
+- **Untested.** A different engine. It may work. If the camera or the tracker does
+  not start, use Chrome or Edge. The page itself says the same when it cannot start.
+- **Not available.** There is no such browser for that computer.
+
+Use the current version of the browser. Safari on a Mac, if you try it, also needs
+to be a recent version; that is expected, untested.
+
+### What does not work, and why
+
+| Situation | Why |
+|---|---|
+| Safari on Windows or Linux | Apple makes Safari only for Mac and iPhone/iPad. |
+| A phone, a tablet or another computer on your network | The camera labels are accepted only from the computer running OpenMuscle, so another device cannot add or change labels. |
+| Opening the Studio by the computer's network address (for example `http://192.168.1.20:8000`) | Browsers switch the camera off for pages that are not on `localhost` or https. Use `http://localhost:8000` on the computer that has the camera. |
+| Very old browsers, including Internet Explorer | They cannot run the scripts or WebAssembly that the tracker needs. The page says so. |
+| Using the `/webcam` page in a background tab or a minimised window | Browsers pause hidden tabs, so no labels are sent. Use the Camera panel in the dashboard instead. |
+| A browser installed as a Snap or Flatpak package on Linux | These can be blocked from the camera. If the camera is not listed, try the browser from the vendor's own package. |
+| A second program using the camera at the same time | Only one program can use a camera. Close Zoom, Teams or similar first. |
 
 ## Privacy
 
