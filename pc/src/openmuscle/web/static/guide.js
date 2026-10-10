@@ -36,15 +36,16 @@
     //  - the current pick stays while its device is streaming (no flip-flop
     //    when a second labeler shows up later);
     //  - otherwise the first streaming of lask5, webcam, headset, gamepad;
-    //  - with nothing streaming, keep an auto-able current pick, else LASK5
-    //    (the kit labeler).
+    //  - with nothing streaming, keep an auto-able current pick, else the
+    //    webcam (the kit labeler; the page starts on it, so a kit without a
+    //    LASK5 is never told that a LASK5 is missing).
     function autoLabelSource(devices, current, userChose) {
         if (userChose) return current;
         const devs = devices || [];
         if (AUTO_SOURCES.includes(current) && sourceStreaming(devs, current)) return current;
         const first = AUTO_PRIORITY.find(s => sourceStreaming(devs, s));
         if (first) return first;
-        return AUTO_SOURCES.includes(current) ? current : 'lask5';
+        return AUTO_SOURCES.includes(current) ? current : 'webcam';
     }
 
     // ---- plain reasons (exact wording is tested) ----
@@ -57,7 +58,7 @@
         sameArm: (side, other) => `Both bands are set to the same arm (${side}). `
             + `Set one of them to the ${other}.`,
         oneUntagged: id => `${id} has no arm set. Set it to Left arm or Right arm, `
-            + 'or unplug it if you do not want to record it.',
+            + 'or press Unsubscribe on its card (or unplug it) if you do not want to record it.',
         noHeadset: 'The headset is not sending hand data. Put on the Quest and open the '
             + 'OpenMuscle page, or change "Finger data from" to another labeler.',
         noHeadsetBoth: 'Both of your hands need to be visible to the headset. '
