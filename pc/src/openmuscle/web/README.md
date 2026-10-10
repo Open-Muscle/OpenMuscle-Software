@@ -61,6 +61,23 @@ The page only talks to this program, which relays to the device (a browser on th
 
 The troubleshooting list calls `GET /api/discovery/diagnose` when this version has it and shows a plain message when it does not.
 
+## In-app Help (`/help`)
+
+The guides in the repository's `docs/*.md` are served by the app itself, so they
+open on the band's own Wi-Fi where the laptop has no internet. `GET /help` shows
+`getting-started`; `GET /help/<page>` shows `docs/<page>.md` with a page list on the
+left; `GET /help/files/<path>` serves images the guides use. Every page is rendered
+from disk per request by `help.py` (a small built-in Markdown converter, no extra
+dependency), so a new `docs/<name>.md` appears in the list with no wiring. Links between
+guides (`[x](wifi-setup.md#heading)`) become `/help/...` links; a link the app cannot
+follow offline is shown as plain text.
+
+Where the guides are read from, first match wins: `$OPENMUSCLE_DOCS_DIR`; the
+repository's `docs/` (a clone or `pip install -e`); `web/help_docs/`, the copy
+`setup.py` makes at build time so a normal `pip install <repo>/pc` or wheel carries
+them (that folder is git-ignored). The Studio header, the setup wizard and the webcam
+page have a Help link, and the "no band found" messages link to Troubleshooting.
+
 ## Debug mode (`--debug`)
 
 `openmuscle web --debug` serves plain HTTP on all interfaces (drops any mkcert cert, even with `--vr`) so the PC, phone, and Quest all connect with zero cert friction, and unlocks the extra troubleshooting surface. The frontend reads `GET /api/mode` on load; when debug is on it shows a red "LAN-open + unauthenticated" ribbon plus:
@@ -175,6 +192,7 @@ from the CSV (a half-written last row is dropped).
 | Method | Path | Body / response |
 |--------|------|-----------------|
 | GET | `/` | serves `static/index.html` |
+| GET | `/help`, `/help/{page}`, `/help/files/{path}` | the guides from `docs/` as HTML, and the images they use (404 for anything not in the docs folder) |
 | GET | `/api/storage` | absolute `root`, `captures`, `sessions`, `models`, `exports`, `logs`; `free_bytes`, `low_space` (under 1 GB); `reveal_enabled` (true only for a caller on the server computer, never under `--debug`); `legacy_hint` |
 | POST | `/api/reveal` | body `{folder?: root\|captures\|sessions\|models\|exports\|logs, name?: capture}` opens that folder (or highlights the capture) in the file manager on the server computer. 403 for callers that are not local. |
 | GET | `/api/sessions/{id}/export?raw=0\|1&notes=0\|1` | downloads the session as a zip (`openmuscle-session-<id>.zip`); 404 unknown session, 409 while one of its takes is still recording |

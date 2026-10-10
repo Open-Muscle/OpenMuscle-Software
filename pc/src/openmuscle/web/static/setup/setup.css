@@ -18,6 +18,7 @@ header {
     padding: 14px 24px; border-bottom: 1px solid var(--border);
 }
 header h1 { font-size: 18px; font-weight: 600; margin: 0; }
+.header-links { display: flex; gap: 16px; align-items: center; }
 .progress {
     list-style: none; display: flex; gap: 6px; flex-wrap: wrap;
     max-width: 720px; margin: 18px auto 0; padding: 0 20px;

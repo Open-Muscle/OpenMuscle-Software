@@ -44,6 +44,10 @@
                  the user's Wi-Fi. A separate page (static/setup/), served at /setup. -->
             <a href="/setup" class="setup-link"
                title="Walk through connecting a new band to your Wi-Fi">Set up a device</a>
+            <!-- The guides, served from this computer (/help) so they open even
+                 when the laptop is on the band's own Wi-Fi with no internet. -->
+            <a href="/help" class="help-link" id="help-link" target="_blank" rel="noopener"
+               title="Guides: getting started, Wi-Fi setup, troubleshooting. Works without internet.">Help</a>
             <!-- Pop the compact OBS stream view in its own window (window-capture
                  it in OBS while playing a game with the bracelets). Display-only:
                  it reads /ws/live, never the local controller. -->
@@ -91,7 +95,7 @@
         <div id="record-advanced" class="record-advanced hidden">
             <label class="rec-pick"><span>Sensor</span><select id="sensor-select"></select></label>
             <label class="rec-pick"><span>Label dev</span><select id="label-select"></select></label>
-            <label class="rec-pick"><span>Window ms</span><input id="record-window" type="number" min="20" max="1000" placeholder="auto"></label>
+            <label class="rec-pick" title="How many milliseconds of band readings are grouped with each label sample. Leave blank to let the app choose. See the Glossary under Help."><span>Window ms</span><input id="record-window" type="number" min="20" max="1000" placeholder="auto"></label>
         </div>
         <div id="record-status" class="rec-status"></div>
     </div>
@@ -141,7 +145,7 @@
                                 title="Switch the band rows between side-by-side and stacked (one above the other)">▤ Stack</button>
                     </div>
                     <div id="heatmap-grids" class="heatmap-grids">
-                        <div class="heatmap-empty">No devices found yet. <a href="/setup">Set up a device</a></div>
+                        <div class="heatmap-empty">No band found yet. Make sure the band is on, shows a pulsing colour, and is on the same Wi-Fi as this computer. <a href="/setup">Set up a device</a> or open <a href="/help/troubleshooting" target="_blank" rel="noopener">Troubleshooting</a>.</div>
                     </div>
 
                     <!-- Discovered-but-not-streaming V4 sources (no heatmap yet):
@@ -150,13 +154,13 @@
                          fills this; a source graduates to a band row above once
                          its matrix frames arrive. -->
                     <ul id="discovery-list" class="devices-compact discovery-compact available-sources">
-                        <li class="empty">No devices found yet.</li>
+                        <li class="empty">No band found yet. <a href="/help/troubleshooting" target="_blank" rel="noopener">Troubleshooting</a></li>
                     </ul>
 
                     <!-- Probe-by-IP + subnet scan, collapsed by default (same
                          caret pattern as record-advanced). Moved from the old
                          Devices rail; ids unchanged. -->
-                    <button id="add-source-toggle" class="link add-source-toggle">▸ add source</button>
+                    <button id="add-source-toggle" class="link add-source-toggle">▸ Add a device by IP address</button>
                     <div id="add-source-body" class="add-source-body hidden">
                         <form id="discovery-probe-form" class="discovery-probe">
                             <input id="discovery-probe-ip" type="text"
@@ -301,7 +305,7 @@
             </header>
             <div class="debug-grid">
                 <div id="debug-cards" class="debug-cards">
-                    <div class="empty">Waiting for a device…</div>
+                    <div class="empty">No band found yet. See <a href="/help/troubleshooting" target="_blank" rel="noopener">Troubleshooting</a>.</div>
                 </div>
                 <div class="debug-inspector">
                     <div class="debug-insp-head">
@@ -439,9 +443,9 @@
                                type="text" list="session-datalist" placeholder="All sessions"
                                autocomplete="off" spellcheck="false">
                         <div class="chip-group" id="model-filter-role">
-                            <button class="filter-chip" data-role="left" title="Models for the left band">L</button>
-                            <button class="filter-chip" data-role="right" title="Models for the right band">R</button>
-                            <button class="filter-chip" data-role="pooled" title="Models that are not tied to one band (older or pooled models)">pooled</button>
+                            <button class="filter-chip" data-role="left" title="Models trained for the left band. See Help, Glossary.">L</button>
+                            <button class="filter-chip" data-role="right" title="Models trained for the right band. See Help, Glossary.">R</button>
+                            <button class="filter-chip" data-role="pooled" title="Models trained on more than one band together, so not tied to a single band. See Help, Glossary.">pooled</button>
                         </div>
                         <!-- Wearer chips are data-driven: app.js fills this
                              from the distinct wearers present in the model

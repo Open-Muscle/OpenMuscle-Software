@@ -633,7 +633,7 @@ function renderAvailableSources(discovery) {
         // Everything discovered graduated to a band row (or nothing is
         // discovered at all); an empty list collapses via CSS :empty.
         list.innerHTML = discovery.length
-            ? '' : '<li class="empty">No devices found yet.</li>';
+            ? '' : '<li class="empty">No band found yet. <a href="/help/troubleshooting" target="_blank" rel="noopener">Troubleshooting</a></li>';
         return;
     }
     list.innerHTML = avail.map(d => {
@@ -743,7 +743,7 @@ function setProbeMsg(text, isError) {
     el.classList.toggle('err', !!isError);
 }
 
-// "+ add source" collapsible: the probe-by-IP form + subnet scan moved out
+// "Add a device by IP address" collapsible: the probe-by-IP form + subnet scan moved out
 // of the old Devices rail, collapsed by default (same caret pattern as the
 // record-advanced toggle).
 {
@@ -752,7 +752,7 @@ function setProbeMsg(text, isError) {
     if (toggle && body) {
         toggle.onclick = () => {
             const hidden = body.classList.toggle('hidden');
-            toggle.textContent = (hidden ? '▸' : '▾') + ' add source';
+            toggle.textContent = (hidden ? '▸' : '▾') + ' Add a device by IP address';
         };
     }
 }
@@ -862,7 +862,7 @@ function drawHeatmaps() {
     if (!flex.length) {
         if (grids._ids !== '') {
             parkImuViewer();   // innerHTML wipe would destroy the IMU canvas
-            grids.innerHTML = '<div class="heatmap-empty">No devices found yet. <a href="/setup">Set up a device</a></div>';
+            grids.innerHTML = '<div class="heatmap-empty">No band found yet. Make sure the band is on, shows a pulsing colour, and is on the same Wi-Fi as this computer. <a href="/setup">Set up a device</a> or open <a href="/help/troubleshooting" target="_blank" rel="noopener">Troubleshooting</a>.</div>';
             grids._ids = '';
             _bandCardsSig = null;
         }
@@ -3021,7 +3021,7 @@ function modelRowHtml(m, pinned) {
         <td title="${escapeHtml(unitTitle)}">${escapeHtml(row.hand)}</td>
         <td title="${escapeHtml(row.scoreTitle)}"><span class="model-score tone-${row.tone}">${escapeHtml(row.score)}</span></td>
         <td class="detail-col">${escapeHtml(row.featuresLabels)}</td>
-        <td class="detail-col">MSE ${escapeHtml(row.mse)} · R² ${escapeHtml(row.r2)}</td>
+        <td class="detail-col" title="R² is how much of the finger movement the model explains on data it did not train on: 1 is perfect, 0 is no better than guessing the average, below 0 is worse. MSE is the average squared error; smaller is better. See Help, Glossary.">MSE ${escapeHtml(row.mse)} · R² ${escapeHtml(row.r2)}</td>
         <td class="actions">${useBtn}</td>
     </tr>`;
 }
@@ -3653,7 +3653,7 @@ function renderDebugPanel() {
     const cardsEl = document.getElementById('debug-cards');
     if (!cardsEl) return;
     if (!lastDevices.length) {
-        cardsEl.innerHTML = '<div class="empty">Waiting for a device…</div>';
+        cardsEl.innerHTML = '<div class="empty">No band found yet. See <a href="/help/troubleshooting" target="_blank" rel="noopener">Troubleshooting</a>.</div>';
     } else {
         cardsEl.innerHTML = lastDevices.map(d => {
             const stale = d.last_seen_age > 2.0;

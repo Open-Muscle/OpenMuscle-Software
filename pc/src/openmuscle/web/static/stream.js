@@ -103,7 +103,7 @@
 
         if (!flex.length) {
             if (bandsSig !== '') {
-                bandsEl.innerHTML = '<div class="heat-empty">Waiting for a flexgrid…</div>';
+                bandsEl.innerHTML = '<div class="heat-empty">Waiting for a band. Make sure it is on and on the same Wi-Fi as this computer.</div>';
                 bandsSig = '';
             }
             return;

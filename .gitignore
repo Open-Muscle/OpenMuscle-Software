@@ -66,3 +66,6 @@ rootCA*.pem
 # into ~/OpenMuscle/assets; never commit the binaries if a copy lands in the tree.
 pc/src/openmuscle/web/static/vendor/
 hand_landmarker.task
+
+# Copy of docs/ that setup.py makes at build time so the wheel can serve /help offline.
+/pc/src/openmuscle/web/help_docs/

@@ -1,0 +1,114 @@
+/* In-app Help (/help). Colours come from the variables in styles.css. */
+
+body.help { font-size: 15px; line-height: 1.6; }
+
+.help-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 12px 24px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+}
+.help-brand { color: var(--fg); font-size: 18px; font-weight: 600; letter-spacing: 0.4px; }
+.help-brand:hover { text-decoration: none; }
+.help-brand span { color: var(--fg-dim); font-weight: 400; margin-left: 4px; }
+.help-top-links { display: flex; gap: 16px; font-size: 13px; }
+
+.help-layout {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 32px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px;
+}
+@media (max-width: 760px) {
+    .help-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 16px; }
+}
+
+.help-nav { font-size: 14px; align-self: start; position: sticky; top: 16px; }
+@media (max-width: 760px) { .help-nav { position: static; } }
+.help-nav h2 {
+    margin: 16px 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+}
+.help-nav h2:first-child { margin-top: 0; }
+.help-nav ul { list-style: none; margin: 0; padding: 0; }
+.help-nav li a {
+    display: block;
+    padding: 5px 10px;
+    border-left: 2px solid transparent;
+    color: var(--fg-dim);
+}
+.help-nav li a:hover { color: var(--fg); background: var(--bg-soft); text-decoration: none; }
+.help-nav li a.current {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--bg-soft);
+}
+
+.help-page { min-width: 0; max-width: 760px; }
+.help-page h1 { font-size: 26px; margin: 0 0 12px; line-height: 1.25; }
+.help-page h2 {
+    font-size: 20px;
+    margin: 32px 0 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.help-page h3 { font-size: 16px; margin: 24px 0 6px; }
+.help-page h4, .help-page h5, .help-page h6 { font-size: 14px; margin: 18px 0 4px; color: var(--fg-dim); }
+.help-page p { margin: 0 0 12px; }
+.help-page ul, .help-page ol { margin: 0 0 12px; padding-left: 26px; }
+.help-page li { margin: 4px 0; }
+.help-page li > p { margin: 0 0 6px; }
+.help-page li > ul, .help-page li > ol, .help-page li > pre { margin-top: 6px; }
+.help-page hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+.help-page strong { color: var(--fg); }
+.help-page img { max-width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--border); }
+.help-page .nolink { color: var(--fg-dim); }
+
+.help-page code {
+    font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+    font-size: 0.9em;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+}
+.help-page pre {
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow-x: auto;
+}
+.help-page pre code { background: none; border: 0; padding: 0; font-size: 13px; }
+
+.help-page blockquote {
+    margin: 0 0 14px;
+    padding: 4px 16px;
+    border-left: 3px solid var(--accent);
+    background: var(--bg-panel);
+    color: var(--fg-dim);
+    border-radius: 0 6px 6px 0;
+}
+
+.help-page .table-wrap { overflow-x: auto; margin: 0 0 14px; }
+.help-page table { border-collapse: collapse; min-width: 100%; font-size: 14px; }
+.help-page th, .help-page td {
+    text-align: left;
+    vertical-align: top;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+}
+.help-page th { background: var(--bg-soft); }
+
+.help-offline { margin-top: 40px; font-size: 12px; color: var(--fg-faint); }
