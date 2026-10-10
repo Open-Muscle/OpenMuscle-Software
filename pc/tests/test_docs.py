@@ -14,9 +14,10 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
 
-# Pages that other work items add to docs/. Links to them are allowed to dangle
-# until those pages land; once a page exists its links are checked like any other.
-PENDING_PAGES = {"studio-tour.md", "first-model.md", "glossary.md", "device-reference.md"}
+# Pages a work item has promised but not yet added to docs/. Links to them may
+# dangle until they land; once a page exists its links are checked like any other.
+# Empty: every guide the journey links to is in place.
+PENDING_PAGES = set()
 
 MARKDOWN = sorted(
     [REPO / "README.md", REPO / "embedded" / "README.md",

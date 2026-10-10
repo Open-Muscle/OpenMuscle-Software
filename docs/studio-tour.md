@@ -201,13 +201,13 @@ Other things in this area:
   being listened to. The Studio subscribes to bands automatically.
 - Devices that were found but are not sending yet appear as small cards with a
   **Subscribe** button.
-- **add source** opens a box to add a band by its address, plus a **Scan subnet**
+- **Add a device by IP address** opens a box to add a band by its address, plus a **Scan subnet**
   button that searches your network for bands. You normally do not need either;
   they are for the case where a band is on but does not appear
   ([troubleshooting.md](troubleshooting.md)).
 - **Orientation** shows a small 3D picture of how the band is tilted, drawn from
   its motion sensor. It is informational.
-- When nothing has been found, the area reads **No devices found yet.** with a
+- When nothing has been found, the area reads **No band found yet.** with a
   **Set up a device** link.
 
 ### Ground truth vs Predicted (right side)

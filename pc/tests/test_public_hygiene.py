@@ -73,3 +73,26 @@ def test_no_internal_references_in_public_files():
                 line = text.count("\n", 0, m.start()) + 1
                 hits.append("{}:{} {}".format(p.relative_to(REPO), line, label))
     assert not hits, "internal references found:\n" + "\n".join(hits)
+
+
+def test_no_em_dashes_in_shipped_text():
+    """Guides, installers, the README and the web page strings use plain
+    punctuation: an em dash is the one character this project does not ship."""
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True,
+                         check=True).stdout.decode("utf-8")
+    checked = []
+    for rel in out.split("\0"):
+        if not rel:
+            continue
+        shipped = (rel == "README.md" or rel.startswith(("docs/", "installers/"))
+                   or (rel.startswith("pc/src/openmuscle/web/static/")
+                       and "/vendor/" not in rel))
+        if not shipped or not rel.endswith((".md", ".html", ".js", ".css", ".ps1",
+                                            ".bat", ".sh", ".command", ".desktop")):
+            continue
+        checked.append(rel)
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        assert chr(0x2014) not in text, "%s contains an em dash" % rel
+    assert checked, "nothing scanned; is this a git checkout?"
