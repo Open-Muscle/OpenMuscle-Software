@@ -17,6 +17,7 @@ const sensorSelect= document.getElementById('sensor-select');
 const labelSelect = document.getElementById('label-select');
 const trainBtn    = document.getElementById('train-btn');
 const trainStatus = document.getElementById('train-status');
+const trainFullHand = document.getElementById('train-full-hand');
 const selStatus   = document.getElementById('captures-sel-status');
 const checkAll    = document.getElementById('captures-check-all');
 const modelsBody  = document.getElementById('models-body');
@@ -344,6 +345,7 @@ function renderHandViewer(questDevs, inference) {
     // is hidden rather than frozen -- a stale skeleton reads as "still fine".
     const byDev = (inference && inference.by_device) || {};
     const metaBits = [];
+    const curlBits = [];
     for (const side of ['left', 'right']) {
         const q = questDevs.find(d =>
             String(d.device_id).toLowerCase().includes(side));
@@ -357,6 +359,9 @@ function renderHandViewer(questDevs, inference) {
             d.device_type === 'flexgrid' && d.role === side);
         const pv = band && byDev[band.device_id];
         if (Array.isArray(pv) && pv.length >= 25 * 7) predFlat = pv;
+        // A curls-only model (the default) has no 3D hand to draw; say its numbers.
+        const curls = OMTrain.curlSummary(pv);
+        if (curls) curlBits.push(`${side[0].toUpperCase()}: ${curls}`);
         window.OMHandViewer.updateHand(side, realFlat, predFlat);
         if (realFlat) {
             metaBits.push(`${side[0].toUpperCase()} ${q.hz?.toFixed?.(0) || 0} Hz${predFlat ? ' +ghost' : ''}`);
@@ -371,12 +376,15 @@ function renderHandViewer(questDevs, inference) {
             Array.isArray(q.values) ? q.values : null,
             (Array.isArray(pv) && pv.length >= 25 * 7) ? pv : null);
         metaBits.push(`${q.hz?.toFixed?.(0) || 0} Hz`);
+        const curls = OMTrain.curlSummary(pv);
+        if (curls) curlBits.push(curls);
     }
 
     const gtMeta = document.getElementById('lask-meta');
     const srcName = questDevs.every(d => d.device_type === 'webcam_hand')
         ? 'Webcam hand' : 'Quest hands';
-    if (gtMeta) gtMeta.textContent = `${srcName} · ${metaBits.join(' · ')}`;
+    if (gtMeta) gtMeta.textContent = `${srcName} · ${metaBits.join(' · ')}`
+        + (curlBits.length ? ` · predicted curl ${curlBits.join(' | ')}` : '');
 }
 
 // ---------- label-device status lines ----------
@@ -2876,6 +2884,8 @@ trainBtn.onclick = async () => {
     // files plus right files recorded at different times are split by the server.)
     const byName = new Map(_lastCapturesList.map(c => [c.name, c]));
     const twoHand = captures.some(n => (byName.get(n) || {}).hands === 2);
+    // Finger curls only (small, what the score measures) unless the box is ticked.
+    const labels = (trainFullHand && trainFullHand.checked) ? 'full' : 'curls';
 
     trainBtn.disabled = true;
     trainStatus.className = 'train-status busy';
@@ -2890,12 +2900,12 @@ trainBtn.onclick = async () => {
             for (const role of ['left', 'right']) {
                 trainStatus.className = 'train-status busy';
                 trainStatus.textContent = `⏳ Training the ${role} hand on ${label}... (${role === 'left' ? '1' : '2'}/2)`;
-                results[role] = await postTrain({ captures, role, activate: true });
+                results[role] = await postTrain({ captures, role, activate: true, labels });
             }
             payload = results;
         } else {
             trainStatus.textContent = `⏳ Training on ${label}...`;
-            payload = await postTrain({ captures, activate: true });
+            payload = await postTrain({ captures, activate: true, labels });
         }
         const cards = OMTrain.cardsFor(payload);
         renderTrainResult(cards);
@@ -3080,6 +3090,9 @@ function modelRowHtml(m, pinned) {
     // them to the shared endpoint leaves the router on the old model.
     const useBtn = slots.length ? '' :
         `<button class="link" data-activate="${escPath}" data-role="${role || ''}" title="Load this model (prediction stays off until you press Predict)">Load</button>`;
+    // A model in use cannot be deleted (the server refuses too); load another first.
+    const delBtn = slots.length || !m.dir ? '' :
+        `<button class="link danger" data-delete-model="${escapeHtml(m.dir)}" data-size="${escapeHtml(row.size)}" title="Delete this model from your computer (your recordings are not touched)">Delete</button>`;
     const trClass = pinned ? ' class="model-active-row"' : '';
     const unitTitle = row.units.length ? 'band units: ' + row.units.join(', ') : 'band units not recorded';
     const who = row.unknownParticipant
@@ -3091,9 +3104,10 @@ function modelRowHtml(m, pinned) {
         <td>${who}</td>
         <td title="${escapeHtml(unitTitle)}">${escapeHtml(row.hand)}</td>
         <td title="${escapeHtml(row.scoreTitle)}"><span class="model-score tone-${row.tone}">${escapeHtml(row.score)}</span></td>
+        <td class="model-size" title="${escapeHtml(row.sizeTitle)}">${escapeHtml(row.size)}</td>
         <td class="detail-col">${escapeHtml(row.featuresLabels)}</td>
         <td class="detail-col" title="R² is how much of the finger movement the model explains on data it did not train on: 1 is perfect, 0 is no better than guessing the average, below 0 is worse. MSE is the average squared error; smaller is better. See Help, Glossary.">MSE ${escapeHtml(row.mse)} · R² ${escapeHtml(row.r2)}</td>
-        <td class="actions">${useBtn}</td>
+        <td class="actions">${useBtn}${delBtn}</td>
     </tr>`;
 }
 
@@ -3129,7 +3143,7 @@ function renderModels(list) {
                           (m.active_roles || []).join(','),
                           (m.metrics || {}).role || '', m.session_id || '',
                           modelParticipant(m), (m.verdict || {}).grade || '',
-                          (m.verdict || {}).score_pct];
+                          (m.verdict || {}).score_pct, m.size_bytes];
     const sig = JSON.stringify([
         modelFilter.session, [...modelFilter.roles], [...modelFilter.wearers],
         activeSession ? activeSession.id : null,
@@ -3147,13 +3161,13 @@ function renderModels(list) {
         : `${shown} of ${list.length} model${plural}${modelFilter.session === '__active__' ? ' (this session)' : ''}`;
 
     if (!list.length) {
-        modelsBody.innerHTML = '<tr class="empty"><td colspan="8">No models trained yet.</td></tr>';
+        modelsBody.innerHTML = '<tr class="empty"><td colspan="9">No models trained yet.</td></tr>';
         return;
     }
 
     const pinnedRows = pinned.map(m => modelRowHtml(m, true)).join('');
     const divider = pinned.length
-        ? '<tr class="models-inuse-divider"><td colspan="8">in use</td></tr>' : '';
+        ? '<tr class="models-inuse-divider"><td colspan="9">in use</td></tr>' : '';
     const bodyRows = filtered.map(m => modelRowHtml(m, false)).join('');
     // Empty-filter message only when the filters actually hid something
     // (all models being pinned in-use is not a filter problem).
@@ -3161,11 +3175,27 @@ function renderModels(list) {
     if (!filtered.length && list.length > pinned.length) {
         emptyRow = (modelFilter.session === '__active__'
                     && !modelFilter.roles.size && !modelFilter.wearers.size)
-            ? '<tr class="empty"><td colspan="8">No models trained in this session yet · select captures and hit Train.</td></tr>'
-            : '<tr class="empty"><td colspan="8">No models match the current filters.</td></tr>';
+            ? '<tr class="empty"><td colspan="9">No models trained in this session yet · select captures and hit Train.</td></tr>'
+            : '<tr class="empty"><td colspan="9">No models match the current filters.</td></tr>';
     }
     modelsBody.innerHTML = pinnedRows + divider + emptyRow + bodyRows;
 
+    modelsBody.querySelectorAll('button[data-delete-model]').forEach(btn => {
+        btn.onclick = async () => {
+            const dir = btn.dataset.deleteModel;
+            const size = btn.dataset.size;
+            if (!confirm(`Delete the model ${dir}${size && size !== '?' ? ' (' + size + ')' : ''}?\n\n` +
+                         'This frees the disk space and cannot be undone. Your recordings are not touched; ' +
+                         'you can train a new model from them at any time.')) return;
+            try {
+                const r = await fetch(`/api/models/${encodeURIComponent(dir)}`, { method: 'DELETE' });
+                if (!r.ok) throw new Error(await readError(r));
+                await refreshModels();
+            } catch (e) {
+                alert(`Delete failed: ${e.message}`);
+            }
+        };
+    });
     modelsBody.querySelectorAll('button[data-activate]').forEach(btn => {
         btn.onclick = async () => {
             const path = btn.dataset.activate;

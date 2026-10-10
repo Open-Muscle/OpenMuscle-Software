@@ -48,8 +48,8 @@ In a hurry: skip takes 4 and 7 (six takes, about 3 minutes of recording).
 3. Read the headline: **Good** is 75% or more, **Fair** is 50% or more, **Weak** is
    25% or more, **Not working yet** is below 25%.
 4. Read **What to do next:** on the card and do it.
-5. Press **Predict** if it is not already running. Watch the amber hand follow the
-   green one.
+5. Press **Predict** if it is not already running. Watch the finger percentages
+   under the green hand follow your fingers.
 
 ## If a take looks wrong
 

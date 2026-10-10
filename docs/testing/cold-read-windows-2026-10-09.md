@@ -116,10 +116,11 @@ Each item has a one-line suggested fix.
    paragraph in getting-started.md. (Not edited here: the top-level README is out
    of scope for this item.)
 2. **Trained models from camera hand data are about 500 MB each.** The camera hand
-   gives 175 label columns, and the forest stores all of them in every leaf. Fix:
-   train on the five finger curls the result card is scored on (or the non-constant
-   columns), or raise `min_samples_leaf` and cap the tree count, and add a
-   delete-model button to the Models list.
+   gives 175 label columns, and the forest stores all of them in every leaf. Fixed:
+   the trainer now learns the five finger curls the result card is scored on, caps
+   the forest (at most 100 trees, minimum leaf size 3 or more, sized to stay under
+   30 MB per model), and the Models list shows each model's size with a Delete
+   button. The old behaviour stays available as "Learn the whole hand".
 3. **Wizard pages after Join, the firewall question, SmartScreen, a real camera hand
    and a real band were not exercised.** They need a kit; the next cold read on
    real hardware should start there.
