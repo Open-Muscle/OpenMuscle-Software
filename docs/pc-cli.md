@@ -4,12 +4,23 @@ The `openmuscle` command-line tool provides a unified interface for all PC-side 
 
 ## Installation
 
+If you are setting up a kit, use the installer for your computer and follow [getting-started.md](getting-started.md#2-install-the-software). It puts the program in a private folder, `~/OpenMuscle/app`, so the `openmuscle` command is not on your computer's search path. Use its full path, or `python -m openmuscle`:
+
+| Computer | The `openmuscle` command |
+|---|---|
+| Windows | `"%USERPROFILE%\OpenMuscle\app\Scripts\openmuscle.exe"` (PowerShell: `& "$env:USERPROFILE\OpenMuscle\app\Scripts\openmuscle.exe"`) |
+| Mac and Linux | `~/OpenMuscle/app/bin/openmuscle` |
+
+For development, install into your own virtual environment from a clone (Python 3.10 or newer):
+
 ```bash
 cd pc/
 pip install -e .          # Basic install
 pip install -e ".[dev]"   # With test/lint tools
 pip install -e ".[all]"   # Everything including VisPy 3D viz
 ```
+
+Then `openmuscle --help` lists the commands and `python -m openmuscle` works too.
 
 ## Commands
 
@@ -150,7 +161,7 @@ Linux the command only explains what to allow.
 
 ### `openmuscle record`
 
-Record paired FlexGrid + LASK5 data to CSV with temporal matching.
+Record paired band + labeler data to CSV with temporal matching, without the browser. Only labelers that send UDP (the LASK5) work here; the camera and headset need the browser, so use `openmuscle web` for those.
 
 ```bash
 openmuscle record -o ~/OpenMuscle/captures/session_01.csv
@@ -218,7 +229,7 @@ flexgrid plus a Quest hand from the same curls).
 ```bash
 openmuscle simulate --device-type flexgrid
 openmuscle simulate --device-type lask5 --target-ip 192.168.1.100
-openmuscle simulate --replay data/raw/legacy/capture_45.txt
+openmuscle simulate --replay ~/OpenMuscle/captures/my_take.csv
 
 # Synthetic WebXR hand: streams 25-joint frames to the running
 # `openmuscle web` server's /ws/quest WebSocket (no headset needed).
@@ -230,6 +241,23 @@ openmuscle simulate --device-type quest_hand
 # zero hardware. Use --web-port if the web server is not on 8000.
 openmuscle simulate --device-type combo
 ```
+
+### `openmuscle bundle`
+
+Pack a session, or chosen takes, into one zip to send to someone. The Studio's **Export session** button does the same thing.
+
+```bash
+openmuscle bundle "morning baseline"                 # -> ~/OpenMuscle/exports/openmuscle-session-<id>.zip
+openmuscle bundle "morning baseline" -o baseline.zip
+openmuscle bundle --take a.csv --take b.csv          # loose takes, no session
+openmuscle bundle <session> --raw --notes            # opt in to raw streams and notes
+```
+
+The zip holds `README.txt` (every file and column explained in plain words), `session.json`, `summary.csv` (one row per take with its quality verdict) and a `takes/` folder with each take's CSV and helper files. Raw streams and typed notes are left out unless you ask, and trained models are never included. See [your-data.md](your-data.md).
+
+### `openmuscle export`, `convert`, `combine`
+
+Smaller helpers. `export -m model.pkl -d capture.csv -o out.json` writes a model's predictions next to the ground truth as JSON for a website. `convert old.txt -o new.csv` turns a legacy capture text file into a CSV. `combine a.csv b.csv -o all.csv` joins captures that share the same columns (it refuses to join different shapes).
 
 ### `openmuscle models`
 
@@ -259,6 +287,10 @@ in the code; a mismatch is discarded and nothing is installed for that file. See
 
 ## Typical Workflow
 
+The normal way is the Studio (`openmuscle web`): record with the **Record** button, train with **Train**, and watch **Ground truth vs Predicted**. [getting-started.md](getting-started.md) walks through it.
+
+The same loop from the command line, for a FlexGrid and a LASK5 that send UDP:
+
 ```bash
 # 1. Capture training data (FlexGrid + LASK5 paired)
 openmuscle record -o ~/OpenMuscle/captures/training_session.csv
@@ -266,6 +298,6 @@ openmuscle record -o ~/OpenMuscle/captures/training_session.csv
 # 2. Train a model
 openmuscle train ~/OpenMuscle/captures/training_session.csv
 
-# 3. Run real-time predictions
-openmuscle predict -m ~/OpenMuscle/models/random_forest_*/model.pkl
+# 3. Run real-time predictions (a model folder name looks like random_forest_<date>_<time>)
+openmuscle predict -m ~/OpenMuscle/models/<model folder>/model.pkl
 ```

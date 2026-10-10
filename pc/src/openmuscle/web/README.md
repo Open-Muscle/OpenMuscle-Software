@@ -1,46 +1,38 @@
-# `openmuscle web`, browser UI
+# `openmuscle web`: developer notes
 
-A single-page FastAPI app for live monitoring, recording, and (eventually) live ML inference against OpenMuscle devices on the local network. Companion to the `openmuscle receive` matplotlib viewer; same UDP listener under the hood, just rendered in a browser instead.
+The Studio is a single-page FastAPI app (vanilla JS, no build step) for live monitoring, recording, training and prediction against OpenMuscle devices on the local network. It uses the same UDP listener as the `openmuscle receive` matplotlib viewer, rendered in a browser instead.
+
+This page is for people changing the code. To **use** the Studio, read [getting-started.md](../../../../docs/getting-started.md), [studio-tour.md](../../../../docs/studio-tour.md) (every panel and button), [your-data.md](../../../../docs/your-data.md) and [troubleshooting.md](../../../../docs/troubleshooting.md). Command-line options are in [pc-cli.md](../../../../docs/pc-cli.md).
 
 ## Run it
 
 ```
-pip install -e .             # if not already (uses fastapi, uvicorn, pydantic)
+pip install -e .             # from pc/, if not already (uses fastapi, uvicorn, pydantic)
 openmuscle web               # http://localhost:8000 (this computer only), UDP :3141
 # your browser opens by itself; leave the window open, Ctrl+C stops it
 ```
 
-Everything you record is saved under `~/OpenMuscle` (`captures/`, `sessions/`,
-`models/`, `exports/`, `logs/`), whichever folder you start from. The banner and
-`GET /api/storage` show the exact absolute path.
+Everything you record is saved under `~/OpenMuscle` (`captures/`, `sessions/`, `models/`, `exports/`, `logs/`), whichever folder you start from. The banner and `GET /api/storage` show the exact absolute path. Plain `openmuscle web` is `http` and binds `127.0.0.1`; `--lan`, `--vr`, `--debug` and `--ssl-*` open the network (see [pc-cli.md](../../../../docs/pc-cli.md) for every flag).
 
-Options:
+Developer-only options:
 ```
-openmuscle web --lan                      # listen on 0.0.0.0 so a phone/headset on the Wi-Fi can connect
-openmuscle web --vr                       # headset: --lan plus https from the mkcert pair in ~/.openmuscle/
-openmuscle web --no-browser               # do not open the browser automatically
-openmuscle web --data-dir D:\OpenMuscle   # move the data root (or set OPENMUSCLE_HOME)
-openmuscle web --verbose                  # show request logs
 openmuscle web --port 8000 --udp-port 3141 --captures-dir /some/folder
-openmuscle web --model ~/OpenMuscle/models/random_forest_*/model.pkl   # live ML inference
+openmuscle web --model ~/OpenMuscle/models/<model folder>/model.pkl   # live ML inference
 openmuscle web --model X --hand 10.0.0.55                      # also forward to robot hand
 openmuscle web --model X --hand 10.0.0.55:3145                 # custom hand port
 ```
 
-**Firewall.** The bands send UDP to this computer (port 3141 for data, 3140 for discovery beacons), so the first run may ask whether to allow Python through the firewall:
+For a second instance during development use other ports (`--port 8020 --udp-port 53200 --announce-port 53201`) so you do not fight a running one over the bands.
 
-- **Windows:** choose **Allow** for **Private networks**. Both ports are needed: 3141 carries the sensor data and 3140 carries the "I am here" beacons, and a rule for only one of them leaves the bands invisible or silent. A rule is tied to a network type, so if Windows has labelled your Wi-Fi **Public**, a Private-only rule does nothing (switch the network to Private in Settings > Network & internet > Wi-Fi > your network, or add the rule for Public too). To add the rule without the prompt run `openmuscle firewall` (it shows the rule, asks, then raises the Windows administrator prompt), or in an admin PowerShell: `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3140-3141" -Direction Inbound -Protocol UDP -LocalPort 3140,3141 -Action Allow -Profile Private,Domain`. A program-based rule for `python.exe` also works.
-- **macOS:** click **Allow** on "Do you want the application to accept incoming network connections?", and allow Local Network access if macOS asks.
-- **Linux:** if `ufw` is on, `sudo ufw allow 3140:3141/udp`.
-
-`openmuscle doctor` checks all of this and names the fix, and the app's "why can't I see my device?" panel uses the same checks (`GET /api/discovery/diagnose`).
+**Firewall.** The bands send UDP to this computer (3141 for data, 3140 for discovery beacons). The per-OS recipes, including `openmuscle firewall` on Windows, are in [troubleshooting.md](../../../../docs/troubleshooting.md#firewall-windows-mac-linux). `openmuscle doctor` checks all of this and names the fix; the app's "why can't I see my device?" panel uses the same checks (`GET /api/discovery/diagnose`).
 
 **Keeping the computer awake.** While the server runs it asks the operating system not to sleep from inactivity (Windows `SetThreadExecutionState`, macOS `caffeinate`; nothing on Linux), so a recording is not cut off. Closing a laptop lid still puts it to sleep. `--no-keep-awake` turns this off.
 
 **Ports.** A second `openmuscle web` is detected and exits with one line. The UDP data port is opened exclusively (no address reuse), so a program that already holds it is reported rather than silently sharing it; the UI shows a bound/not-bound state for both UDP ports in `GET /api/discovery/status`.
+
 ## Setting up a device (`/setup`)
 
-The **Set up a device** button in the top bar (and the empty state on the live view) opens a step-by-step page at `http://localhost:8000/setup` that puts a band, or the optional finger labeler, on your Wi-Fi. No terminal needed:
+The **Set up a device** link in the top bar (and the empty state on the live view) opens a step-by-step page at `http://localhost:8000/setup` that puts a band, or the optional finger labeler, on your Wi-Fi. The user-facing walkthrough is [wifi-setup.md](../../../../docs/wifi-setup.md); the steps in code are:
 
 1. **Get ready:** a 2.4 GHz Wi-Fi, its name and password, no sign-in page (phone hotspot help included).
 2. **Choose** band or labeler, with the exact text to look for on the device screen and how to get it into setup mode.
@@ -61,23 +53,6 @@ The page only talks to this program, which relays to the device (a browser on th
 
 The troubleshooting list calls `GET /api/discovery/diagnose` when this version has it and shows a plain message when it does not.
 
-## In-app Help (`/help`)
-
-The guides in the repository's `docs/*.md` are served by the app itself, so they
-open on the band's own Wi-Fi where the laptop has no internet. `GET /help` shows
-`getting-started`; `GET /help/<page>` shows `docs/<page>.md` with a page list on the
-left; `GET /help/files/<path>` serves images the guides use. Every page is rendered
-from disk per request by `help.py` (a small built-in Markdown converter, no extra
-dependency), so a new `docs/<name>.md` appears in the list with no wiring. Links between
-guides (`[x](wifi-setup.md#heading)`) become `/help/...` links; a link the app cannot
-follow offline is shown as plain text.
-
-Where the guides are read from, first match wins: `$OPENMUSCLE_DOCS_DIR`; the
-repository's `docs/` (a clone or `pip install -e`); `web/help_docs/`, the copy
-`setup.py` makes at build time so a normal `pip install <repo>/pc` or wheel carries
-them (that folder is git-ignored). The Studio header, the setup wizard and the webcam
-page have a Help link, and the "no band found" messages link to Troubleshooting.
-
 ## Debug mode (`--debug`)
 
 `openmuscle web --debug` serves plain HTTP on all interfaces (drops any mkcert cert, even with `--vr`) so the PC, phone, and Quest all connect with zero cert friction, and unlocks the extra troubleshooting surface. The frontend reads `GET /api/mode` on load; when debug is on it shows a red "LAN-open + unauthenticated" ribbon plus:
@@ -94,32 +69,40 @@ Start a session (Stage 2) to make each recording self-describing: `session.json`
 
 Short takes are never hidden or deleted. A take under 10 s (or 50 rows) is tagged "too short" in the captures table with a tooltip that says to record at least 10 s and that 30 s or more works best, the post-stop card says the same, and Go to Train does not tick it. The numbers live in one module, `openmuscle/take_limits.py`, read by the recorder, the table, the post-stop card and the trainer (`short_captures` in the train result). While recording, the status shows a big timer, one plain sentence per problem (wording in `static/rec-status.js`), and the technical counters only under Details.
 
-## What you see
+## What is on the page
 
-Five panels, all live:
+The user-facing description of each panel is [studio-tour.md](../../../../docs/studio-tour.md). Where they live in the source:
 
-| Panel | Source | Notes |
-|-------|--------|-------|
-| **Devices** | every parsed UDP packet | One row per `device_id`. Hz, packet count, last-seen age. Click to select for heatmap. |
-| **Heatmap** | flexgrid matrix | Auto-detects shape (V1 16×4, V3 15×4, future ?×?). Color ramp goes black→purple→pink→orange→yellow, vmax auto-scales upward. Live `max=` and `vmax=` shown in the header. |
-| **LASK5, Ground Truth** | LASK5 `data.values` + `data.joystick` | 4 vertical piston bars (pink) + mini joystick canvas with crosshair + raw X,Y. Empty-state "no device" if no LASK5 has streamed. |
-| **LASK Inference, Predicted** | `inference` slot in the WS snapshot | 4 blue piston bars + status line. Dimmed and "no model loaded" until the inference plug-in is wired up. |
-| **Record / Captures** | local filesystem | Start/stop recording. CSV lands in `--captures-dir` (default `~/OpenMuscle/captures/`). Captures list refreshes every 5 s; download or delete inline. |
+| Area in `static/index.html` | Source of its data | Notes |
+|---|---|---|
+| Control bar (Record, Finger data from, Predict, session chip, SENSOR/LABEL pills) | `/ws/live` snapshot, `/api/recording`, `/api/inference/*` | `static/guide.js` decides what Record will do and why it is blocked; `static/rec-status.js` turns the quality verdict into words |
+| Stage 1, Live: Camera panel, band rows, heatmaps | `snapshot.devices`, `snapshot.discovery` | One row per streaming FlexGrid: band card left, heatmap right. Heatmap colours come from `static/heatmap-color.js` |
+| Ground truth vs Predicted | `snapshot.devices` (label devices) and `snapshot.inference` | Piston bars for the LASK5, a 3D hand (`static/hand-viewer.js`) for camera and headset hands |
+| Stage 2, Data and Models: storage, session, captures, train, models | `/api/storage`, `/api/sessions`, `/api/captures`, `/api/train`, `/api/models` | Train result cards: `static/train-card.js` |
+| Diagnostics and logs, Output routing | `/api/logs`, `/api/inference/hand` | The Debug panel appears only in `--debug` |
+| `/setup` | `/api/setup/*` | See the section above |
 
 ## Architecture
 
 ```
 pc/src/openmuscle/web/
-├── app.py            FastAPI app: routes, lifespan, WS endpoint, no-cache middleware
-├── state.py          AppState: owns UDPListener, DeviceInfo registry, recording,
-│                     WebSocket clients, broadcaster task. Single shared instance per
-│                     process.
+├── app.py            FastAPI app: routes, lifespan, WebSocket endpoints, no-cache middleware
+├── state.py          AppState: owns the UDPListener, the discovery manager, the device
+│                     registry, recording, sessions, WebSocket clients and the broadcaster
+│                     task. One shared instance per process.
+├── setup_api.py      The loopback-only /api/setup/* routes (relay to a band's setup server)
+├── inference.py      InferenceEngine: loads model.pkl and predicts from live frames
+├── log_buffer.py     In-memory log ring buffer behind GET /api/logs
 └── static/
-    ├── index.html    Single-page UI skeleton. 3-col grid layout.
-    ├── app.js        WebSocket client + canvas heatmap + piston-bar + joystick
-    │                 renderers + REST recording controls. Vanilla JS, no build step.
-    └── styles.css    Dark theme. Grid template areas: devices / heatmap / lask /
-                      infer / record / captures.
+    ├── index.html    Single-page UI skeleton
+    ├── app.js        WebSocket client, heatmaps, recording controls, tables, training UI
+    ├── guide.js, rec-status.js, train-card.js, participant.js, heatmap-color.js
+    │                 Pure functions (unit tested under Node in pc/tests/js)
+    ├── camera-panel.js, gamepad.js, hand-viewer.js, imu-viewer.js
+    ├── setup/        The device setup wizard page (wizard.js holds the wording and logic)
+    ├── webcam/       The standalone camera hand-tracking page (/webcam)
+    ├── vr/           The WebXR client (/vr)
+    └── styles.css, camera-panel.css
 ```
 
 **Data flow** for one packet:
@@ -135,7 +118,7 @@ device --UDP--> UDPListener.thread --queue--> AppState.run_broadcaster (async)
                               .write_row(...)            to all WS clients
 ```
 
-The `_snapshot()` dict pushed to every connected browser is the contract:
+The `_snapshot()` dict pushed to every connected browser is the contract (abridged):
 
 ```json
 {
@@ -145,6 +128,7 @@ The `_snapshot()` dict pushed to every connected browser is the contract:
                "values": [...],            // lask5 pistons / 1-D payloads
                "joystick": {"x":..,"y":..} // lask5 only
               }, ...],
+  "discovery": [...],                      // known V4 sources: ip, role, subscribed, ...
   "recording": null,
   "inference": {"available": false, "model": null, "piston_values": null,
                 "status": "no model loaded"}
@@ -192,7 +176,6 @@ from the CSV (a half-written last row is dropped).
 | Method | Path | Body / response |
 |--------|------|-----------------|
 | GET | `/` | serves `static/index.html` |
-| GET | `/help`, `/help/{page}`, `/help/files/{path}` | the guides from `docs/` as HTML, and the images they use (404 for anything not in the docs folder) |
 | GET | `/api/storage` | absolute `root`, `captures`, `sessions`, `models`, `exports`, `logs`; `free_bytes`, `low_space` (under 1 GB); `reveal_enabled` (true only for a caller on the server computer, never under `--debug`); `legacy_hint` |
 | POST | `/api/reveal` | body `{folder?: root\|captures\|sessions\|models\|exports\|logs, name?: capture}` opens that folder (or highlights the capture) in the file manager on the server computer. 403 for callers that are not local. |
 | GET | `/api/sessions/{id}/export?raw=0\|1&notes=0\|1` | downloads the session as a zip (`openmuscle-session-<id>.zip`); 404 unknown session, 409 while one of its takes is still recording |
@@ -211,7 +194,7 @@ from the CSV (a half-written last row is dropped).
 | GET | `/api/discovery/diagnose` | the self-diagnosis behind `openmuscle doctor`: `{ok, checks: [{id, title, status: pass/warn/fail, detail, fix}], udp_port, bound_host, devices_seen: [{device_id, ip, age_s}], last_announce_s, firewall: {platform, likely_blocked, how_to_fix}, likely_cause, advice: {sentence, action}}`. `likely_cause` is one of `none`, `firewall`, `different_network`, `client_isolation`, `device_offline`, `port_conflict`, `no_network`. `?discover=0` skips the live probe |
 | POST | `/api/support-report` | writes a zip (versions, doctor results, recent log lines; no Wi-Fi names, passwords or capture data) into `~/OpenMuscle/exports`; returns `{ok, path, size}` |
 | GET | `/api/recording` | `{recording, filename, sensor_device_id, label_device_id, window_ms, rows, duration_s, matched, unpaired_sensor, match_rate, ...}` or `{recording: false}` |
-| POST | `/api/recording` | body `{sensor_device_id?, label_device_id?, filename?, window_ms?}`, starts a paired capture. All fields optional. `sensor_device_id` defaults to first flexgrid; `label_device_id` defaults to first lask5. Pass `label_device_id: ""` to record sensor-only (no pairing). |
+| POST | `/api/recording` | body `{sensor_device_id?, label_device_id?, filename?, window_ms?}`: starts a paired capture. All fields optional. `sensor_device_id` defaults to first flexgrid; `label_device_id` defaults to first lask5. Pass `label_device_id: ""` to record sensor-only (no pairing). |
 | DELETE | `/api/recording` | stops the active capture, returns final stats + sidecar paths |
 | GET | `/api/captures` | list of `{name, size_bytes, mtime, rows, duration_s, quality, ...}` for files in `--captures-dir`; `quality` is `{verdict, reasons, flags}` or null for takes not scored yet |
 | GET | `/api/captures/{name}/quality` | take quality `{verdict: good\|check\|bad, reasons[], flags[], source}`. Takes recorded by this version store it in the meta sidecar (`auto.final`) at stop; for older takes the CSV is scanned once and the result cached. `?refresh=true` rescans. The thresholds live in `openmuscle/quality.py`. |
@@ -221,7 +204,7 @@ from the CSV (a half-written last row is dropped).
 | GET | `/api/models` | list of trained models with metadata (`{name, created, metrics:{curl_r2, per_finger, eval_method, r2, mse, n_features, n_labels, ...}, verdict, path, active}`). Newest first. Models trained before held-out scoring existed get `verdict.grade = "untested"`. Each entry also has `dir` (its unique folder name), `participant` (normalised code, `""` when the model carries none) and, for new models, `band_device_ids`, `firmware` and `label_source`. |
 | POST | `/api/inference/model` | body `{path}`: hot-swap the live inference engine to a different model.pkl without restarting the server. Returns `{active, enabled, model, guard}`; `guard` lists participant / band-unit mismatches. `/api/inference/model/{left|right}` does the same for one hand's slot. The shared/left/right choice is saved to `<models>/active.json` and restored (paused, with a banner) on the next start; when a shared and a per-hand model are both loaded, the one activated last drives a band. |
 | POST | `/api/inference/enabled` | body `{enabled: bool, force?: bool}`: start or pause prediction at runtime (engine stays loaded). Starting is refused with HTTP 409 `{detail, issues, can_override}` while a loaded model was trained for another participant code or for a different physical band unit than the one now on that arm; send `force: true` after the operator confirms. Returns `{enabled, model}`. |
-| POST | `/api/inference/hand` | body `{host: str?, port?: int}`, set or clear the robot-hand UDP forwarding target. Pass `host: null` or empty string to disable forwarding. `port` defaults to 3145. Returns `{hand_target}`. |
+| POST | `/api/inference/hand` | body `{host: str?, port?: int}`: set or clear the robot-hand UDP forwarding target. Pass `host: null` or empty string to disable forwarding. `port` defaults to 3145. Returns `{hand_target}`. |
 
 OpenAPI docs at `/docs` once the server is running.
 
@@ -267,7 +250,7 @@ The typical workflow is: record several short sessions of different motions (ope
 **From the UI:**
 1. Make N recordings; each shows up in the Captures panel.
 2. Tick the checkboxes for the ones you want to include (or the header-row check-all).
-3. Hit **⚙ Train selected**. The captures are combined row-wise into one training set, an RF regressor is fit, the trained model lands in `~/OpenMuscle/models/random_forest_<timestamp>/`, and (if `activate: true`, the default) the engine is **hot-swapped to use the new model immediately**, no server restart.
+3. Click **Train**. The captures are combined row-wise into one training set, an RF regressor is fit, the trained model lands in `~/OpenMuscle/models/random_forest_<timestamp>/`, and (if `activate: true`, the default) the engine is **hot-swapped to use the new model immediately**, no server restart.
 4. The new model appears in the **Models** panel below with R², MSE, feature/label counts. Click **use** on any other model to switch back.
 
 Training runs in `asyncio.to_thread()` so the WS broadcast and packet ingest keep flowing for other clients during the fit. On a typical RF with 100 trees + 50k rows + 60 features this is ~10-30s.
@@ -285,7 +268,7 @@ Variadic positional args: the CLI concats the CSVs to a temp file (same `combine
 
 ## ML inference (`--model` / `--hand`)
 
-The **LASK Inference, Predicted** panel runs live when you pass `--model PATH`. Pipeline:
+The **Ground truth vs Predicted** area runs live when you pass `--model PATH`. Pipeline:
 
 ```
 FlexGrid UDP packet ──> AppState._handle_packet
@@ -304,25 +287,23 @@ FlexGrid UDP packet ──> AppState._handle_packet
 The 5th servo angle for the hand is the **joystick X from the most recent LASK5 packet** (passed through, not predicted), per the design call that the model only predicts the 4 pistons it was trained on. If no LASK5 has been seen this session, finger-0 stays at 90°.
 
 **Code:**
-- `web/inference.py`, `InferenceEngine` class. Loads `model.pkl` + sibling `metadata.json`, validates input shape against `n_features_in_` / metadata, returns `None` on mismatch (with `last_error` set, surfaced in the UI status line). No numpy dependency in the hot path; sklearn `predict()` is called with a list-of-lists.
-- `web/state.py`, `AppState(model_path=..., hand_target=...)`. Owns the engine + a non-blocking UDP socket to the hand. `_forward_to_hand(pred)` clamps each predicted piston to [0, 1] (assumes normalized output, see caveat below) and scales to 0..179° before sending.
-- `cli.py`, `--model PATH` and `--hand HOST[:PORT]` (port defaults to 3145 if omitted).
+- `web/inference.py`: `InferenceEngine` class. Loads `model.pkl` + sibling `metadata.json`, validates input shape against `n_features_in_` / metadata, returns `None` on mismatch (with `last_error` set, surfaced in the UI status line). No numpy dependency in the hot path; sklearn `predict()` is called with a list-of-lists.
+- `web/state.py`: `AppState(model_path=..., hand_target=...)`. Owns the engine + a non-blocking UDP socket to the hand. `_forward_to_hand(pred)` clamps each predicted piston to [0, 1] (assumes normalized output; see caveat below) and scales to 0..179° before sending.
+- `cli.py`: `--model PATH` and `--hand HOST[:PORT]` (port defaults to 3145 if omitted).
 
-**Caveat, model output range:** the hand-forwarding code assumes predictions are in **0..1** (matching the modular LASK5 firmware's calibrated wire format). Older models trained on raw ADC values (e.g. our `random_forest_20260321_110750`) emit numbers in the 2000–4000 range; the clamp will saturate the hand at 179° for every finger. The web UI's piston bars handle either range fine (the frontend's `pistonFraction` auto-detects fraction vs raw), but **you'll want to retrain on data captured from the current modular LASK5** before the hand will visibly track predictions. The same model-shape check that catches feature-count mismatches will also tell you in the status line if you point the engine at an incompatible model.
+**Caveat (model output range):** the hand-forwarding code assumes predictions are in **0..1** (matching the modular LASK5 firmware's calibrated wire format). Older models trained on raw ADC values (e.g. our `random_forest_20260321_110750`) emit numbers in the 2000–4000 range; the clamp will saturate the hand at 179° for every finger. The web UI's piston bars handle either range fine (the frontend's `pistonFraction` auto-detects fraction vs raw), but **you'll want to retrain on data captured from the current modular LASK5** before the hand will visibly track predictions. The same model-shape check that catches feature-count mismatches will also tell you in the status line if you point the engine at an incompatible model.
 
 ### Runtime inference controls
 
-The **LASK Inference, Predicted** panel now exposes three things below the bars, so the inference pipeline can be reconfigured live without restarting the server:
+The inference pipeline can be reconfigured live without restarting the server:
 
-1. **▶ Resume / ⏸ Pause toggle**: gates `_handle_packet`'s inference call. The engine stays loaded while paused (no reload cost on resume); predictions just stop flowing and the panel shows `status: paused`. Disabled until a model has been loaded, load one via the Models panel's `use` button or `POST /api/inference/model`.
-2. **→ Hand `<host[:port]>` input**: sets the UDP forwarding target for the robot hand. Type `10.0.0.17` or `10.0.0.17:3145`, press Enter or click Apply. Clearing the field and applying disables forwarding entirely. The state badge next to the input shows `● forwarding` (green) when active.
-3. The button auto-syncs with `inference.enabled` in the WS snapshot so a `POST /api/inference/enabled` from elsewhere (e.g. curl) is reflected in the UI without a refresh.
+1. **Predict toggle** (`#infer-toggle` in the control bar): gates `_handle_packet`'s inference call. The engine stays loaded while paused (no reload cost on resume); predictions just stop flowing and the status reads `paused`. It is disabled, with the label "no model yet, train first", until a model has been loaded. Starting is refused with HTTP 409 when the loaded model's participant code or band units do not match, and the page asks before sending `force: true`.
+2. **Hand target** (Diagnostics and logs, then **Output routing**): sets the UDP forwarding target for the robot hand. Type `10.0.0.17` or `10.0.0.17:3145` and press **Apply**. Clearing the field and applying disables forwarding. The badge next to it shows `forwarding` when active.
+3. The toggle syncs with `inference.enabled` in the WS snapshot, so a `POST /api/inference/enabled` from elsewhere (for example curl) shows up without a refresh.
 
-Loading a model (`POST /api/inference/model` or the Models panel's `use` button) implicitly **resumes inference**, the intuition is "if you just clicked use on a model, you want predictions to start". If you want to load a model in the paused state, `POST /api/inference/enabled {enabled: false}` immediately after.
+Loading a model (`POST /api/inference/model`, or **Load** in the Models table) does **not** start it: inference stays paused until the operator presses **Predict**. The exception is training from the Studio: after a model earns Fair or Good, the page calls `POST /api/inference/enabled` for you (`shouldAutoStart` in `static/train-card.js`), and a weaker model offers **Start anyway**. The `--model` flag at server start also auto-starts, because passing a model on the command line is an explicit "run this now". To load a model in the paused state, `POST /api/inference/enabled {enabled: false}` immediately after.
 
-### Future: model hot-swap UI
-
-A dropdown in the UI that lists the `~/OpenMuscle/models` folders and reloads `AppState.engine` on selection would be a clean follow-up: `InferenceEngine.__init__` already does all the work, so it's a single REST endpoint + a `<select>` in `app.js`.
+The shared, left and right slots are saved to `<models>/active.json` and restored (paused, with a banner) on the next start.
 
 ### Adding a new device type
 
@@ -338,28 +319,28 @@ Today there's exactly one `UDPListener` per `AppState`, on `--udp-port`. If you 
 
 ## VR companion (`/vr`)
 
-The same FastAPI process also serves a WebXR client that turns a Meta Quest 3 into a labeling rig and live demo for the muscle→finger model. Operator guide: [`docs/vr-setup.md`](../../../../../docs/vr-setup.md). Wire format for the new device type: [`docs/protocol.md`](../../../../../docs/protocol.md#quest-hand-tracking-type-quest_hand).
+The same FastAPI process also serves a WebXR client that turns a Meta Quest 3 into a labeling rig and live demo for the muscle→finger model. Operator guide: [`docs/vr-setup.md`](../../../../docs/vr-setup.md). Wire format for the new device type: [`docs/protocol.md`](../../../../docs/protocol.md#quest-hand-tracking-type-quest_hand).
 
 ### What's added vs the bare web UI
 
 | Surface | Purpose |
 |---|---|
-| `GET /vr` | Serves `static/vr/index.html`, landing page + WebXR client (Three.js + XRHand). |
-| `WS /ws/quest` | Inbound, accepts XRHand joint frames from the headset. Each frame is synthesized in-process into an `OpenMusclePacket(device_type="quest_hand")` and fed through the same `_handle_packet` UDP devices use. From the recorder/matcher/snapshot's view the Quest is just another device. |
+| `GET /vr` | Serves `static/vr/index.html`: landing page + WebXR client (Three.js + XRHand). |
+| `WS /ws/quest` | Inbound: accepts XRHand joint frames from the headset. Each frame is synthesized in-process into an `OpenMusclePacket(device_type="quest_hand")` and fed through the same `_handle_packet` UDP devices use. From the recorder/matcher/snapshot's view the Quest is just another device. |
 | `start-vr.bat` (in `pc/`) | One-click launcher: ADB sanity check → start server → poll until up → `adb reverse` → open Quest Browser to `/vr`. Optional arm arg (`right`\|`left`). |
 | `--ssl-certfile` / `--ssl-keyfile` | Serve HTTPS so the headset can hit `/vr` over LAN. WebXR refuses hand-tracking on plain HTTP (localhost is the only exception, via `adb reverse`). |
 
 ### Why a WebSocket inbound (when everything else is UDP)
 
-Browsers can't speak UDP. WebXR therefore can't run as a UDP-emitting device. The chosen workaround is one synthesizer method (`AppState.ingest_quest_packet`) that builds the same `OpenMusclePacket` shape the UDP listener emits, so the rest of the pipeline, `_handle_packet` → `DeviceInfo.update` → `_record_packet` → `TemporalMatcher` → `CaptureWriter`, is unchanged. The integration cost was one new endpoint plus one synthesizer; everything downstream rides for free.
+Browsers can't speak UDP. WebXR therefore can't run as a UDP-emitting device. The chosen workaround is one synthesizer method (`AppState.ingest_quest_packet`) that builds the same `OpenMusclePacket` shape the UDP listener emits, so the rest of the pipeline (`_handle_packet` → `DeviceInfo.update` → `_record_packet` → `TemporalMatcher` → `CaptureWriter`) is unchanged. The integration cost was one new endpoint plus one synthesizer; everything downstream rides for free.
 
 ### `quest_hand` recording specifics
 
 - **Match window default** is 175 ms for `quest_hand` label sources vs 100 ms for `lask5`, set per-device-type in `AppState.DEFAULT_WINDOW_MS_BY_TYPE`. Quest WebXR has higher end-to-end latency than LASK5's ESP-NOW path, so a tighter window dropped too many sensor frames as unpaired.
-- **`label_count` is None / lazy-inferred** for `quest_hand`, `CaptureWriter` defers the CSV header write until the first label packet so the column count is derived from `len(values)`. Quest 3 sends 25 joints × 7 floats = 175 floats per frame; the hardcoded LASK5 `label_count=4` doesn't fit.
+- **`label_count` is None / lazy-inferred** for `quest_hand`: `CaptureWriter` defers the CSV header write until the first label packet so the column count is derived from `len(values)`. Quest 3 sends 25 joints × 7 floats = 175 floats per frame; the hardcoded LASK5 `label_count=4` doesn't fit.
 - **Per-capture `<name>.labels.schema.json` sidecar** lists joint names + channel order so the wide CSV is self-describing. Only emitted for label sources whose meaning isn't obvious from `device_type` alone (today: `quest_hand`).
 - **`meta.json` `auto.label_source`** is tagged `"quest_hand"` so the Captures panel filter and any downstream training pipeline can cleanly separate Quest-labeled from LASK5-labeled datasets.
-- **Auto-pick** in `start_recording` walks `AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5")`, Quest wins if both are connected, since it's the richer label source.
+- **Auto-pick** in `start_recording` walks `AUTO_LABEL_TYPE_PREFERENCE = ("quest_hand", "lask5")`: Quest wins if both are connected, since it's the richer label source.
 
 ### WebXR client structure (`static/vr/`)
 
@@ -371,31 +352,18 @@ Browsers can't speak UDP. WebXR therefore can't run as a UDP-emitting device. Th
 
 ### Cache-bust contract
 
-The HTML references the JS as `app.js?v=N`. **Bump N every time `app.js` changes.** Quest Browser ignores `Cache-Control: no-store` for ES modules in some configurations, the querystring forces a fresh fetch. The no-cache middleware on `/`, `/vr`, and `/static/*` is correct, but the version-querystring is the actual cache-busting mechanism in practice.
+The HTML references the JS as `app.js?v=N`. **Bump N every time `app.js` changes.** Quest Browser ignores `Cache-Control: no-store` for ES modules in some configurations, so the querystring forces a fresh fetch. The no-cache middleware on `/`, `/vr`, and `/static/*` is correct, but the version-querystring is the actual cache-busting mechanism in practice.
 
 ### Auto-enable inference on train (VR-only)
 
-The desktop UI's server-side default is **paused-on-load** for inference (see commit `bd1b68a` rationale). In VR there's no obvious second click to enable it, so `runTrain` in `app.js` POSTs `{enabled: true}` to `/api/inference/enabled` after a successful activate, pressing TRAIN implies "I want predictions running." The status strip surfaces `trained: R²=X · model loaded ✓ · predict ON` so the change is visible.
+The desktop UI's server-side default is **paused-on-load** for inference (see commit `bd1b68a` rationale). In VR there's no obvious second click to enable it, so `runTrain` in `app.js` POSTs `{enabled: true}` to `/api/inference/enabled` after a successful activate, because pressing TRAIN implies "I want predictions running." The status strip surfaces `trained: R²=X · model loaded ✓ · predict ON` so the change is visible.
 
 ## Known gotchas
 
-- **`from __future__ import annotations` breaks FastAPI body inference.** Don't add it back to `app.py`, the lazy-string annotations make FastAPI treat Pydantic-model parameters as query fields. (Bit us once, documented in `app.py` header.)
+- **`from __future__ import annotations` breaks FastAPI body inference.** Don't add it back to `app.py`: the lazy-string annotations make FastAPI treat Pydantic-model parameters as query fields. (Bit us once, documented in `app.py` header.)
 - **`Pin.init(Pin.OUT, value=0)` quirks** are in the firmware, not here, but if you ever rewrite the matrix scan, see the firmware repo's "Sensor scan techniques" section first.
-- **Browser cache during dev**: the no-cache middleware on `/`, `/vr`, and `/static/*` makes JS/CSS edits land on plain F5 in desktop browsers. Quest Browser ignores it for ES modules, see the cache-bust contract in the VR section above (`?v=N` on the script src).
+- **Browser cache during dev**: the no-cache middleware on `/`, `/vr`, and `/static/*` makes JS/CSS edits land on plain F5 in desktop browsers. Quest Browser ignores it for ES modules; see the cache-bust contract in the VR section above (`?v=N` on the script src).
 - **`/vr` was missing from the no-cache middleware** until commit `fb83f82`. If you add another HTML entry point, remember to whitelist it too.
-- **mpremote and the LASK5 don't coexist** on the same serial port, `openmuscle web` only uses UDP, but Thonny / PuTTY / another mpremote session will lock the COM port. Symptom: `mpremote: failed to access COMxx`.
+- **mpremote and the LASK5 don't coexist** on the same serial port: `openmuscle web` only uses UDP, but Thonny / PuTTY / another mpremote session will lock the COM port. Symptom: `mpremote: failed to access COMxx`.
 - **WebXR requires a secure context.** localhost (`http://`) counts; LAN HTTPS via mkcert is the untethered path. Plain HTTP over LAN will silently refuse to grant hand-tracking and the user sees "WebXR not available" with no specific reason. The landing-page preflight surfaces this.
 
-## v0.2.0 history (the LASK5 expansion)
-
-| Commit | Change |
-|--------|--------|
-| `d631951` | initial web UI skeleton, heatmap + record + captures |
-| `1de431a` | heatmap auto-detects matrix shape (V3 fix) |
-| `245cb8f` | CSV writer made row-major (was silently transposed) |
-| `e6febe6` | added LASK5 Ground Truth + ML Inference panels, 3-col grid layout |
-| `4ccb6c1` | app.py: removed `__future__ annotations`, added no-cache middleware, Optional types |
-
-Companion docs:
-- Firmware that drives the heatmap: [`FlexGridV3-Firmware`](https://github.com/Open-Muscle/FlexGridV3-Firmware) (sensor scan techniques)
-- Firmware that drives the LASK panel: [`embedded/devices/lask5_v2/`](../../../../embedded/devices/lask5_v2/), and its [migration plan](../../../../embedded/devices/lask5_v2/MIGRATION_FROM_MONOLITHIC.md) for the live device that's still on the older monolithic firmware
