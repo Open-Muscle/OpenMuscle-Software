@@ -1189,9 +1189,15 @@ function renderActiveSession() {
             const d = document.getElementById('session-dur');
             if (d) d.textContent = formatUptime(dur);
         }
-    } else if (_activeSessionSig !== 'NONE') {
-        _activeSessionSig = 'NONE';
-        activeSessionArea.innerHTML = '<div class="session-empty">No active session: recordings won\'t be grouped. Click "New session" to start one.</div>';
+    } else {
+        // No active session. If the newest past session was closed when
+        // OpenMuscle stopped, say so here (list order is newest first).
+        const notice = OMParticipant.closedNotice(pastSessions);
+        const sig = 'NONE|' + notice;
+        if (_activeSessionSig === sig) return;
+        _activeSessionSig = sig;
+        activeSessionArea.innerHTML = '<div class="session-empty">No active session: recordings won\'t be grouped. Click "New session" to start one.</div>'
+            + (notice ? `<div class="session-meta-line session-closed-note">${escapeHtml(notice)}</div>` : '');
         sessionStartBtn.disabled = false;
         sessionStartBtn.title = '';
     }
@@ -1376,7 +1382,7 @@ function renderPastSessions() {
                 <div>
                     <span class="session-caret">${caret}</span>
                     <span class="session-id">${escapeHtml(s.name || s.id)}</span>
-                    <span class="session-meta-line">${armBit} · <span title="Participant code">${escapeHtml(OMParticipant.codeOf(s) || 'no code')}</span> · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}</span>
+                    <span class="session-meta-line">${armBit} · <span title="Participant code">${escapeHtml(OMParticipant.codeOf(s) || 'no code')}</span> · ${captureCount} captures${dur != null ? ' · ' + formatUptime(dur) : ''}${OMParticipant.wasClosedOnRestart(s) ? ' · <span class="session-closed-tag" title="This session was still open when OpenMuscle stopped, so it was closed for you.">' + escapeHtml(OMParticipant.CLOSED_TAG) + '</span>' : ''}</span>
                 </div>
                 <div class="session-actions">
                     <button class="link" data-add-to-session="${escapeHtml(s.id)}" title="Retroactively add past captures to this session">＋ Add</button>
@@ -2080,10 +2086,13 @@ function showPostStopCard(result) {
     // The verdict is computed server-side at stop and persisted with the take
     // (quality.py); this card just shows what was saved, in plain words.
     const st = OMRecStatus.saved(result);
+    // The folded one-line card (verdict word + the three actions) comes from
+    // savedSummary, the same object the unit tests check.
+    const sum = OMRecStatus.savedSummary(result);
     const sessionBit = activeSession
         ? `Linked to ${escapeHtml(activeSession.name || activeSession.id)}.`
         : 'Not part of a session.';
-    const actions = OMRecStatus.savedActions(result);
+    const actions = sum.actions;
     _recStatusSig = null;
     _postStopPinned = false;
     recordStatus.innerHTML = `
@@ -2091,7 +2100,7 @@ function showPostStopCard(result) {
         <div class="rec-live">
             <div class="rec-timer" aria-label="Length of the saved take">${escapeHtml(st.timer)}</div>
             <div class="rec-live-text">
-                <button type="button" id="rec-verdict-toggle" class="cap-verdict rec-verdict-toggle ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}" aria-expanded="true" title="Fold the result up to one line">${escapeHtml(st.headline)}</button>
+                <button type="button" id="rec-verdict-toggle" class="cap-verdict rec-verdict-toggle ${QUALITY_CAP_CLS[sum.tone] || 'cap-good'}" data-verdict-word="${escapeHtml(sum.word)}" aria-expanded="true" title="Fold the result up to one line">${escapeHtml(sum.headline)}</button>
                 ${recSentencesHtml(st)}
                 <div class="rec-hint">${sessionBit}</div>
             </div>
@@ -2925,6 +2934,19 @@ trainBtn.onclick = async () => {
 // name -> wearer, for the predict-chip mismatch warning (a model trained on
 // someone else's arm quietly underperforms; tint the chip instead).
 const _modelWearerByName = new Map();      // folder name -> normalised participant code
+const _participantLabels = new Map();      // normalised code -> the code as typed
+
+// Remember how a participant code was typed, so chips and tooltips show P-07
+// while comparisons keep using the lower-case key.
+function rememberParticipantLabel(code) {
+    const typed = String(code || '').trim();
+    const key = OMTrain.normCode(typed);
+    if (key && !_participantLabels.has(key)) _participantLabels.set(key, typed);
+}
+function participantShown(code) {
+    const key = OMTrain.normCode(code);
+    return _participantLabels.get(key) || String(code || '').trim();
+}
 
 async function refreshModels() {
     try {
@@ -2934,6 +2956,7 @@ async function refreshModels() {
         list.forEach(m => {
             const key = m.dir || m.name;
             if (key) _modelWearerByName.set(key, OMTrain.normCode(m.participant || m.wearer) || null);
+            rememberParticipantLabel(m.participant_label || m.participant || m.wearer);
         });
         renderModels(list);
     } catch (e) {
@@ -3020,8 +3043,9 @@ let _modelWearerChipsSig = null;
 function renderModelWearerChips(list) {
     const group = document.getElementById('model-filter-wearer');
     if (!group) return;
+    list.forEach(m => rememberParticipantLabel(m.participant_label || m.participant || m.wearer));
     const wearers = [...new Set(list.map(modelParticipant).filter(Boolean))].sort();
-    const sig = JSON.stringify(wearers);
+    const sig = JSON.stringify([wearers, wearers.map(participantShown)]);
     if (sig === _modelWearerChipsSig) return;
     _modelWearerChipsSig = sig;
     // Prune selections for wearers that vanished from the list.
@@ -3029,7 +3053,7 @@ function renderModelWearerChips(list) {
         if (!wearers.includes(w)) modelFilter.wearers.delete(w);
     }
     group.innerHTML = wearers.map(w =>
-        `<button class="filter-chip${modelFilter.wearers.has(w) ? ' on' : ''}" data-wearer="${escapeHtml(w)}" title="only models trained for participant ${escapeHtml(w)}">${escapeHtml(w)}</button>`
+        `<button class="filter-chip${modelFilter.wearers.has(w) ? ' on' : ''}" data-wearer="${escapeHtml(w)}" title="only models trained for participant ${escapeHtml(participantShown(w))}">${escapeHtml(participantShown(w))}</button>`
     ).join('');
     group.querySelectorAll('.filter-chip').forEach(btn => {
         btn.onclick = () => {
@@ -3385,6 +3409,7 @@ function renderPredictModelChips(inf) {
     const am = (inf && inf.active_models) || {};
     const live = !!(inf && inf.enabled) && inf.status === 'live';
     const sessionWearer = OMTrain.normCode(activeSession && (activeSession.wearer || activeSession.subject)) || null;
+    if (activeSession) rememberParticipantLabel(OMParticipant.codeOf(activeSession));
     const entries = [];
     if (am.left)  entries.push(['L ', am.left]);
     if (am.right) entries.push(['R ', am.right]);
@@ -3404,7 +3429,7 @@ function renderPredictModelChips(inf) {
         const wearer = _modelWearerByName.get(name) || null;
         const mismatch = !!(sessionWearer && wearer && !OMTrain.sameParticipant(wearer, sessionWearer));
         const title = mismatch
-            ? `trained for participant ${wearer}, this session is ${sessionWearer}`
+            ? `trained for participant ${participantShown(wearer)}, this session is ${participantShown(sessionWearer)}`
             : ((inf && inf.status) || '');
         return `<span class="model-chip ${stateCls}${mismatch ? ' wearer-mismatch' : ''}"`
             + ` title="${escapeHtml(title)}">${escapeHtml(badge + name)}</span>`;

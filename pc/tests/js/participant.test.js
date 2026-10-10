@@ -60,3 +60,30 @@ test('placeholder and helper wording', () => {
     assert.equal(P.PLACEHOLDER, 'P01 (a code, not a name)');
     assert.match(P.HELPER, /do not type names/);
 });
+
+// ---- a session closed when OpenMuscle stopped ----
+
+test('the closed-on-restart notice names the newest past session', () => {
+    const past = [{ id: 'a', name: 'Morning run', closed_on_restart: true }, { id: 'b' }];
+    const note = P.closedNotice(past);
+    assert.match(note, /Morning run/);
+    assert.match(note, /closed when OpenMuscle stopped/);
+    assert.match(note, /Past sessions/);
+});
+
+test('no notice unless the newest past session was closed on restart', () => {
+    assert.equal(P.closedNotice([]), '');
+    assert.equal(P.closedNotice(undefined), '');
+    assert.equal(P.closedNotice([{ id: 'new' }, { id: 'old', closed_on_restart: true }]), '');
+});
+
+test('the notice falls back to the id when a session has no name', () => {
+    assert.match(P.closedNotice([{ id: '2026-10-09T10-00-00', closed_on_restart: true }]), /2026-10-09T10-00-00/);
+});
+
+test('wasClosedOnRestart is false for ordinary sessions', () => {
+    assert.equal(P.wasClosedOnRestart({ id: 'x' }), false);
+    assert.equal(P.wasClosedOnRestart(null), false);
+    assert.equal(P.wasClosedOnRestart({ closed_on_restart: true }), true);
+    assert.equal(P.CLOSED_TAG, 'closed when OpenMuscle stopped');
+});

@@ -610,6 +610,12 @@ class AppState:
         # a big folder never delays startup.
         threading.Thread(target=self.recover_unfinished_captures,
                          name="om-recover-takes", daemon=True).start()
+        # A session still open when the last run stopped is closed and marked, so
+        # it shows under Past sessions with a note instead of vanishing silently.
+        try:
+            self.close_orphaned_sessions()
+        except Exception as e:
+            self.log_buffer.warn("session", "could not check old sessions: {}".format(e))
 
     # How long a band can be silent before the console says it was lost.
     DEVICE_LOST_AFTER_S = 10.0
@@ -2720,6 +2726,39 @@ class AppState:
                 labeler_source or "-", len(session["context"]["devices"])))
         return session
 
+    def close_orphaned_sessions(self) -> list:
+        """Close sessions the previous run left open (no ended_at).
+
+        A session does not survive a restart as the active one (a new run may
+        have a different wearer or bands), so it would otherwise drop into Past
+        sessions with no word about it. Each one gets ended_at = its last write
+        and closed_on_restart = True, which the dashboard turns into a plain
+        sentence. Returns the ids closed. Only looks at an existing folder."""
+        folder = self.captures_dir.parent / "sessions"
+        if not folder.is_dir():
+            return []
+        active_id = (self.active_session or {}).get("id")
+        closed = []
+        for p in sorted(folder.glob("*.json")):
+            try:
+                with open(p, "r") as f:
+                    session = json.load(f)
+                if (not isinstance(session, dict) or session.get("ended_at") is not None
+                        or not session.get("id") or session.get("id") == active_id):
+                    continue
+                started = session.get("started_at") or 0
+                session["ended_at"] = max(float(started), p.stat().st_mtime)
+                session["closed_on_restart"] = True
+                self._write_session(session)
+                closed.append(session["id"])
+            except Exception:
+                continue
+        if closed:
+            self.log_buffer.info("session",
+                "{} session(s) were still open when OpenMuscle last stopped and were "
+                "closed: {}".format(len(closed), ", ".join(closed)))
+        return closed
+
     def end_session(self) -> Optional[dict]:
         """Stamp ended_at on the active session and clear active state."""
         if self.active_session is None:
@@ -2728,6 +2767,7 @@ class AppState:
         # Re-read from disk in case someone updated meta concurrently
         session = self.get_session(sid) or self.active_session
         session["ended_at"] = time.time()
+        session.pop("closed_on_restart", None)
         self._write_session(session)
         self.log_buffer.info("session",
             "ended: {} ({} captures, {:.0f}s)".format(
@@ -2744,7 +2784,8 @@ class AppState:
             return None
         partial = dict(partial or {})
         for k, v in partial.items():
-            if k in ("id", "started_at", "ended_at", "captures", "capture_count"):
+            if k in ("id", "started_at", "ended_at", "captures", "capture_count",
+                     "closed_on_restart"):
                 continue
             if k == "arm":
                 if v in ("", None):
@@ -3384,11 +3425,17 @@ class AppState:
         norm = self._norm_participant
 
         people = []
+        typed = {}          # normalised code -> the spelling the person typed
         for m in metas.values():
-            who = norm((m.get("auto") or {}).get("session_wearer") or m.get("subject"))
+            raw = str((m.get("auto") or {}).get("session_wearer") or m.get("subject") or "").strip()
+            who = norm(raw)
             if who and who not in people:
                 people.append(who)
-        participant = norm(session.get("wearer") or session.get("subject"))
+                typed[who] = raw
+        raw_session = self._participant_code(session)
+        participant = norm(raw_session)
+        if participant:
+            typed[participant] = raw_session
         if not participant and len(people) == 1:
             participant = people[0]
 
@@ -3429,6 +3476,9 @@ class AppState:
         out = {
             "captures": list(names),
             "participant": participant,
+            # The code as it was typed (P-07, not p-07): what the Models list
+            # shows. `participant` stays the lower-case key everything compares on.
+            "participant_label": typed.get(participant, participant),
             "band_device_ids": ids,
             "firmware": firmware,
             "label_source": "/".join(sources),
@@ -3748,6 +3798,14 @@ class AppState:
             # 'unknown participant'), so the UI never re-derives it.
             entry["participant"] = self._norm_participant(
                 entry.get("participant") or entry.get("wearer"))
+            # As typed: the stamped label, else the typed session wearer when it
+            # is the same code; models trained before this fall back to the key.
+            label = str(entry.get("participant_label") or "").strip()
+            if not label:
+                wearer = str(entry.get("wearer") or "").strip()
+                if wearer and self._norm_participant(wearer) == entry["participant"]:
+                    label = wearer
+            entry["participant_label"] = label or entry["participant"]
             entry["verdict"] = describe_result(
                 entry.get("metrics") or {},
                 n_captures=len(entry.get("captures") or []) or None,

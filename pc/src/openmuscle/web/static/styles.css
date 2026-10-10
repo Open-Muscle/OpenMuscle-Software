@@ -1935,6 +1935,7 @@ body.debug .debug-only { display: block; }
 .model-banner .mb-info { border-color: rgba(102,204,255,.4); color: var(--accent); }
 .model-banner .mb-hint { color: var(--fg-dim); }
 .session-model-warn { color: var(--orange); }
+.session-closed-note, .session-closed-tag { color: var(--orange); }
 
 .train-result { margin: 12px 0 0; display: grid; gap: 12px; }
 .train-result:empty { display: none; }

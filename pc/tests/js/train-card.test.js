@@ -198,3 +198,13 @@ test('created stamps that are not the registry format pass through', () => {
     assert.equal(T.whenText('yesterday'), 'yesterday');
     assert.equal(T.whenText(undefined), '');
 });
+
+test('the participant code shows as it was typed', () => {
+    const r = T.modelRow(model({ participant: 'p-07', participant_label: 'P-07' }));
+    assert.equal(r.participant, 'P-07');
+    assert.equal(r.unknownParticipant, false);
+    assert.equal(T.participantCode({ participant: 'p-07' }), 'p-07');   // older model: the key
+    assert.equal(T.participantCode({ participant: '', participant_label: '' }), '');
+    // comparing still ignores case
+    assert.equal(T.sameParticipant('P-07', 'p-07'), true);
+});
