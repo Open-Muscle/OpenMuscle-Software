@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenMuscle starter kit: cheat sheet</title>
+<style>
+:root{
+  --ink:#14202b; --muted:#4e5b66; --line:#c8d2d9; --soft:#f0f4f6;
+  --accent:#0a6c74; --accent-d:#064a50; --accent-l:#e1f1f2;
+  --warn:#8a4b00; --warn-bg:#ffeccb; --warn-line:#d8962b;
+}
+@page{ size:auto; margin:8mm }
+*{ box-sizing:border-box }
+html{ -webkit-print-color-adjust:exact; print-color-adjust:exact }
+body{ margin:0; background:#dfe6ea; color:var(--ink); font:10pt/1.22 "Segoe UI","Helvetica Neue",Arial,sans-serif }
+h1,h2,h3,h4,p,ul,ol,figure,table{ margin:0 }
+p{ margin:0 0 .8mm }
+ul,ol{ padding:0 }
+b,strong{ font-weight:700 }
+code,.mono{ font-family:Consolas,"Courier New",monospace; font-size:1em; white-space:nowrap }
+
+/* page frame: each page is a fixed box so a font swap cannot push a footer onto a new sheet */
+.page{ display:flex; flex-direction:column; gap:2.2mm; position:relative; background:#fff }
+.page > *{ flex:none }
+@media screen{
+  .page{ width:210mm; height:276mm; padding:8mm; margin:8mm auto; box-shadow:0 1px 8px rgba(0,0,0,.25) }
+}
+@media print{
+  body{ background:#fff }
+  .page{ width:auto; height:260mm; margin:0; break-after:page; page-break-after:always }
+  .page:last-child{ break-after:auto; page-break-after:auto }
+}
+.pg-foot{ margin-top:auto; display:flex; justify-content:space-between; font-size:9pt; color:var(--muted); border-top:.25mm solid var(--line); padding-top:.9mm }
+
+/* title block */
+.top{ border-bottom:.9mm solid var(--accent); padding-bottom:1.6mm }
+h1{ font-size:21pt; line-height:1.05; letter-spacing:-.01em; color:var(--accent-d) }
+.top .lead{ color:var(--muted); font-size:10pt; margin:.6mm 0 1.4mm }
+.road{ list-style:none; display:flex; flex-wrap:wrap; gap:.6mm }
+.road li{ background:var(--accent-l); border:.25mm solid #a9d2d5; border-radius:3mm; padding:.1mm 1.2mm .1mm .5mm; font-size:9pt; display:flex; align-items:center; gap:.5mm; white-space:nowrap }
+.road li b{ background:var(--accent); color:#fff; border-radius:50%; width:3.3mm; height:3.3mm; display:inline-flex; align-items:center; justify-content:center; font-size:7pt }
+
+/* section headers and steps */
+.sh{ display:flex; align-items:center; gap:2.2mm; border-bottom:.3mm solid var(--accent); padding-bottom:.7mm; margin-bottom:1.5mm }
+.sh .k{ background:var(--accent); color:#fff; font-weight:700; font-size:8pt; letter-spacing:.06em; text-transform:uppercase; padding:.5mm 1.7mm; border-radius:1mm; white-space:nowrap }
+.sh h2{ font-size:12pt; line-height:1.1; color:var(--accent-d); white-space:nowrap }
+.sh .aside{ margin-left:auto; font-size:9pt; color:var(--muted); text-align:right; line-height:1.15 }
+section{ min-width:0 }
+.step h3{ font-size:11pt; line-height:1.15; margin:0 0 1mm; color:var(--accent-d); display:flex; align-items:center; gap:1.5mm }
+.step h3 small{ font-size:9pt; font-weight:400; color:var(--muted) }
+.n{ background:var(--accent); color:#fff; border-radius:50%; width:5.2mm; height:5.2mm; display:inline-flex; align-items:center; justify-content:center; font-size:9pt; font-weight:700; flex:none }
+.step ul, .step ol{ padding-left:3.8mm }
+.step li{ margin:0 0 .7mm }
+h4{ font-size:10pt; margin:1.2mm 0 .5mm; color:var(--accent-d) }
+.two{ display:grid; grid-template-columns:1fr 1fr; gap:5mm; align-items:start }
+.sm{ font-size:9pt; color:var(--muted); line-height:1.2 }
+.ui{ color:var(--accent-d); font-weight:700 }
+
+/* flags */
+.tbc{ font-style:normal; font-weight:700; font-size:7pt; letter-spacing:.03em; text-transform:uppercase; color:var(--warn); background:var(--warn-bg); border:.22mm solid var(--warn-line); border-radius:.9mm; padding:0 .9mm; white-space:nowrap; vertical-align:.04em }
+.notice{ border-left:1.2mm solid var(--warn-line); background:#fff8ea; padding:1mm 2.6mm; font-size:9.5pt; line-height:1.22 }
+.notice p{ margin:0 }
+.warnbox{ border:.35mm solid var(--warn-line); background:#fff8ea; border-radius:1.2mm; padding:.8mm 2mm; margin-top:1mm; font-weight:700; font-size:9pt }
+
+/* why panel */
+.why{ background:var(--accent-l); border:.3mm solid #a9d2d5; border-radius:2mm; padding:2.2mm 3mm }
+.why h3{ margin:0 0 .7mm; font-size:11pt; color:var(--accent-d) }
+.why p+p{ margin-top:.8mm }
+.need{ margin-top:1mm; font-size:10pt; line-height:1.2 }
+
+/* hero board figure */
+.hero{ position:relative; width:186mm; margin:0 auto; background:linear-gradient(#f6f9fa,#eef3f5); border:.3mm solid var(--line); border-radius:2mm }
+.hero img{ position:absolute; top:1mm; display:block; height:auto }
+.hero svg{ position:absolute; inset:0; width:100%; height:100% }
+.hl{ position:absolute; width:59mm; font-size:9pt; line-height:1.17; transform:translateY(-50%) }
+.hl.l{ left:1mm; text-align:right }
+.hl.r{ left:126mm }
+.hl strong{ display:block; font-size:9.5pt; line-height:1.15 }
+.hkey{ position:absolute; left:126mm; width:59mm; font-size:9pt; line-height:1.2; color:var(--muted) }
+.bsw{ display:inline-block; width:2.8mm; height:2.8mm; border-radius:.6mm; vertical-align:-.5mm; margin-right:.8mm; background:var(--ink) }
+.bsw.a{ background:#ffd98a; border:.3mm solid #c77700 }
+
+/* lights */
+.lights{ display:grid; grid-template-columns:1fr 1fr; gap:0 4mm }
+.lights ul{ list-style:none }
+.lights li{ display:grid; grid-template-columns:18mm 1fr; gap:2mm; align-items:center; padding:.4mm 0; border-bottom:.2mm solid #e1e7eb; font-size:9pt; line-height:1.18; min-height:5.8mm }
+.pat{ display:block; width:18mm; height:3.15mm }
+.role{ display:inline-block; width:2.4mm; height:2.4mm; border-radius:50%; background:var(--c); margin:0 .5mm 0 .3mm; vertical-align:-.25mm; border:.2mm solid #566 }
+.role.w{ background:#fff }
+
+/* oled mock screens */
+.screens{ display:grid; grid-template-columns:repeat(4,1fr); gap:3mm }
+.scr{ font-size:9pt; line-height:1.18 }
+.scr .oled{ margin-bottom:.8mm }
+.oled{ width:100%; background:#05080b; border:.8mm solid #2c343b; border-radius:1.5mm; padding:.9mm 1.3mm; color:#e9f5ff; font:9pt/4mm Consolas,"Courier New",monospace; letter-spacing:calc(2.45mm - 1ch); white-space:pre; overflow:hidden }
+.oled.grid{ padding:.5mm .7mm; height:calc(4 * 4mm + 1.8mm + 1.6mm) }
+
+/* tables, chips */
+table{ border-collapse:collapse; width:100%; font-size:9pt; line-height:1.18 }
+th,td{ border:.25mm solid var(--line); padding:.55mm 1.4mm; text-align:left; vertical-align:top }
+th{ background:var(--soft); font-weight:700 }
+tr{ break-inside:avoid }
+td.w{ white-space:nowrap }
+.pill{ display:inline-block; font-weight:700; border-radius:5mm; padding:0 1.8mm; border:.25mm solid; white-space:nowrap; line-height:1.3 }
+.good{ background:#dcf5e5; border-color:#3fa66b; color:#14653a }
+.chk{ background:#fff0cc; border-color:#e0a020; color:#7a4a00 }
+.fair{ background:#fff0cc; border-color:#e0a020; color:#7a4a00 }
+.weak{ background:#ffe3d4; border-color:#e0612b; color:#9a3305 }
+.bad{ background:#fde1e1; border-color:#d95353; color:#8a1c1c }
+.nw{ background:#fde1e1; border-color:#d95353; color:#8a1c1c }
+.nt{ background:#e9edf0; border-color:#8b97a0; color:#3a464f }
+
+/* screenshots with callouts */
+.imgbox{ position:relative; width:100%; line-height:0; border:.3mm solid var(--line); border-radius:1.3mm; clip-path:inset(0 round 1.3mm); background:#141821 }
+.imgbox img{ position:absolute; left:0; top:0; width:100%; display:block }
+.imgbox.plain img{ position:static }
+.bd{ position:absolute; width:4mm; height:4mm; border-radius:50%; background:#fff; color:#14202b; border:.45mm solid #14202b; font:700 7.5pt/1 "Segoe UI",Arial,sans-serif; display:flex; align-items:center; justify-content:center; transform:translate(-50%,-50%); box-shadow:0 0 0 .35mm #ffd24a }
+.fig-studio .bd{ width:3.4mm; height:3.4mm; font-size:7pt; border-width:.4mm }
+.fig figcaption{ font-size:9pt; color:var(--muted); line-height:1.2; margin-top:.6mm }
+.legend{ list-style:none; font-size:9pt; line-height:1.2 }
+.legend li{ display:flex; gap:1.5mm; align-items:flex-start; margin:0 0 .7mm }
+.legend .l{ flex:none; width:3.9mm; height:3.9mm; border-radius:50%; background:#fff; color:#14202b; border:.4mm solid #14202b; box-shadow:0 0 0 .3mm #ffd24a; font:700 7.5pt/1 "Segoe UI",Arial,sans-serif; display:flex; align-items:center; justify-content:center; margin-top:0 }
+
+/* cards */
+.cards{ display:grid; gap:1.5mm; list-style:none }
+.cards.c4{ grid-template-columns:repeat(4,1fr) }
+.cards li, .cards > div{ border:.3mm solid var(--line); border-radius:1.5mm; padding:1mm 1.6mm; font-size:9pt; line-height:1.2; background:#fff; margin:0 }
+.cards b.h{ display:block; margin-bottom:.3mm; color:var(--accent-d); font-size:9.5pt }
+ol.cols2{ columns:2; column-gap:5mm; padding-left:4.6mm }
+ol.cols2 li{ break-inside:avoid; margin:0 0 .8mm }
+.tip{ border-left:1.1mm solid var(--accent); background:var(--accent-l); padding:.7mm 2.2mm; margin-top:1.2mm; font-size:9.5pt; line-height:1.22 }
+.os p{ margin:0 0 .8mm }
+.foot{ font-size:9pt; color:var(--muted); line-height:1.25; border-top:.25mm solid var(--line); padding-top:.9mm }
+.trouble td:first-child{ width:24%; font-weight:700 }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><clipPath id="pclip"><rect width="20" height="3.5" rx="1.75"/></clipPath></defs></svg>
+<!-- ============================ PAGE 1: the kit and the band ============================ -->
+<div class="page" id="p1">
+  <header class="top">
+    <h1>OpenMuscle starter kit: cheat sheet</h1>
+    <p class="lead">Day one, in order. Allow about an hour the first time, mostly waiting for the install and for charging.</p>
+    <ol class="road">
+      <li><b>1</b>Charge</li><li><b>2</b>Switch on</li><li><b>3</b>Install</li><li><b>4</b>Start</li><li><b>5</b>Wi-Fi</li><li><b>6</b>Heatmap</li><li><b>7</b>Camera</li><li><b>8</b>Record</li><li><b>9</b>Train</li><li><b>10</b>Predict</li><li><b>11</b>Send back</li>
+    </ol>
+  </header>
+
+  <section class="why">
+    <h3>Why this exists</h3>
+    <p>OpenMuscle is a low-cost, open-source wearable that predicts finger movement from your muscles. Each FlexGrid band has <b>60 pressure-sensing cells</b> that feel the pressure of the muscles under them (not their electrical signals). While you move, your computer's camera watches your fingers and the software learns the link; afterwards the band alone predicts your finger movement. It aims at reliable finger curl and grip force, not joint-by-joint precision. The bands use <b>Wi-Fi only</b> (no Bluetooth). Everything runs on your own computer; recordings stay on it until you choose to send them.</p>
+    <p class="need"><b>You need:</b> 2 FlexGrid bands, the USB-C cable, a computer with a camera, Chrome or Edge, internet (once), and 2.4 GHz Wi-Fi with its password or a phone hotspot.</p>
+  </section>
+
+  <div class="notice"><p><b>OpenMuscle is a research prototype.</b> It is not a medical device and must not be used to diagnose, treat or monitor any condition or to make any medical decision. <i class="tbc">to confirm</i> = not yet checked on a real band or computer.</p></div>
+
+  <section>
+    <div class="sh"><span class="k">The band</span><h2>What is on the board</h2><span class="aside">The letters are used again in steps 1 and 2</span></div>
+    <div class="hero" style="height:88mm"><img src="images/board-top.png" style="left:70.0mm;width:46.0mm" alt="3D render of the FlexGrid V4 circuit board, top view"><svg viewBox="0 0 186 88" preserveAspectRatio="none" aria-hidden="true"><g stroke-width=".3" stroke-linecap="round"><line x1="119.90" y1="9.50" x2="92.36" y2="6.59" stroke="#b8730a"/><circle cx="92.36" cy="6.59" r=".85" fill="#b8730a" stroke="#fff" stroke-width=".25"/><line x1="119.90" y1="24.00" x2="86.51" y2="14.74" stroke="#14202b"/><circle cx="86.51" cy="14.74" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/><line x1="119.90" y1="36.50" x2="93.69" y2="41.99" stroke="#14202b"/><circle cx="93.69" cy="41.99" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/><line x1="119.90" y1="50.00" x2="109.40" y2="47.05" stroke="#14202b"/><circle cx="109.40" cy="47.05" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/><line x1="119.90" y1="63.00" x2="107.80" y2="59.57" stroke="#14202b"/><circle cx="107.80" cy="59.57" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/><line x1="66.10" y1="9.50" x2="75.59" y2="13.88" stroke="#b8730a"/><circle cx="75.59" cy="13.88" r=".85" fill="#b8730a" stroke="#fff" stroke-width=".25"/><line x1="66.10" y1="29.00" x2="77.46" y2="47.75" stroke="#14202b"/><circle cx="77.46" cy="47.75" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/><line x1="66.10" y1="45.00" x2="77.46" y2="56.80" stroke="#14202b"/><circle cx="77.46" cy="56.80" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/><line x1="66.10" y1="62.00" x2="77.46" y2="66.75" stroke="#b8730a"/><circle cx="77.46" cy="66.75" r=".85" fill="#b8730a" stroke="#fff" stroke-width=".25"/><line x1="66.10" y1="79.00" x2="92.36" y2="75.54" stroke="#14202b"/><circle cx="92.36" cy="75.54" r=".85" fill="#14202b" stroke="#fff" stroke-width=".25"/></g><g font-family="Segoe UI,Arial,sans-serif" font-weight="700" font-size="3" text-anchor="middle"><rect x="119.90" y="7.30" width="4.4" height="4.4" rx=".9" fill="#ffd98a" stroke="#c77700" stroke-width=".4"/><text x="122.10" y="10.60" fill="#5a3200">F</text><rect x="119.90" y="21.80" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="122.10" y="25.10" fill="#fff">G</text><rect x="119.90" y="34.30" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="122.10" y="37.60" fill="#fff">I</text><rect x="119.90" y="47.80" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="122.10" y="51.10" fill="#fff">A</text><rect x="119.90" y="60.80" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="122.10" y="64.10" fill="#fff">D</text><rect x="61.70" y="7.30" width="4.4" height="4.4" rx=".9" fill="#ffd98a" stroke="#c77700" stroke-width=".4"/><text x="63.90" y="10.60" fill="#5a3200">H</text><rect x="61.70" y="26.80" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="63.90" y="30.10" fill="#fff">B</text><rect x="61.70" y="42.80" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="63.90" y="46.10" fill="#fff">C</text><rect x="61.70" y="59.80" width="4.4" height="4.4" rx=".9" fill="#ffd98a" stroke="#c77700" stroke-width=".4"/><text x="63.90" y="63.10" fill="#5a3200">E</text><rect x="61.70" y="76.80" width="4.4" height="4.4" rx=".9" fill="#14202b"/><text x="63.90" y="80.10" fill="#fff">J</text></g></svg><div class="hl r" style="top:9.5mm"><strong>Fifth switch, no label <i class="tbc">to confirm</i></strong>The parts list says it is the power button (on and off). Press or hold: not confirmed on a real band.</div><div class="hl r" style="top:24.0mm"><strong>Status light</strong>One RGB light: color plus pattern say what the band is doing (page 2).</div><div class="hl r" style="top:36.5mm"><strong>Screen connector</strong>The small screen plugs in here (none fitted in this render).</div><div class="hl r" style="top:50.0mm"><strong>USB-C</strong>Charges the band; use the supplied USB-C cable. Readings go over Wi-Fi.</div><div class="hl r" style="top:63.0mm"><strong>BOOT <span class='sm'>(printed BOOT1)</span></strong>Restarts the band. Nothing else.</div><div class="hl l" style="top:9.5mm"><strong>CHRG light (tiny) <i class="tbc">to confirm</i></strong>The charger's own light: believe it for "is it charging". Color not confirmed.</div><div class="hl l" style="top:29.0mm"><strong>MENU <span class='sm'>(printed MENU1)</span></strong>Tap: status page, again for page 2, then the live grid. Hold 2 s: charge mode.</div><div class="hl l" style="top:45.0mm"><strong>SELECT <span class='sm'>(printed SELECT1)</span></strong>Tap: pause or resume sending (Wi-Fi stays on).</div><div class="hl l" style="top:62.0mm"><strong>SW_RST1 <i class="tbc">to confirm</i></strong>Printed on the board; what it does is not confirmed, so this sheet does not use it.</div><div class="hl l" style="top:79.0mm"><strong>Sensor connector</strong>The flat tail of the sensor sheet slots in here.</div><div class="hkey" style="top:71mm"><span class="bsw"></span>Dark badge: taken from the board design files.<br><span class="bsw a"></span>Amber badge: not yet seen on a real band (<i class="tbc">to confirm</i>).</div></div>
+    <p class="sm fig-cap" style="margin-top:.8mm">3D render of the V4 board, the side facing away from your skin (the blue dome is not a lit state). <b>Hold MENU and SELECT together for 3 s</b> to forget the Wi-Fi and return to WIFI SETUP (magenta blink; let go early to cancel). Buttons do nothing while the band shows WIFI SETUP.</p>
+  </section>
+
+  <div class="two">
+    <section class="step">
+      <h3><span class="n">1</span>Unbox and charge</h3>
+      <ul>
+        <li>Plug the supplied USB-C cable into the band and a USB power source. <b>Charge both bands while you do steps 3 and 4.</b> Charge and running times are not measured yet. <i class="tbc">to confirm</i></li>
+        <li>Trust the tiny <b>CHRG light</b> (H) for "is it charging"; the screen and status light only guess that USB is plugged in.</li>
+        <li><b>Charge mode</b> (hold <b class="ui">MENU</b> 2 s) charges faster, but only once the band has joined your Wi-Fi (after step 5); tap SELECT or unplug to leave it. On USB it can start by itself after 5 minutes: normal.</li>
+      </ul>
+      <div class="warnbox">Stop using a band whose battery looks swollen or damaged.</div>
+    </section>
+    <section class="step">
+      <h3><span class="n">2</span>Switch on</h3>
+      <ul>
+        <li>Use the <b>power button</b>, the fifth switch (F, no printed label). It is meant to latch: press once to switch on, again to switch off. Which switch it is, and press or hold, are not confirmed on a real band. <i class="tbc">to confirm</i></li>
+        <li>It switches off only with USB unplugged; with USB in, the band runs from USB.</li>
+        <li>A new band shows <b>WIFI SETUP</b> and a blinking blue light. Its Wi-Fi name and password are on the screen (maybe on a sticker too; trust the screen).</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="pg-foot"><span>OpenMuscle starter kit: cheat sheet</span><span>Page 1 of 4</span></div>
+</div>
+
+<!-- ============================ PAGE 2: read the band, wear it, install ============================ -->
+<div class="page" id="p2">
+  <section>
+    <div class="sh"><span class="k">Reference</span><h2>The status light: color plus pattern</h2><span class="aside">Read both. Orange and amber are the same color:<br>steady = working, blinking or pulsing = trouble.</span></div>
+    <div class="lights"><ul><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="2.50" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="5.00" y="0" width="2.50" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="10.00" y="0" width="2.50" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="15.00" y="0" width="2.50" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Blue, one blink a second.</b> <span class='mono'>WIFI SETUP</span> (step 5).</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="1.40" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="2.80" y="0" width="1.40" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="10.00" y="0" width="1.40" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="12.80" y="0" width="1.40" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Blue, two quick blinks.</b> Screen not answering: needs repair; contact whoever sent the kit.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="20.00" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Blue, steady.</b> Joining your Wi-Fi, up to 20 s.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="20.00" height="3.5" fill="#18a34a" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Green, steady for 2 s.</b> Joined: <span class='mono'>WIFI OK</span>.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="1.60" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/><rect x="10.00" y="0" width="1.60" height="3.5" fill="#1f5fe0" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Brief pulse every 3 s.</b> Waiting for the computer. Role color: <span class="role" style="--c:#1f5fe0"></span><span class="role" style="--c:#e5242b"></span><span class="role" style="--c:#18a34a"></span><span class="role w"></span> left, right, labeler, none.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="20.00" height="3.5" fill="#f59e0b" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Orange, steady.</b> Sending data: the normal light. A short cyan flash every 5 s: USB plugged in.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.02"/><rect x="1.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.21"/><rect x="2.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.50"/><rect x="3.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.79"/><rect x="4.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.98"/><rect x="5.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.98"/><rect x="6.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.79"/><rect x="7.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.50"/><rect x="8.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.21"/><rect x="9.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.02"/><rect x="10.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.02"/><rect x="11.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.21"/><rect x="12.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.50"/><rect x="13.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.79"/><rect x="14.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.98"/><rect x="15.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.98"/><rect x="16.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.79"/><rect x="17.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.50"/><rect x="18.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.21"/><rect x="19.00" y="0" width="1.02" height="3.5" fill="#0fb3c9" fill-opacity="0.02"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Cyan, slow breathing.</b> <span class='mono'>PAUSED</span>. Tap SELECT to resume.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#e4e9ec"/><g clip-path="url(#pclip)"></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25" stroke-dasharray=".6 .5"/></svg><span class="lt"><b>Light off.</b> Switched off, or battery empty with USB unplugged.</span></li></ul><ul><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.20"/><rect x="1.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.35"/><rect x="2.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.59"/><rect x="3.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.83"/><rect x="4.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.98"/><rect x="5.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.98"/><rect x="6.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.83"/><rect x="7.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.59"/><rect x="8.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.35"/><rect x="9.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.20"/><rect x="10.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.20"/><rect x="11.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.35"/><rect x="12.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.59"/><rect x="13.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.83"/><rect x="14.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.98"/><rect x="15.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.98"/><rect x="16.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.83"/><rect x="17.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.59"/><rect x="18.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.35"/><rect x="19.00" y="0" width="1.02" height="3.5" fill="#8b3ffc" fill-opacity="0.20"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Purple, slow pulse, never dark.</b> <span class='mono'>CHARGING</span>, Wi-Fi off. Tap SELECT or unplug to leave it. Steady purple: full (the band's own estimate).</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.02"/><rect x="1.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.21"/><rect x="2.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.50"/><rect x="3.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.79"/><rect x="4.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.98"/><rect x="5.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.98"/><rect x="6.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.79"/><rect x="7.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.50"/><rect x="8.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.21"/><rect x="9.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.02"/><rect x="10.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.02"/><rect x="11.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.21"/><rect x="12.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.50"/><rect x="13.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.79"/><rect x="14.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.98"/><rect x="15.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.98"/><rect x="16.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.79"/><rect x="17.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.50"/><rect x="18.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.21"/><rect x="19.00" y="0" width="1.02" height="3.5" fill="#18a34a" fill-opacity="0.02"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Green, breathing.</b> <span class='mono'>RECORDING</span> to an SD card (hold SELECT 2 s; only if your kit has one <i class="tbc">to confirm</i>), Wi-Fi off. Tap SELECT to stop.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="2.50" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="5.00" y="0" width="2.50" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="10.00" y="0" width="2.50" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="15.00" y="0" width="2.50" height="3.5" fill="#f59e0b" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Amber, one blink a second.</b> <span class='mono'>LOW BATTERY</span>: plug in.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.32"/><rect x="1.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.44"/><rect x="2.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.65"/><rect x="3.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.86"/><rect x="4.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.98"/><rect x="5.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.98"/><rect x="6.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.86"/><rect x="7.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.65"/><rect x="8.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.44"/><rect x="9.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.32"/><rect x="10.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.32"/><rect x="11.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.44"/><rect x="12.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.65"/><rect x="13.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.86"/><rect x="14.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.98"/><rect x="15.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.98"/><rect x="16.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.86"/><rect x="17.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.65"/><rect x="18.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.44"/><rect x="19.00" y="0" width="1.02" height="3.5" fill="#f59e0b" fill-opacity="0.32"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Amber, slow pulse, never dark.</b> <span class='mono'>WIFI LOST</span>: the band reconnects by itself.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="1.70" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="3.40" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="5.10" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="6.80" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="8.50" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="10.20" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="11.90" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="13.60" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="15.30" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="17.00" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/><rect x="18.70" y="0" width="0.85" height="3.5" fill="#f59e0b" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Amber, fast blink.</b> <span class='mono'>WIFI FAILED</span> and why. Back at WIFI SETUP in 30 s, same name and password.</span></li><li><svg class="pat" viewBox="0 0 20 3.5" width="18mm" height="3.15mm" aria-hidden="true"><rect width="20" height="3.5" rx="1.75" fill="#eef2f4"/><g clip-path="url(#pclip)"><rect x="0.00" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="1.70" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="3.40" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="5.10" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="6.80" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="8.50" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="10.20" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="11.90" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="13.60" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="15.30" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="17.00" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/><rect x="18.70" y="0" width="0.85" height="3.5" fill="#e5242b" fill-opacity="1.00"/></g><rect x=".12" y=".12" width="19.76" height="3.26" rx="1.63" fill="none" stroke="#7d8a94" stroke-width=".25"/></svg><span class="lt"><b>Red, fast blink.</b> Recovered from a crash; clears after 60 s of normal running.</span></li></ul></div>
+    <p class="sm" style="margin-top:.8mm">Strips run left to right in time. Dim blue breathing: switching on. Magenta blinking: MENU and SELECT held. When two things are true at once the band shows one light: crash recovery and the button-hold colors come first, and paused, charging or recording hide the low-battery and Wi-Fi-lost lights. Case visibility: still being checked <i class="tbc">to confirm</i>.</p>
+  </section>
+
+  <section>
+    <div class="sh"><span class="k">Reference</span><h2>The screen: four lines of 16 characters</h2><span class="aside">Examples only. Yours shows your own band's details.</span></div>
+    <div class="screens">
+      <div class="scr"><div class="oled">WIFI SETUP
+OM-flexgrid-
+d7af0b
+PW kd3mpq72xy</div><b>Setup.</b> Top line alternates with "see guide". Name wraps; password after PW.</div>
+      <div class="scr"><div class="oled">WIFI OK
+192.168.1.23
+flexgrid-d7af0b
+role: left</div><b>Status 1.</b> Tap MENU. Also shows for 15 s after joining.</div>
+      <div class="scr"><div class="oled">BAT 64% 3.95V
+MODE STREAM
+HUBS 1
+NET MyWifi</div><b>Status 2.</b> Tap MENU again. A rough battery percent. HUBS = computers receiving.</div>
+      <div class="scr"><div class="oled grid"><svg viewBox="0 0 120 32" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" fill="#e9f5ff" aria-label="live grid of 15 by 4 cells"><rect x="11.20" y="3.20" width="1.60" height="1.60"/><rect x="19.20" y="3.20" width="1.60" height="1.60"/><rect x="26.30" y="2.30" width="3.40" height="3.40"/><rect x="34.30" y="2.30" width="3.40" height="3.40"/><rect x="41.40" y="1.40" width="5.20" height="5.20"/><rect x="50.30" y="2.30" width="3.40" height="3.40"/><rect x="59.20" y="3.20" width="1.60" height="1.60"/><rect x="83.20" y="3.20" width="1.60" height="1.60"/><rect x="91.20" y="3.20" width="1.60" height="1.60"/><rect x="3.20" y="11.20" width="1.60" height="1.60"/><rect x="10.30" y="10.30" width="3.40" height="3.40"/><rect x="17.40" y="9.40" width="5.20" height="5.20"/><rect x="25.40" y="9.40" width="5.20" height="5.20"/><rect x="32.30" y="8.30" width="7.40" height="7.40"/><rect x="40.30" y="8.30" width="7.40" height="7.40"/><rect x="49.40" y="9.40" width="5.20" height="5.20"/><rect x="58.30" y="10.30" width="3.40" height="3.40"/><rect x="67.20" y="11.20" width="1.60" height="1.60"/><rect x="75.20" y="11.20" width="1.60" height="1.60"/><rect x="82.30" y="10.30" width="3.40" height="3.40"/><rect x="90.30" y="10.30" width="3.40" height="3.40"/><rect x="99.20" y="11.20" width="1.60" height="1.60"/><rect x="3.20" y="19.20" width="1.60" height="1.60"/><rect x="10.30" y="18.30" width="3.40" height="3.40"/><rect x="17.40" y="17.40" width="5.20" height="5.20"/><rect x="24.30" y="16.30" width="7.40" height="7.40"/><rect x="32.30" y="16.30" width="7.40" height="7.40"/><rect x="40.30" y="16.30" width="7.40" height="7.40"/><rect x="49.40" y="17.40" width="5.20" height="5.20"/><rect x="57.40" y="17.40" width="5.20" height="5.20"/><rect x="66.30" y="18.30" width="3.40" height="3.40"/><rect x="74.30" y="18.30" width="3.40" height="3.40"/><rect x="81.40" y="17.40" width="5.20" height="5.20"/><rect x="89.40" y="17.40" width="5.20" height="5.20"/><rect x="98.30" y="18.30" width="3.40" height="3.40"/><rect x="107.20" y="19.20" width="1.60" height="1.60"/><rect x="11.20" y="27.20" width="1.60" height="1.60"/><rect x="18.30" y="26.30" width="3.40" height="3.40"/><rect x="25.40" y="25.40" width="5.20" height="5.20"/><rect x="33.40" y="25.40" width="5.20" height="5.20"/><rect x="41.40" y="25.40" width="5.20" height="5.20"/><rect x="50.30" y="26.30" width="3.40" height="3.40"/><rect x="58.30" y="26.30" width="3.40" height="3.40"/><rect x="67.20" y="27.20" width="1.60" height="1.60"/><rect x="75.20" y="27.20" width="1.60" height="1.60"/><rect x="82.30" y="26.30" width="3.40" height="3.40"/><rect x="90.30" y="26.30" width="3.40" height="3.40"/><rect x="99.20" y="27.20" width="1.60" height="1.60"/></svg></div><b>Live grid.</b> Normal running; a bigger mark means a harder press. A quick sensor check.</div>
+    </div>
+    <p class="sm" style="margin-top:1mm">PAUSED, CHARGING and RECORDING stay on the screen until you leave that mode. LOW BATTERY repeats every 5 minutes; WIFI FAILED (with its reason) and NO SD CARD appear briefly. How readable the screen is in a case or sleeve is still being checked <i class="tbc">to confirm</i>.</p>
+  </section>
+
+  <section>
+    <div class="sh"><span class="k">Reference</span><h2>Wearing it</h2><span class="aside"><i class="tbc">to confirm</i> The placement wording below is not yet confirmed by the hardware owner.</span></div>
+    <div style="display:grid;grid-template-columns:46mm 1fr;gap:4mm;align-items:start">
+      <figure class="fig"><div class="imgbox" style="background:#3d3d3d;aspect-ratio:1100/800"><img src="images/device-angle.png" style="margin-top:-18.182%" alt="Render of the circuit board lying on the outside of the sensor sheet, which is closed round a forearm-shaped form"><span class="bd" style="left:50.91%;top:33.75%">a</span><span class="bd" style="left:11.82%;top:85.62%">b</span></div><figcaption>Render. The sheet's real color is not confirmed <i class="tbc">to confirm</i>.</figcaption></figure>
+      <div>
+        <ul class="legend" style="font-size:10pt">
+          <li><span class="l">a</span><span><b>The circuit board faces away from your skin</b>, so you can read the screen and reach the buttons and the USB-C socket.</span></li>
+          <li><span class="l">b</span><span><b>The sensor sheet (the flexible side with the grid of cells) goes against bare skin</b>, never over a sleeve. Left band on the left forearm, right band on the right, long side along the forearm, elbow toward wrist.</span></li>
+        </ul>
+        <ul style="padding-left:3.5mm;margin-top:.6mm">
+          <li><b>Where:</b> the thicker, muscular part of the forearm, a hand-width or two below the elbow crease, centered on the bulge when you make a fist. Not the bony wrist or the soft elbow.</li>
+          <li><b>How tight:</b> snug, not tight: one finger slides under the strap and your fingers move freely. A deep mark after ten minutes, or a tingling or cold hand: loosen it.</li>
+          <li><b>Same place every time</b>, or the score drops. Mark two skin-safe pen dots just outside the band's edge. If it slips during a recording: stop, fix it, start a new recording.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="step">
+    <h3><span class="n">3</span>Install the software <small>once, about 5 to 10 minutes; Chrome or Edge, Python 3.10 or newer, internet needed</small></h3>
+    <p>At github.com/Open-Muscle/OpenMuscle-Software click <b class="ui">Code</b>, then <b class="ui">Download ZIP</b>. Extract the <b>whole</b> zip (Windows: right-click, Extract All; Mac: double-click); never run the installer from inside it. Open the extracted folder, then <b>installers</b>.</p>
+    <div class="os">
+      <p><b>Windows.</b> Open <b>windows</b>, double-click <b>Install-OpenMuscle.bat</b>. A blue "Windows protected your PC" window: <b>More info</b>, then <b>Run anyway</b>. If Python is missing, tick <b>Add python.exe to PATH</b> on the python.org page and run it again. At <b>Add the firewall rule now? (Y/n)</b> press Enter, then Yes. Wait for "OpenMuscle is installed."</p>
+      <p><b>Mac</b> (macOS 12 or newer) <i class="tbc">to confirm</i> Open <b>macos</b>, double-click <b>install.command</b>. "Unidentified developer": right-click it, Open, Open again. If it asks for Python, install it from python.org and run it again.</p>
+      <p><b>Linux.</b> In a terminal in the extracted folder run <code>bash installers/linux/install.sh</code>. If it prints a firewall line (such as <code>sudo ufw allow 3140:3141/udp</code>), copy it into the terminal.</p>
+      <p class="sm">Running an installer again is safe and never touches recordings.</p>
+    </div>
+  </section>
+
+  <div class="pg-foot"><span>OpenMuscle starter kit: cheat sheet</span><span>Page 2 of 4</span></div>
+</div>
+
+<!-- ============================ PAGE 3: start, connect, camera, record ============================ -->
+<div class="page" id="p3">
+  <div style="display:grid;grid-template-columns:1fr 78mm;gap:4.5mm;align-items:start">
+    <section class="step">
+      <h3><span class="n">4</span>Start the Studio</h3>
+      <ul>
+        <li>Double-click <b class="ui">OpenMuscle</b> on the Desktop (Linux: applications menu). A black window opens: <b>leave it open</b>, closing it stops OpenMuscle. On Windows do not click inside it (press Enter or Esc if the page stops updating).</li>
+        <li>If the computer asks to let OpenMuscle or Python receive network connections, choose <b>Allow</b> (Windows: keep <b>Private networks</b> ticked). A Mac also asks to find devices on your local network: Allow, or bands will not appear. Keep the laptop plugged in and awake while recording.</li>
+        <li>Your browser opens <code>http://localhost:8000</code>, the <b>OpenMuscle Studio</b> (else paste that into Chrome or Edge; if 8000 is busy, use the address the black window prints). <b>No band found yet.</b> is normal until step 5.</li>
+      </ul>
+    </section>
+    <figure class="fig"><div class="imgbox fig-studio" style="aspect-ratio:1100/508"><img src="images/studio-live.png" alt="The Studio live view with the control bar, a band card, its heatmap and the camera hand view"><span class="bd" style="left:69.27%;top:4.72%">a</span><span class="bd" style="left:93.64%;top:12.20%">b</span><span class="bd" style="left:1.45%;top:9.84%">c</span><span class="bd" style="left:35.64%;top:31.10%">d</span><span class="bd" style="left:84.91%;top:25.59%">e</span><span class="bd" style="left:18.64%;top:88.98%">f</span><span class="bd" style="left:33.64%;top:84.65%">g</span><span class="bd" style="left:68.00%;top:92.52%">h</span></div>
+      <ul class="legend" style="columns:2;column-gap:3mm;margin-top:1mm">
+        <li><span class="l">a</span><span><b>Set up a device</b></span></li>
+        <li><span class="l">b</span><span><b>connected</b> badge</span></li>
+        <li><span class="l">c</span><span><b>Record</b> (then <b>Stop</b>)</span></li>
+        <li><span class="l">d</span><span>The <b>Ready</b> line</span></li>
+        <li><span class="l">e</span><span><b>SENSOR</b> rate in Hz</span></li>
+        <li><span class="l">f</span><span><b>role</b> menu</span></li>
+        <li><span class="l">g</span><span>Band <b>heatmap</b></span></li>
+        <li><span class="l">h</span><span>Camera hand view</span></li>
+      </ul>
+      <figcaption>Practice data. <b>Help</b>, beside <b>Set up a device</b>, is not in this picture.</figcaption></figure>
+  </div>
+
+  <section class="step">
+    <h3><span class="n">5</span>Put each band on your Wi-Fi <small>once per band; the Studio walks you through it</small></h3>
+    <ol class="cols2">
+      <li><b>Band ready.</b> Screen says <b>WIFI SETUP</b>, light blinks blue. Set up one band at a time: join only the <b>OM-</b> network whose last six characters match that band's screen.</li>
+      <li><b>Open the wizard.</b> Studio: <b>Set up a device</b>, <b>I am ready</b>, <b>A band</b>.</li>
+      <li><b>Join the band.</b> Join the Wi-Fi starting <b>OM-</b> (password after <b>PW</b> on the screen). Click <b>Yes, that is the one</b>.</li>
+      <li><b>Your Wi-Fi.</b> Pick yours (2.4 GHz only) or type it, plus its password. <b>Send to the device</b>. After about 20 s rejoin your usual Wi-Fi.</li>
+      <li><b>All set.</b> Finish shows <b>All set</b>. The band shows green, <b>WIFI OK</b>, then its live grid. Repeat for band two.</li>
+    </ol>
+    <p style="margin-top:.8mm"><b>Your Wi-Fi must be</b> 2.4 GHz, password only (no username), no web sign-in page, not a guest network, and the computer on it too. Otherwise use a phone hotspot (iPhone: <b>Allow Others to Join</b>, <b>Maximize Compatibility</b>; Android: 2.4 GHz).</p>
+    <div class="tip"><b>Typo?</b> About 30 s after a failed join the band is back at WIFI SETUP with the same name and password (top line: LAST TRY FAILED and why). Leave <b>Remember for the next device</b> ticked (it is ticked already) when you set up band two, and forget the OM- network on your computer afterwards. No internet while on OM-: normal. <b>Privacy:</b> on your computer the password stays in this browser tab only and nothing is sent online; the band keeps it in its own memory until you hold MENU and SELECT for 3 s (also how to move a band to another network, or to erase it before you return a band).</div>
+  </section>
+
+  <div class="two">
+    <section class="step">
+      <h3><span class="n">6</span>See the heatmap <small>squeeze test</small></h3>
+      <ul>
+        <li>Put the band on as on page 2. Each band gets a card and a heatmap: set its <b class="ui">role</b> menu to <b>left</b> or <b>right</b> for that arm. With two bands the arms must differ or <b class="ui">Record</b> is blocked.</li>
+        <li><b>Squeeze test, before every session.</b> Relaxed, the grid is mostly dark or a quiet color. Press firmly with a fingertip, then slowly make a fist: pink, orange and yellow cells that fade as you relax. A region that never changes is not touching skin: refasten. Bright at rest: too tight.</li>
+      </ul>
+    </section>
+    <section class="step">
+      <h3><span class="n">7</span>Turn on the camera</h3>
+      <ul>
+        <li>Open the <b class="ui">Camera</b> bar, press <b class="ui">Start camera</b>, choose <b>Allow</b> (the first time needs internet once, for the hand tracker).</li>
+        <li>Hold your hand up, palm toward the camera, fingers visible, in bright even light: a green skeleton follows it.</li>
+        <li>Under <b class="ui">Record</b> the line should read <i>Ready: 2 bands (left arm, right arm) + webcam hand data. Press Record.</i> If it gives a reason instead, fix that first.</li>
+        <li>No video is saved, only joint positions. No camera: <b>No labeler</b> keeps band data but cannot train a model.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="step">
+    <h3><span class="n">8</span>Record eight short takes <small>about 15 minutes</small></h3>
+    <div class="two">
+      <ul>
+        <li>Press <b class="ui">+ session</b>: name <code>first-model</code>, a made-up participant code such as <code>P01</code>, Arm: the band's arm (<b>Both arms</b> for two bands), Finger data from <b>Webcam</b>, then <b>Start session</b>. <b>Do not move a band</b> until the last take; if you must, start again.</li>
+        <li><b>Two bands, one camera:</b> its one hand supplies the finger data for both bands. Move both hands together, same movement at the same time, one in front of the camera. In <b>More details</b> set <b>Mirrored</b> to <b>Yes, labels measured on the left hand</b> (or right), the hand the camera watches. Or wear just one band, on that arm.</li>
+      </ul>
+      <div>
+        <ul>
+          <li><b>Every take: 30 seconds, never under 10.</b> Press <b class="ui">Record</b>. <b>First 5 s: hand completely still and relaxed</b>, so the model sees "no movement". Then the movement, slow and smooth, until about 0:30. Press <b class="ui">Stop</b>, read the card, press <b class="ui">Record next take</b>, then <b class="ui">Record</b>.</li>
+        </ul>
+        <table style="margin-top:.6mm">
+          <tr><td class="w"><span class="pill good">Good</span></td><td>Nothing wrong found.</td></tr>
+          <tr><td class="w"><span class="pill chk">Check</span></td><td>Usable; hover for the reason.</td></tr>
+          <tr><td class="w"><span class="pill bad">Bad</span></td><td>Better redone; do not tick it for training.</td></tr>
+        </table>
+        <p class="sm" style="margin:.8mm 0 0"><b>hand lost</b>, <b>labels missing</b>: keep your hand in view. <b>idle labeler</b>: move more. <b>weak signal</b>: band not touching; adjust it and restart from take 1. <b>too short</b>: aim for 30 s. Then record that take again.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="pg-foot"><span>OpenMuscle starter kit: cheat sheet</span><span>Page 3 of 4</span></div>
+</div>
+
+<!-- ============================ PAGE 4: takes, train, predict, files, trouble ============================ -->
+<div class="page" id="p4">
+  <section class="step">
+    <h3><span class="n">8</span>The eight takes <small>slow beats fast; a capture name such as 01-open-close is optional</small></h3>
+    <ol class="cards c4">
+      <li><b class="h">1 and 5: open and close</b>Open the hand wide, close to a loose fist, repeat: 8 cycles of about 3 s.</li>
+      <li><b class="h">2 and 6: single fingers</b>Curl each finger toward the palm and straighten it, twice each: thumb to little (about 5 s each).</li>
+      <li><b class="h">3 and 7: grips</b>Fist, pinch (thumb to index), point (index straight, others curled), then repeat once. Each: close 1 s, hold 2 s, open 1 s, rest 1 s.</li>
+      <li><b class="h">4 and 8: free mix</b>Any mix of the above, with short rests. The last one or two takes are kept aside to test the model.</li>
+    </ol>
+    <p class="sm" style="margin-top:.6mm">Takes 5 to 8 repeat 1 to 4 in order at your natural pace. In a hurry: skip takes 4 and 7.</p>
+  </section>
+
+  <div class="two">
+    <section class="step">
+      <h3><span class="n">9</span>Train</h3>
+      <ol>
+        <li>In <b class="ui">Data &amp; Models</b> (or press <b class="ui">Go to Train</b>) tick your eight takes; do not tick any take marked <b>Bad</b> (untick it if Go to Train ticked it). Leave <b>Learn the whole hand (big model)</b> unticked: it makes a large model and only draws a 3D hand.</li>
+        <li>Press <b class="ui">Train</b>. Allow about 4 to 5 minutes per band; two bands train one after the other. Do not close the page.</li>
+      </ol>
+      <p style="margin-top:.6mm">You get a result card per band: one bar per finger (green 50% and over follows well, amber 25 to 49% partly, red barely) and a <b>What to do next</b> line: do that one step. <b>Could not train yet</b> says what to change.</p>
+    </section>
+    <section class="step">
+      <h4 style="margin-top:0">The score words</h4>
+      <table>
+        <tr><td class="w"><span class="pill good">Good</span> 75%+</td><td>Follows your fingers well. Try it live.</td></tr>
+        <tr><td class="w"><span class="pill fair">Fair</span> 50%+</td><td>Follows the big movements. Record more takes, one finger each; train again.</td></tr>
+        <tr><td class="w"><span class="pill weak">Weak</span> 25%+</td><td>Picks up a little. Check the fit; record a rest take and slow single-finger takes.</td></tr>
+        <tr><td class="w"><span class="pill nw">Not working yet</span></td><td>Under 25%. Check the fit and the camera view; record new takes.</td></tr>
+        <tr><td class="w"><span class="pill nt">Not tested yet</span></td><td>Record a longer take with finger movement.</td></tr>
+      </table>
+      <p class="sm" style="margin-top:.6mm">The score is on takes the model never trained on (100% = perfect). One take alone can score at most Fair: use at least two.</p>
+    </section>
+  </div>
+
+  <section class="step">
+    <h3><span class="n">10</span>Watch it predict</h3>
+    <ul>
+      <li>If the result card says <b>Prediction starts automatically</b> it is running; otherwise press <b class="ui">Predict</b> (<b class="ui">Pause prediction</b> stops it). In <b>Ground truth vs Predicted</b> the green hand is what the camera sees; a line under it reads out what the model thinks each finger is doing, from the bands alone, as a percent of curl (0% straight, 100% fully curled).</li>
+      <li><b>Good:</b> the percentages follow your fingers with a short delay and fall to near 0% when you relax. <b>Bad:</b> they barely move or jump about while you are still, or it went wrong after the band moved. Fix: wear the band the same way, record more varied takes, train again. <b>This model may not match.</b> means train a new one.</li>
+    </ul>
+  </section>
+
+  <section class="step">
+    <h3><span class="n">11</span>Your files, and what to send back</h3>
+    <div class="two">
+      <ul>
+        <li>Everything is on your own computer, in a folder called <b>OpenMuscle</b> in your home folder. Nothing is uploaded. <b>Data &amp; Models</b> shows it (<b class="ui">Open folder</b>, <b class="ui">Copy path</b>). The camera picture is never saved. <b>Back up</b> after each recording day, with OpenMuscle closed: copy captures, sessions and models to an external drive.</li>
+      </ul>
+      <ul>
+        <li><b>To send recordings:</b> in <b>Session</b> click <b class="ui">Export session</b> (or tick takes, then <b class="ui">Export selected</b>). Leave <b>Include full raw streams</b> and <b>Include my notes</b> off unless asked. Click <b class="ui">Download zip</b>: it lands in Downloads, with a copy in <b>OpenMuscle/exports</b>. Models are never included. Many email services refuse over about 20 MB: export one session at a time.</li>
+      </ul>
+    </div>
+    <ul style="margin-top:.4mm"><li><b>Keep private:</b> the list linking codes to people (outside the OpenMuscle folder), raw streams, notes and models. Treat recordings as personal data.</li></ul>
+  </section>
+
+  <section class="step">
+    <h3>If something goes wrong <small>Help (top right of the Studio), then Troubleshooting; Run the check first names the likely cause</small></h3>
+    <table class="trouble">
+      <tr><td>No band found yet</td><td>Band on WIFI OK? Computer on the same 2.4 GHz Wi-Fi (not guest, VPN or OM-)? Firewall, the usual cause on Windows: allow private networks (UDP 3140 and 3141, if IT asks). Wait 30 s, then <b>Add a device by IP address</b>, <b>Scan subnet</b>. Restart the band.</td></tr>
+      <tr><td>Heatmap flat or all bright</td><td>All dark: not touching skin, refasten. Bright at rest: too tight. Badge says disconnected: keep the black window open and reload.</td></tr>
+      <tr><td>Record will not start</td><td>The line beside it says why: set left or right in each <b>role</b> menu, or switch the camera on.</td></tr>
+      <tr><td>Camera blocked or busy</td><td>Camera icon in the address bar, Allow. Close Zoom, Teams and other tabs using the camera.</td></tr>
+      <tr><td>Train grayed out</td><td>Tick at least one take, or read the message (too little recording, band not touching, or finger data that never moved).</td></tr>
+      <tr><td>Still stuck</td><td><b>Still stuck</b> in Troubleshooting shows how to make a short report: add <code>--report</code> to the line <b>Run the check first</b> gives. It never holds Wi-Fi names, passwords or recordings; do not attach recordings or put anyone's name in it.</td></tr>
+    </table>
+  </section>
+
+  <p class="foot">Practice data: the Studio's practice mode. Hardware designs: CERN-OHL-S-2.0. Firmware and software: MIT licensed.</p>
+
+  <div class="pg-foot"><span>OpenMuscle starter kit: cheat sheet</span><span>Page 4 of 4</span></div>
+</div>
+
+</body>
+</html>
