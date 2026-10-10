@@ -108,3 +108,44 @@ test('an older server without flags falls back to its reasons', () => {
     const st = S.live(rec({ verdict: 'check', reasons: ['Labels matched only 80% of frames.'] }));
     assert.deepEqual(st.sentences, ['Labels matched only 80% of frames.']);
 });
+
+// ---- collapsed result card (sticky bar must never hide the page) ----
+
+test('collapsed summary keeps the verdict word and all three actions', () => {
+    for (const verdict of ['good', 'check', 'bad']) {
+        const q = { verdict, reasons: [], flags: [] };
+        const sum = S.savedSummary(rec(q, { too_short: false }));
+        assert.equal(sum.word, S.WORD[verdict]);
+        assert.equal(sum.headline, 'Saved: ' + S.WORD[verdict]);
+        assert.deepEqual(sum.actions.map(a => a.id),
+            ['rec-next-take', 'rec-show-file', 'rec-go-train']);
+        for (const a of sum.actions) {
+            assert.ok(a.label && a.label.length > 0, 'every action has a label');
+            assert.ok(a.title && a.title.length > 0, 'every action has a tooltip');
+        }
+        assert.match(sum.actions[0].label, /Record next take/);
+        assert.match(sum.actions[1].label, /Show file/);
+        assert.match(sum.actions[2].label, /Go to Train/);
+    }
+});
+
+test('go-to-train tooltip says why a too-short take is not ticked', () => {
+    const short = S.savedActions({ too_short: true });
+    const ok = S.savedActions({ too_short: false });
+    assert.match(short[2].title, /Too short/);
+    assert.doesNotMatch(ok[2].title, /Too short/);
+});
+
+test('savedActions tolerates a missing result', () => {
+    assert.equal(S.savedActions(undefined).length, 3);
+    assert.equal(S.savedSummary(undefined).word, 'Good');
+});
+
+test('auto collapse waits 8 s and yields to Details and to a hand unfold', () => {
+    assert.equal(S.COLLAPSE_AFTER_MS, 8000);
+    assert.equal(S.shouldAutoCollapse({}), true);
+    assert.equal(S.shouldAutoCollapse({ collapsed: true }), false);
+    assert.equal(S.shouldAutoCollapse({ detailsOpen: true }), false);
+    assert.equal(S.shouldAutoCollapse({ pinnedOpen: true }), false);
+    assert.equal(S.shouldAutoCollapse(undefined), true);
+});

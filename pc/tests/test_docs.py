@@ -152,7 +152,7 @@ def test_screen_labels_quoted_in_the_guides_exist():
     """Buttons and menu names the journey tells people to click are in the page."""
     static = REPO / "pc" / "src" / "openmuscle" / "web" / "static"
     pages = "".join(_read(p) for p in (static / "index.html", static / "app.js",
-                                       static / "guide.js", static / "train-card.js",
+                                       static / "guide.js", static / "train-card.js", static / "rec-status.js",
                                        static / "setup" / "wizard.js"))
     for label in ("Set up a device", "Record", "Finger data from", "Export session",
                   "Export selected", "Open folder", "Copy path", "Scan subnet",
