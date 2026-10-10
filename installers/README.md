@@ -26,7 +26,9 @@ install stops, that file says why; send it to whoever gave you OpenMuscle.
 
 The launcher opens your browser at OpenMuscle and keeps a window open while it runs.
 Leave that window open; closing it stops OpenMuscle. Starting the launcher a second
-time while OpenMuscle is already running just opens the page again.
+time while OpenMuscle is already running just opens the page again, and says which
+address it opened (it tries the port your last run used first, kept in
+`~/OpenMuscle/logs/last-port.txt`).
 
 Where `~` is your home folder (for example `C:\Users\you` on Windows). Set the
 environment variable `OPENMUSCLE_HOME` before installing to put the data folder somewhere
