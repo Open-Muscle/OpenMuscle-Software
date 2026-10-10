@@ -1822,6 +1822,12 @@ function setRecStatusHtml(sigParts, build) {
     if (sig === _recStatusSig) return;
     _recStatusSig = sig;
     recordStatus.innerHTML = build();
+    wireRecDetailsToggle();
+}
+
+// Remember whether the person has Details open. Called after every direct
+// recordStatus.innerHTML assignment (live block and saved-take card).
+function wireRecDetailsToggle() {
     const d = recordStatus.querySelector('details.rec-details');
     if (d) d.addEventListener('toggle', () => { _recDetailsOpen = d.open; });
 }
@@ -2053,8 +2059,10 @@ function armPostStopCollapse() {
     const fold = (viaTimer) => {
         const card = document.getElementById('rec-card');
         if (!card || !_postStopCard) { clearPostStopWatchers(); return; }
+        const liveDetails = card.querySelector('details.rec-details');
         const state = { collapsed: card.classList.contains('collapsed'),
-                        detailsOpen: _recDetailsOpen, pinnedOpen: _postStopPinned };
+                        detailsOpen: _recDetailsOpen || !!(liveDetails && liveDetails.open),
+                        pinnedOpen: _postStopPinned };
         if (viaTimer) {
             if (OMRecStatus.shouldAutoCollapse(state)) setPostStopCollapsed(true);
             else _postStopTimer = null;
@@ -2093,6 +2101,7 @@ function showPostStopCard(result) {
             ${actions.map(a => `<button class="link" id="${a.id}" title="${escapeHtml(a.title)}">${escapeHtml(a.label)}</button>`).join('')}
         </div>
         </div>`;
+    wireRecDetailsToggle();
     _postStopCard = true;
     const verdictBtn = document.getElementById('rec-verdict-toggle');
     if (verdictBtn) verdictBtn.onclick = () => {
