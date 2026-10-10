@@ -48,7 +48,7 @@
             band: {
                 title: 'A band',
                 look: 'The light blinks blue, two quick blinks then a pause. That is normal for a band without a screen. (A band with a screen says WIFI SETUP.)',
-                reset: 'Not blinking blue? Hold MENU and SELECT together for 3 seconds. The light then goes back to blinking blue.',
+                reset: 'Not blinking blue? If the light is off, press the power button once. Otherwise hold MENU and SELECT together for 3 seconds. The light then goes back to blinking blue.',
             },
             labeler: {
                 title: 'A finger labeler (optional)',

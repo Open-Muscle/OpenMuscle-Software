@@ -40,7 +40,7 @@ While your computer is joined to the band's `OM-` network it **has no internet**
 
 You need the Studio running first (see [getting-started.md](getting-started.md), step 3). The wizard works only in the browser on the computer that runs OpenMuscle.
 
-1. **Turn the band on, and find its name and password on the sticker.** Press the power button at the top edge once (a band on USB power may already be on). A band that has never been set up goes straight to setup mode. You should see its light blink **blue, two quick blinks then a pause**. For a band without a screen, that is the normal setup pattern and not a fault.
+1. **Turn the band on, and find its name and password on the sticker.** Look at the light. If it stays off, press the power button at the top edge once; if it still does nothing, plug in USB-C for a few minutes. A band that has never been set up goes straight to setup mode. You should see its light blink **blue, two quick blinks then a pause**. For a band without a screen, that is the normal setup pattern and not a fault.
 
    Find the sticker on the band. It has lines like these (yours will differ):
 

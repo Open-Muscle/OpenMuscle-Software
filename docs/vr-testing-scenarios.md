@@ -13,7 +13,7 @@ Companion docs:
 
 Order matters. Each step depends on the previous one being live.
 
-1. **Power the FlexGrid.** Wait for its OLED to show it joined Wi-Fi. It streams UDP to the PC on port 3141.
+1. **Power the FlexGrid.** Wait for the band's light to show it joined Wi-Fi (green, then a pulse or steady orange; an OLED, if your build has one, shows it too). It streams UDP to the PC on port 3141.
 2. **Start the server on the PC.** Pick the path that matches how you'll test:
    - **USB tethered** (fast iteration, no certs): `cd pc` then `start-vr.bat` (VR) or `start-vr.bat right ar` (AR). It auto-runs `adb reverse` and opens Quest Browser for you.
    - **Cordless HTTPS** (walk around, real field capture): `cd pc` then `start-vr-https.bat`. It prints the headset URL. Requires the one-time mkcert + Quest cert install.

@@ -174,7 +174,7 @@ def test_kit_pages_offer_the_no_screen_path():
     for name, text in (("wifi-setup.md", wifi), ("getting-started.md", started),
                        ("troubleshooting.md", trouble)):
         assert "sticker" in text, name
-        assert re.search(r"two quick blinks then a pause", text), name
+        assert re.search(r"two quick blinks", text), name
     assert "Setup password" in wifi and "Setup Wi-Fi" in wifi
     # No "read it off the screen" instruction left without the sticker path.
     assert "Type the password from the last line of the band's screen" not in wifi

@@ -134,7 +134,7 @@ Screens (only on a band that has a screen; the kit bands do not): `WIFI SETUP` (
 ### The buttons on the band
 
 - **Power button** (the switch at the top edge): a short press switches the band on, and a short press again switches it off. How the press feels, and whether a press while USB is plugged in switches it off, is still to be confirmed on a band; if it will not switch off, unplug USB-C first.
-- **MENU** and **SELECT**: the two buttons the band itself reads. Tap MENU or SELECT for the actions in the table above, and hold both together for 3 seconds to forget the Wi-Fi.
+- **MENU** and **SELECT**: the two buttons the band itself reads. Hold MENU for 2 seconds for charge mode, tap SELECT to leave it (or to pause and resume), and hold both together for 3 seconds to forget the Wi-Fi.
 - **The switch printed BOOT**: restarts the band, like a reset button. It does not erase your Wi-Fi settings.
 - **The switch printed SW_RST1 at the bottom left**: not used in normal use. Holding it while pressing BOOT puts the chip in download mode so that a stuck board can be reflashed. If you did that by accident, press BOOT alone to restart.
 - **The charger light**: the charger chip drives a small light of its own on the board. Its colour is not yet confirmed, so rely on the band's status light for charging (see [Battery and charging](#battery-and-charging)).
