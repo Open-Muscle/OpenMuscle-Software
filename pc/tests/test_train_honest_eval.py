@@ -157,7 +157,8 @@ def test_held_out_r2_is_below_shuffled_and_matches_manual_chronological(tmp_path
     df = pd.read_csv(csv_path)       # same float parse as the trainer
     X = df.filter(like="R0C").to_numpy()
     y = df.filter(like="label_").to_numpy()
-    ref = RandomForestRegressor(n_estimators=TREES, random_state=42)
+    ref = RandomForestRegressor(n_estimators=TREES, random_state=42,
+                                min_samples_leaf=m["leaf_min_rows"])
     ref.fit(X[:295], y[:295])
     manual = r2_score(y[320:], ref.predict(X[320:]))
     assert abs(m["r2"] - manual) < 1e-6
@@ -291,13 +292,14 @@ _FLEX = ["lbl_flex_thumb", "lbl_flex_index", "lbl_flex_middle",
          "lbl_flex_ring", "lbl_flex_pinky"]
 
 
-def _manual_curl_r2(csv_path, n_estimators, n_eval, purge):
+def _manual_curl_r2(csv_path, n_estimators, n_eval, purge, leaf):
     df = pd.read_csv(csv_path)       # same float parse as the trainer
     X = df.filter(regex=r"^R\dC\d+$").to_numpy()
     y = df.filter(like="label_").to_numpy()
     n = len(df)
     n_train = n - n_eval - purge
-    ref = RandomForestRegressor(n_estimators=n_estimators, random_state=42)
+    ref = RandomForestRegressor(n_estimators=n_estimators, random_state=42,
+                                min_samples_leaf=leaf)
     ref.fit(X[:n_train], y[:n_train])
     pred = ref.predict(X[n - n_eval:])
     tc = np.array([[canonical_labels_from_flat(r.tolist())[k] for k in _FLEX]
@@ -311,15 +313,18 @@ def test_combo_sim_scores_five_fingers_in_curl_space(tmp_path):
     rows = _sim_rows(750)                      # 60 s at 12.5 Hz
     csv_path = tmp_path / "combo.csv"
     _write_sim(csv_path, rows)
-    _model, m = train_model(str(csv_path), n_estimators=20,
+    # labels="full": the whole 175-column hand is trained and the curls are derived
+    # from the predicted joints (the default trains the curls directly, below).
+    _model, m = train_model(str(csv_path), n_estimators=20, labels="full",
                             output=str(tmp_path / "m.pkl"))
 
-    assert m["score_space"] == "curl"
+    assert m["score_space"] == "curl" and m["label_set"] == "full"
     assert [f["finger"] for f in m["per_finger"]] == [
         "thumb", "index", "middle", "ring", "pinky"]
     assert m["eval_method"] == "held_out_tail"
     assert m["n_constant_labels"] >= 100         # identity rotations never change
-    manual = _manual_curl_r2(csv_path, 20, m["n_eval_rows"], m["purge_rows"])
+    manual = _manual_curl_r2(csv_path, 20, m["n_eval_rows"], m["purge_rows"],
+                             m["leaf_min_rows"])
     assert abs(m["curl_r2"] - float(np.mean(manual))) < 0.03
     for f, ref in zip(m["per_finger"], manual):
         assert abs(f["r2"] - ref) < 0.03
@@ -372,7 +377,8 @@ def test_constant_label_columns_are_ignored_and_counted(tmp_path):
     y = df.filter(like="label_").to_numpy()
     plan = ev.plan_holdout(300, times_ms=[i * 40 for i in range(300)])
     tr, te = plan["train_idx"], plan["eval_idx"]
-    ref = RandomForestRegressor(n_estimators=TREES, random_state=42).fit(X[tr], y[tr])
+    ref = RandomForestRegressor(n_estimators=TREES, random_state=42,
+                                min_samples_leaf=m["leaf_min_rows"]).fit(X[tr], y[tr])
     manual = r2_score(y[te, 0], ref.predict(X[te])[:, 0])
     assert abs(m["r2"] - manual) < 1e-6        # only the varying column counts
 

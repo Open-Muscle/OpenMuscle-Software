@@ -2027,7 +2027,9 @@ async function trainOneRole(captures, role) {
     const r = await fetch('/api/train', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ captures, activate: true, role }),
+        // labels 'full': this page draws the model's predicted hand, which needs
+        // every hand joint (the dashboard default trains the five curls only).
+        body: JSON.stringify({ captures, activate: true, role, labels: 'full' }),
     });
     if (!r.ok) {
         let detail = `HTTP ${r.status}`;
@@ -3998,7 +4000,7 @@ async function runTrain() {
         const r = await fetch('/api/train', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ captures: captureNames, activate: true }),
+            body: JSON.stringify({ captures: captureNames, activate: true, labels: 'full' }),
         });
         if (r.ok) {
             const result = await r.json();

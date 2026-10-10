@@ -435,14 +435,20 @@ def record(port, output, duration, role):
               help="Fraction held out for the honest score: the last captures "
                    "(2+ files) or the chronological tail of a single file. The "
                    "saved model is fit on all rows.")
-@click.option("--trees", default=100, type=int, help="Number of trees (RandomForest)")
+@click.option("--trees", default=100, type=int,
+              help="Number of trees (RandomForest, at most 100; the leaf size is "
+                   "chosen to keep the model small)")
+@click.option("--full-hand", is_flag=True, default=False,
+              help="Hand-skeleton captures: learn all 175 hand columns instead of "
+                   "just the five finger curls. Much larger model (hundreds of "
+                   "MB); only needed to draw the predicted 3D hand.")
 @click.option("--role", default=None, type=click.Choice(["left", "right"]),
               help="SEPARATE-MODEL-PER-HAND: keep only this role's rows from a "
                    "two-hand schema-v2 capture and train a single-arm model. Run "
                    "twice (--role left -o model_left.pkl; --role right -o "
                    "model_right.pkl) to get one independent model per hand. Omit "
                    "for the legacy single/bilateral-pivot behavior.")
-def train(data_paths, model_type, output, test_split, trees, role):
+def train(data_paths, model_type, output, test_split, trees, full_hand, role):
     """Train an ML model from one or more captured CSV files.
 
     \b
@@ -508,7 +514,8 @@ def train(data_paths, model_type, output, test_split, trees, role):
             _model, metrics = train_model(
                 data_path=path, model_type=model_type, output=output,
                 test_split=test_split, n_estimators=trees, role=role,
-                extra_meta={"captures": names})
+                extra_meta={"captures": names},
+                labels="full" if full_hand else "curls")
         except ValueError as e:
             raise click.ClickException(dcheck.friendly_error(e))
         _say(metrics, n_captures, warns)

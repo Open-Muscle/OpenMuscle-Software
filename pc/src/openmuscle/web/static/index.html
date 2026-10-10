@@ -430,6 +430,9 @@
                 <!-- CENTER: train bridge (visual arrow between cols) -->
                 <div class="train-bridge">
                     <button id="train-btn" class="primary" disabled>⚙ Train →</button>
+                    <label class="train-full-hand" title="Normally a model learns the five finger curls, which is what the score measures and keeps it small (a few megabytes to tens of megabytes). Tick this to learn every hand joint too, only needed to draw the predicted 3D hand. The model is then hundreds of megabytes.">
+                        <input type="checkbox" id="train-full-hand"> Learn the whole hand (big model)
+                    </label>
                     <div id="train-status" class="train-status"></div>
                 </div>
 
@@ -470,13 +473,14 @@
                                 <th>Participant</th>
                                 <th>Bands</th>
                                 <th>Score</th>
+                                <th>Size</th>
                                 <th class="detail-col">Features × labels</th>
                                 <th class="detail-col">Error · raw score</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="models-body">
-                            <tr class="empty"><td colspan="8">No models trained yet.</td></tr>
+                            <tr class="empty"><td colspan="9">No models trained yet.</td></tr>
                         </tbody>
                     </table>
                 </div>

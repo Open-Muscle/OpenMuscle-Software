@@ -149,6 +149,33 @@ test('model row speaks plainly', () => {
     assert.equal(r.featuresLabels, '60 × 4');
 });
 
+test('model size is shown in plain units, and a big old model says why it is big', () => {
+    assert.equal(T.sizeText(5.3e6), '5.3 MB');
+    assert.equal(T.sizeText(820e3), '820 KB');
+    assert.equal(T.sizeText(462e6), '462 MB');
+    assert.equal(T.sizeText(1.2e9), '1.2 GB');
+    assert.equal(T.sizeText(undefined), '?');
+    assert.equal(T.sizeText(-1), '?');
+    const small = T.modelRow(model({ size_bytes: 6.4e6 }));
+    assert.equal(small.size, '6.4 MB');
+    assert.match(small.sizeTitle, /Disk space/);
+    const big = T.modelRow(model({ size_bytes: 470e6 }));
+    assert.equal(big.size, '470 MB');
+    assert.match(big.sizeTitle, /Large/);
+    assert.equal(T.modelRow(model()).size, '?');
+});
+
+test('five predicted curls read out as a short line, anything else does not', () => {
+    assert.equal(T.curlSummary([0.12, 0.8, 0.77, 0.1, 0.05]),
+        'Thumb 12%  Index 80%  Middle 77%  Ring 10%  Pinky 5%');
+    assert.equal(T.curlSummary([-0.2, 1.4, 0, 1, 0.5]),
+        'Thumb 0%  Index 100%  Middle 0%  Ring 100%  Pinky 50%');
+    assert.equal(T.curlSummary(new Array(175).fill(0)), null);
+    assert.equal(T.curlSummary([0.1, 0.2, 0.3, 0.4]), null);
+    assert.equal(T.curlSummary([0.1, 0.2, NaN, 0.4, 0.5]), null);
+    assert.equal(T.curlSummary(null), null);
+});
+
 test('hand label: left, right, or one band', () => {
     assert.equal(T.handLabel(model()), 'Left band');
     assert.equal(T.handLabel(model({ metrics: { role: 'right' } })), 'Right band');

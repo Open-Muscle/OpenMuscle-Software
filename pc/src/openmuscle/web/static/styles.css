@@ -1218,6 +1218,13 @@ button.primary.recording {
     color: var(--fg-dim);
     min-height: 14px;
 }
+.train-full-hand {
+    font-size: 11px;
+    color: var(--fg-dim);
+    text-align: center;
+    max-width: 150px;
+    cursor: pointer;
+}
 .train-status.error  { color: var(--red); }
 .train-status.ok     { color: var(--green); }
 .train-status.busy   { color: var(--orange); }

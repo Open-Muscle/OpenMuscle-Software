@@ -3,6 +3,7 @@
 import json
 import os
 import pickle
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -89,5 +90,46 @@ class ModelRegistry:
                     continue          # a half-written or damaged folder is skipped
                 meta["path"] = str(d / "model.pkl")
                 meta["dir"] = d.name
+                meta["size_bytes"] = self.folder_size(d)
                 models.append(meta)
         return models
+
+    @staticmethod
+    def folder_size(folder: Path) -> int:
+        """Bytes a model folder takes on disk (the model plus its metadata)."""
+        total = 0
+        try:
+            for f in Path(folder).iterdir():
+                try:
+                    if f.is_file():
+                        total += f.stat().st_size
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        return total
+
+    def model_dir(self, name: str):
+        """The folder of the registry model called `name`, or None. Only a plain
+        folder name directly under the models folder that holds a model counts, so
+        a request can never reach outside it ("..", separators, a drive)."""
+        name = str(name or "")
+        if (not name or name in (".", "..") or name != Path(name).name
+                or "/" in name or "\\" in name or ":" in name):
+            return None
+        d = self.base_dir / name
+        if d.is_symlink() or not d.is_dir():
+            return None
+        if not ((d / "model.pkl").exists() or (d / "metadata.json").exists()):
+            return None
+        return d
+
+    def delete(self, name: str) -> int:
+        """Delete one model folder. Returns the bytes freed; FileNotFoundError if
+        there is no such model. Never touches a recording."""
+        d = self.model_dir(name)
+        if d is None:
+            raise FileNotFoundError(name)
+        freed = self.folder_size(d)
+        shutil.rmtree(d)
+        return freed

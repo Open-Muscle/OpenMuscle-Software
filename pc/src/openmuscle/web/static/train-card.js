@@ -170,6 +170,38 @@
         return word + ' (' + v.score_pct + '%)';
     }
 
+    // "5.3 MB", "820 KB", "1.2 GB"; '?' when the size is not known.
+    function sizeText(bytes) {
+        if (typeof bytes !== 'number' || !isFinite(bytes) || bytes < 0) return '?';
+        if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+        if (bytes >= 1e6) return (bytes / 1e6).toFixed(bytes >= 1e8 ? 0 : 1) + ' MB';
+        if (bytes >= 1e3) return Math.round(bytes / 1e3) + ' KB';
+        return bytes + ' B';
+    }
+
+    // A model trained on the five finger curls (the default) predicts five numbers
+    // in 0..1 instead of a 3D hand; this is the one-line live readout for them,
+    // "Thumb 12%  Index 80% ...". null when the values are not five curls.
+    const CURL_NAMES = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
+    function curlSummary(values) {
+        if (!Array.isArray(values) || values.length !== CURL_NAMES.length) return null;
+        if (!values.every(function (v) { return typeof v === 'number' && isFinite(v); })) return null;
+        return CURL_NAMES.map(function (n, i) {
+            return n + ' ' + Math.round(Math.max(0, Math.min(1, values[i])) * 100) + '%';
+        }).join('  ');
+    }
+
+    // Models trained before the size cap can be hundreds of megabytes; say so,
+    // so the Delete button has an obvious reason to exist.
+    const BIG_MODEL_BYTES = 100e6;
+
+    function sizeTitle(bytes) {
+        if (typeof bytes !== 'number' || !isFinite(bytes)) return 'size on disk not known';
+        return bytes >= BIG_MODEL_BYTES
+            ? 'Large: this model was trained with every hand joint (or before models were kept small). Training again makes a much smaller one; Delete frees this space.'
+            : 'Disk space this model takes';
+    }
+
     function modelRow(m) {
         const v = (m && m.verdict) || {};
         const metrics = (m && m.metrics) || {};
@@ -185,6 +217,8 @@
             tone: toneOf(v.grade),
             score: scoreText(m),
             scoreTitle: v.headline || '',
+            size: sizeText(m && m.size_bytes),
+            sizeTitle: sizeTitle(m && m.size_bytes),
             featuresLabels: (metrics.n_features === undefined ? '?' : metrics.n_features) + ' × ' + (metrics.n_labels === undefined ? '?' : metrics.n_labels),
             mse: num(metrics.mse, 4),
             r2: num(metrics.curl_r2 !== undefined && metrics.curl_r2 !== null ? metrics.curl_r2 : metrics.r2, 3),
@@ -207,7 +241,7 @@
         toneOf: toneOf, wordOf: wordOf, fingerBars: fingerBars, shouldAutoStart: shouldAutoStart,
         cardModel: cardModel, cardsFor: cardsFor, allAutoStart: allAutoStart,
         handLabel: handLabel, participantLabel: participantLabel, participantCode: participantCode, whenText: whenText,
-        scoreText: scoreText, modelRow: modelRow, bandUnits: bandUnits,
+        scoreText: scoreText, modelRow: modelRow, sizeText: sizeText, sizeTitle: sizeTitle, curlSummary: curlSummary, bandUnits: bandUnits,
         normCode: normCode, sameParticipant: sameParticipant, guardPrompt: guardPrompt,
         FINGER_FOLLOWS: FINGER_FOLLOWS, FINGER_LOST: FINGER_LOST,
     };

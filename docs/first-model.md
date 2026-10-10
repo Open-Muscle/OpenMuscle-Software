@@ -275,19 +275,23 @@ details** holds the raw numbers. You do not need them.
 If the card says **Prediction starts automatically**, the model is already
 running. Otherwise press **Predict**.
 
-Look at **Ground truth vs Predicted**. The green hand is what the camera sees and
-the amber hand is what the model thinks, using only the bands. Move your fingers
-slowly: open and close, then one finger at a time.
+Look at **Ground truth vs Predicted**. The green hand is what the camera sees.
+Under it, a line reads out what the model thinks the five fingers are doing, using
+only the bands, as a percentage of curl for each finger (0% is straight, 100% is
+fully curled). Move your fingers slowly: open and close, then one finger at a time.
+(A model trained with **Learn the whole hand (big model)** ticked also draws an
+amber 3D hand next to the green one, but it is hundreds of megabytes, so leave it
+unticked unless you want that.)
 
 ![The live view with a running model](images/studio-live.png)
 
-*What good looks like.* The amber hand follows the green hand with a short delay.
-Open, close and single fingers are all recognisable, and the amber hand relaxes
-when you relax.
+*What good looks like.* The percentages follow your fingers with a short delay.
+Open, close and single fingers are all recognisable, and the numbers fall back to
+near 0% when you relax.
 
 *What bad looks like.*
 
-- The amber hand barely moves, or shakes while you are still.
+- The percentages barely move, or jump around while you are still.
 - It follows open and close but cannot separate single fingers.
 - It was fine, then went wrong after you moved or re-fitted the band.
 - It only works for the movements you recorded and does nothing for others.
