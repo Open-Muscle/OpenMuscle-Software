@@ -1822,6 +1822,12 @@ function setRecStatusHtml(sigParts, build) {
     if (sig === _recStatusSig) return;
     _recStatusSig = sig;
     recordStatus.innerHTML = build();
+    wireRecDetailsToggle();
+}
+
+// Remember whether the person has Details open. Called after every direct
+// recordStatus.innerHTML assignment (live block and saved-take card).
+function wireRecDetailsToggle() {
     const d = recordStatus.querySelector('details.rec-details');
     if (d) d.addEventListener('toggle', () => { _recDetailsOpen = d.open; });
 }
@@ -2020,7 +2026,55 @@ function renderQualityCell(c) {
 // Post-stop result card: keeps the finished take's stats + next actions in
 // the sticky bar until the operator moves on. renderRecording leaves the
 // status line alone while this flag is set; the next start clears it.
+// The card folds itself to one line (the verdict word + the three actions)
+// after OMRecStatus.COLLAPSE_AFTER_MS or on the first scroll, so the sticky
+// bar never hides the page after a take; a click on the verdict word unfolds it.
 let _postStopCard = false;
+let _postStopTimer = null;
+let _postStopScroll = null;
+let _postStopPinned = false;   // unfolded by hand: do not fold it again on a timer
+
+function clearPostStopWatchers() {
+    if (_postStopTimer) { clearTimeout(_postStopTimer); _postStopTimer = null; }
+    if (_postStopScroll) {
+        window.removeEventListener('scroll', _postStopScroll);
+        _postStopScroll = null;
+    }
+}
+
+function setPostStopCollapsed(collapsed) {
+    const card = document.getElementById('rec-card');
+    if (!card) return;
+    card.classList.toggle('collapsed', collapsed);
+    const tog = document.getElementById('rec-verdict-toggle');
+    if (tog) {
+        tog.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        tog.title = collapsed ? 'Show the full result' : 'Fold the result up to one line';
+    }
+    if (collapsed) clearPostStopWatchers();
+}
+
+function armPostStopCollapse() {
+    clearPostStopWatchers();
+    const fold = (viaTimer) => {
+        const card = document.getElementById('rec-card');
+        if (!card || !_postStopCard) { clearPostStopWatchers(); return; }
+        const liveDetails = card.querySelector('details.rec-details');
+        const state = { collapsed: card.classList.contains('collapsed'),
+                        detailsOpen: _recDetailsOpen || !!(liveDetails && liveDetails.open),
+                        pinnedOpen: _postStopPinned };
+        if (viaTimer) {
+            if (OMRecStatus.shouldAutoCollapse(state)) setPostStopCollapsed(true);
+            else _postStopTimer = null;
+        } else if (!state.collapsed) {
+            // Scrolling means the person is going back to the page: always fold.
+            setPostStopCollapsed(true);
+        }
+    };
+    _postStopTimer = setTimeout(() => fold(true), OMRecStatus.COLLAPSE_AFTER_MS);
+    _postStopScroll = () => fold(false);
+    window.addEventListener('scroll', _postStopScroll, { passive: true });
+}
 
 function showPostStopCard(result) {
     // The verdict is computed server-side at stop and persisted with the take
@@ -2029,23 +2083,35 @@ function showPostStopCard(result) {
     const sessionBit = activeSession
         ? `Linked to ${escapeHtml(activeSession.name || activeSession.id)}.`
         : 'Not part of a session.';
+    const actions = OMRecStatus.savedActions(result);
     _recStatusSig = null;
+    _postStopPinned = false;
     recordStatus.innerHTML = `
+        <div class="rec-card" id="rec-card">
         <div class="rec-live">
             <div class="rec-timer" aria-label="Length of the saved take">${escapeHtml(st.timer)}</div>
             <div class="rec-live-text">
-                <div class="cap-verdict ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}">${escapeHtml(st.headline)}</div>
+                <button type="button" id="rec-verdict-toggle" class="cap-verdict rec-verdict-toggle ${QUALITY_CAP_CLS[st.tone] || 'cap-good'}" aria-expanded="true" title="Fold the result up to one line">${escapeHtml(st.headline)}</button>
                 ${recSentencesHtml(st)}
                 <div class="rec-hint">${sessionBit}</div>
             </div>
         </div>
         ${recDetailsHtml(st)}
         <div class="rec-next-actions">
-            <button class="link" id="rec-next-take">● Record next take</button>
-            <button class="link" id="rec-show-file" title="Show this take in your file manager">📂 Show file</button>
-            <button class="link" id="rec-go-train"${st.tooShort ? ' title="Too short to train on, so it is not ticked for you"' : ''}>⚙ Go to Train</button>
+            ${actions.map(a => `<button class="link" id="${a.id}" title="${escapeHtml(a.title)}">${escapeHtml(a.label)}</button>`).join('')}
+        </div>
         </div>`;
+    wireRecDetailsToggle();
     _postStopCard = true;
+    const verdictBtn = document.getElementById('rec-verdict-toggle');
+    if (verdictBtn) verdictBtn.onclick = () => {
+        const card = document.getElementById('rec-card');
+        const nowCollapsed = !(card && card.classList.contains('collapsed'));
+        _postStopPinned = !nowCollapsed;
+        setPostStopCollapsed(nowCollapsed);
+        if (!nowCollapsed) clearPostStopWatchers();
+    };
+    armPostStopCollapse();
     const showBtn = document.getElementById('rec-show-file');
     if (showBtn) showBtn.onclick = () => revealCaptureFolder(result.filename);
     const nextBtn = document.getElementById('rec-next-take');
@@ -2065,6 +2131,7 @@ function showPostStopCard(result) {
         } catch (e) { /* offline: the server still de-duplicates on Record */ }
         captureName.value = suggestion;
         _postStopCard = false;
+        clearPostStopWatchers();
         recordStatus.textContent = '';
         captureName.focus();
     };
@@ -2104,6 +2171,7 @@ recordBtn.onclick = async () => {
             if (!r.ok) throw new Error(await readError(r));
             captureName.value = '';
             _postStopCard = false;   // live verdict block owns the status line now
+            clearPostStopWatchers();
         }
     } catch (e) {
         alert(`Error: ${e.message}`);

@@ -145,5 +145,44 @@
         };
     }
 
-    return { WORD, formatTimer, lengthAdvice, remedy, lengthHint, live, saved };
+    // The result card collapses to one line (verdict word + the three actions)
+    // so a finished take never keeps half the screen under the sticky bar.
+    const COLLAPSE_AFTER_MS = 8000;
+
+    // The three things you can do after a take, in display order. The same list
+    // feeds the expanded and the collapsed card, so neither can lose one.
+    function savedActions(result) {
+        const r = result || {};
+        return [
+            { id: 'rec-next-take', label: '● Record next take',
+              title: 'Get ready to record another take' },
+            { id: 'rec-show-file', label: '📂 Show file',
+              title: 'Show this take in your file manager' },
+            { id: 'rec-go-train', label: '⚙ Go to Train',
+              title: r.too_short ? 'Too short to train on, so it is not ticked for you'
+                                 : 'Tick this take and jump to Train' },
+        ];
+    }
+
+    // What the collapsed one-line card shows: the verdict word and the actions.
+    function savedSummary(result) {
+        const st = saved(result);
+        const q = (result && result.quality) || {};
+        return {
+            word: WORD[q.verdict] || 'Good',
+            tone: st.tone,
+            headline: st.headline,
+            actions: savedActions(result),
+        };
+    }
+
+    // Should the result card fold itself up on its own? Not when it is already
+    // folded, or the person has the Details open or unfolded it by hand.
+    function shouldAutoCollapse(state) {
+        const s = state || {};
+        return !s.collapsed && !s.detailsOpen && !s.pinnedOpen;
+    }
+
+    return { WORD, COLLAPSE_AFTER_MS, formatTimer, lengthAdvice, remedy, lengthHint, live, saved,
+             savedActions, savedSummary, shouldAutoCollapse };
 });

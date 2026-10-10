@@ -117,6 +117,9 @@ header.topbar .topbar-right .help-link:hover {
     padding: 10px 24px;
     background: var(--bg-panel);
     border-bottom: 1px solid var(--border);
+    /* Never cover more than about a third of the window, whatever a result
+       card or the advanced row adds; past that the bar scrolls inside itself. */
+    max-height: 33vh; overflow-y: auto; overscroll-behavior: contain;
 }
 .cb-group { display: flex; align-items: center; gap: 8px; padding: 0 18px 0 0; }
 .cb-group + .cb-group { border-left: 1px solid var(--border); padding-left: 18px; }
@@ -174,6 +177,22 @@ header.topbar .topbar-right .help-link:hover {
 .rec-details { margin-top: 6px; font-size: 11px; color: var(--fg-dim); }
 .rec-details > summary { cursor: pointer; }
 .rec-details > summary:hover { color: var(--fg); }
+
+/* Post-stop result card. Folded: one line with the verdict word and the three
+   actions (Record next take / Show file / Go to Train); the sentences, hint,
+   timer and Details are hidden. The verdict word is a button that unfolds it. */
+button.rec-verdict-toggle { border: 0; cursor: pointer; font-family: inherit; }
+.rec-verdict-toggle::after { content: " \25BE"; }
+.rec-card.collapsed .rec-verdict-toggle::after { content: " \25B8"; }
+.rec-card.collapsed {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px;
+}
+.rec-card.collapsed .rec-timer,
+.rec-card.collapsed .rec-sentence,
+.rec-card.collapsed .rec-hint,
+.rec-card.collapsed .rec-details { display: none; }
+.rec-card.collapsed .cap-verdict { margin-bottom: 0; }
+.rec-card.collapsed .rec-next-actions { margin-top: 0; }
 
 .session-chip {
     font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
