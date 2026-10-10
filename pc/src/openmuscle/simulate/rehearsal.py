@@ -207,8 +207,9 @@ class _Band:
             "accel": [int(a + self.rng.gauss(0, 25 * jitter)) for a in accel],
         }
 
-    def meta(self, t: float) -> dict:
-        """~1 Hz status telemetry (battery, uptime, memory, signal)."""
+    def meta(self, t: float, role: str = "") -> dict:
+        """~1 Hz status telemetry (battery, uptime, memory, signal, and the
+        band's own role: "" until something sets it, like the real band)."""
         vbat = max(3.3, 4.05 - 0.00004 * t) + self.rng.uniform(-0.01, 0.01)
         return {
             "vbat": round(vbat, 3),
@@ -217,6 +218,7 @@ class _Band:
             "free_mem": 96000 + self.rng.randint(-1500, 1500),
             "rssi": -52 + self.rng.randint(-4, 4),
             "reset_cause_name": "power_on",
+            "role": role,
         }
 
 
@@ -299,6 +301,19 @@ class RehearsalRig:
         self.lask5 = (_Lask5("lask5-sim", cfg.seed * 31 + 5)
                       if cfg.labeler == "lask5" else None)
         self._tick_no = 0
+        # The role each band holds on itself (set by the set_role verb, reported
+        # in get_info and the status frame). Bands start with none, like a new
+        # kit. The LASK5 has no role verb; the hub tags it locally.
+        self.device_roles = {}
+
+    def set_device_role(self, device_id: str, role) -> str:
+        """What the band's set_role verb does: store left / right / labeler, and
+        clamp anything else to "" (no role). Returns the stored role."""
+        role = (role or "").strip().lower() if isinstance(role, str) else ""
+        if role not in ("left", "right", "labeler"):
+            role = ""
+        self.device_roles[device_id] = role
+        return role
 
     @property
     def device_ids(self) -> list:
@@ -343,7 +358,8 @@ class RehearsalRig:
                     "imu": band.imu(t, noise)}
             bands.append(self._envelope(
                 "flexgrid", band.device_id, t, data,
-                band.meta(t) if status_due else None))
+                band.meta(t, self.device_roles.get(band.device_id, ""))
+                if status_due else None))
 
         lask5 = None
         if self.lask5 is not None:
@@ -477,7 +493,15 @@ class _SimDevice:
                                         for h, p in self.subscribers]}
                 info.update({k: v for k, v in self.extra_info.items()
                              if k != "caps"})
+                # Like the band: the role key is absent while it has none.
+                role = self.sim.rig.device_roles.get(self.device_id, "")
+                if role:
+                    info["role"] = role
                 return self._ack(msg_id, "ok", info)
+            if verb == "set_role" and self.device_type == "flexgrid":
+                role = self.sim.rig.set_device_role(self.device_id,
+                                                    data.get("role"))
+                return self._ack(msg_id, "ok", {"verb": verb, "role": role})
             if verb in ("start_stream", "stop_stream"):
                 return self._ack(msg_id, "ok", {"verb": verb})
         return self._ack(msg_id, "error", {"message": "unknown_verb: %s" % verb})
@@ -583,8 +607,11 @@ class RehearsalSimulator:
 
     role_setter: optional callable(device_id, role) -> truthy on success, used
     to tag the bands left/right and the LASK5 labeler without the Sources panel
-    (in-process tests pass AppState.discovery.set_role). When None and
-    tag_roles is set, the roles are tagged through the web server's REST API.
+    (in-process tests pass AppState.discovery.set_role, which tags on the hub
+    only). When None and tag_roles is set, the roles are tagged through the web
+    server's REST API, which also sends the bands their set_role verb: the sim
+    bands then hold and report the role like real ones (get_info, status frame).
+    The sim LASK5 has no set_role verb (hub-local tag, like the real labeler).
     """
 
     def __init__(self, config: RehearsalConfig = None, target_ip="127.0.0.1",

@@ -447,7 +447,11 @@ function wireRoleSelects(root) {
                     const err = await res.json().catch(() => ({}));
                     setProbeMsg(err.detail || 'set role failed', true);
                 } else {
-                    setProbeMsg(`${id} → ${role || 'untagged'}`, false);
+                    // The server also tells the band; if it could not, the tag
+                    // still stands here and the reply says the band was not updated.
+                    const out = await res.json().catch(() => ({}));
+                    if (out.warning) setProbeMsg(out.warning, true);
+                    else setProbeMsg(`${id} → ${role || 'untagged'}`, false);
                 }
             } catch (err) {
                 setProbeMsg(String(err), true);

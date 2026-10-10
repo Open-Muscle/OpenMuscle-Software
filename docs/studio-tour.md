@@ -190,6 +190,13 @@ The **card** shows:
 Set **role** to **left** or **right** to say which arm each band is on. With two
 bands, each must have a different arm before **Record** will work.
 
+The role is sent to the band too, so its light and screen show it. A band that
+already has a role stored (for example one tagged before it was sent to you) shows
+that role here by itself the first time the Studio hears from it. If the Studio
+cannot reach a band when you change its role, your choice still stands in the
+Studio and a message says the band itself was not updated; pick the role again
+once the band is back on the Wi-Fi.
+
 The **heatmap** is a picture of the 60 cells. Dark grey means no pressure; the
 colour moves through blue, purple, pink and orange to yellow as pressure rises.
 Press on the band with a finger and the matching cell lights up. If the whole picture stays dark

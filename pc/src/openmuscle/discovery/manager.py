@@ -54,6 +54,13 @@ NET_POLL_S = 5.0                 # how often to notice a changed local address
 DISCOVER_WAIT_S = 0.6            # how long a probe waits for replies
 MAX_SCAN_HOSTS = 1024            # hard cap for "Search my network"
 DISCOVER_PROBE = {"v": "1.0", "type": "cmd", "data": {"verb": "discover"}}
+ROLES = ("left", "right", "labeler")
+# Device types that keep their role only on this computer: the LASK5 labeler has
+# no set_role verb, so the Studio's tag is hub-local for it (no push attempted).
+LOCAL_ROLE_TYPES = ("lask5",)
+# After the Studio pushes a role, status frames already in flight still carry
+# the old one; ignore the band's reports for this long so they cannot undo it.
+ROLE_HOLDOFF_S = 3.0
 
 
 def default_cache_path():
@@ -90,7 +97,8 @@ class DiscoveredDevice:
 
     __slots__ = ("device_id", "device_type", "ip", "cmd_port", "sensor_port",
                  "fw", "caps", "matrix", "source", "last_seen",
-                 "subscribed", "sub_error", "role", "imu")
+                 "subscribed", "sub_error", "role", "imu",
+                 "band_role", "role_note", "role_pushed_at")
 
     def __init__(self, device_id, device_type, ip, cmd_port,
                  sensor_port=DEFAULT_UDP_PORT, fw="", caps=None, matrix=None,
@@ -115,6 +123,13 @@ class DiscoveredDevice:
         # the recording meta so the trainer can normalize the RAW counts the CSV
         # stores (Option A). {} until the device advertises it.
         self.imu = dict(imu or {})
+        # The role the band itself last reported (get_info reply, status frame
+        # meta.role): None until it has said anything, "" when it has no role.
+        # role_note is a sentence for the user when the band could not be told
+        # the role picked in the Studio ("" when in step).
+        self.band_role = None
+        self.role_note = ""
+        self.role_pushed_at = 0.0
 
     def to_cache(self):
         """Persisted form. PROTOCOL.md v1.0 S5.3 requires the cache hold at
@@ -145,6 +160,8 @@ class DiscoveredDevice:
             "subscribed": self.subscribed,
             "sub_error": self.sub_error,
             "role": self.role,
+            "band_role": self.band_role,
+            "role_note": self.role_note,
             "imu": dict(self.imu),
         }
 
@@ -163,6 +180,15 @@ def _send_cmd(sock, msg_id, verb, **fields):
     # Firmware sends one ack JSON object per line; take the first line.
     line = raw.split(b"\n", 1)[0].strip()
     return json.loads(line.decode("utf-8"))
+
+
+def _role_error_text(exc):
+    """A short reason a role push failed, in words a person can act on."""
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return "it did not answer in time"
+    if isinstance(exc, OSError):
+        return "it could not be reached"
+    return str(exc) or exc.__class__.__name__
 
 
 class _SubscriptionKeeper:
@@ -408,11 +434,13 @@ class DiscoveryManager:
         )
         return self._upsert(dev)
 
-    def probe(self, ip, cmd_port=None, timeout=None):
+    def probe(self, ip, cmd_port=None, timeout=None, role=""):
         """Actively query ip:cmd_port (or try the default ports) with get_info.
         Returns the DiscoveredDevice on success, or None. Used for cache
         recovery, manual add, and the subnet scan (which passes a short timeout
-        so dead hosts fail fast)."""
+        so dead hosts fail fast). `role` is the cached local role a recovered
+        device starts with; the role the band reports in its reply is then
+        adopted by the usual rule (see observe_role)."""
         ports = [int(cmd_port)] if cmd_port else list(DEFAULT_CMD_PORTS)
         to = TCP_TIMEOUT_S if timeout is None else timeout
         for port in ports:
@@ -438,9 +466,12 @@ class DiscoveryManager:
                 matrix=data.get("matrix"),
                 source="probe",
                 last_seen=time.time(),
+                role=role if role in ROLES else "",
                 imu=data.get("imu"),
             )
-            return self._upsert(dev)
+            target = self._upsert(dev)
+            self.observe_role(target.device_id, data.get("role") or "")
+            return target
         return None
 
     def recover_cache(self, background=True):
@@ -456,12 +487,13 @@ class DiscoveryManager:
                 port = entry.get("cmd_port")
                 role = entry.get("role", "")
                 if ip:
-                    dev = self.probe(ip, port)
-                    # Restore the hub-assigned role onto the recovered device
-                    # (probe builds a fresh DiscoveredDevice with role="").
-                    if dev is not None and role:
+                    # The cached role seeds the recovered device, so what the
+                    # band reports does not replace a tag chosen here.
+                    dev = self.probe(ip, port, role=role)
+                    if dev is not None and role in ROLES:
                         with self._lock:
-                            dev.role = role
+                            if not dev.role:
+                                dev.role = role
 
         if background:
             threading.Thread(target=_work, name="om-cache-recover",
@@ -762,11 +794,12 @@ class DiscoveryManager:
         """Assign a capture role to a known device, persisted per device_id.
 
         role is one of the lowercase wire tokens left/right/labeler, or "" to
-        clear the tag. Returns True if the device is known. Hub-local state
-        (PROTOCOL.md 8.1: roles are assigned by the hub, never on-wire).
+        clear the tag. Returns True if the device is known. Hub-local only: it
+        never talks to the band (use assign_role for that). Simulators and the
+        LASK5 labeler keep their role this way.
         """
         role = (role or "").strip().lower()
-        if role not in ("", "left", "right", "labeler"):
+        if role not in ("",) + ROLES:
             return False
         with self._lock:
             dev = self._devices.get(device_id)
@@ -775,6 +808,113 @@ class DiscoveryManager:
             dev.role = role
         self._save_cache()
         return True
+
+    def assign_role(self, device_id, role):
+        """The Studio's role change: tag the device here AND tell the band.
+
+        The local tag is always set first, so the Studio never loses the user's
+        choice. Then the band's own `set_role` verb is sent over its command
+        port (it persists the role, colours its idle LED and shows it on its
+        status screen). Best effort: when the band cannot be told, the local
+        role stays and the result carries a sentence saying so.
+
+        Returns {"ok", "role", "band", "message"}. ok is False for an unknown
+        device or an invalid role; band is "updated" (band acked), "local"
+        (a device type that has no role verb, nothing to send) or "failed".
+        Blocks for up to TCP_TIMEOUT_S, so call it off the event loop.
+        """
+        role = (role or "").strip().lower()
+        if not self.set_role(device_id, role):
+            return {"ok": False, "role": role, "band": "failed", "message": ""}
+        with self._lock:
+            dev = self._devices.get(device_id)
+            if dev is None:
+                return {"ok": False, "role": role, "band": "failed", "message": ""}
+            ip, port, dtype = dev.ip, dev.cmd_port, dev.device_type
+            if dtype in LOCAL_ROLE_TYPES:
+                dev.role_note = ""
+                return {"ok": True, "role": role, "band": "local", "message": ""}
+            dev.role_pushed_at = time.time()
+        try:
+            self._push_role(ip, port, role)
+        except Exception as e:
+            message = ("The band itself was not updated ({}). The Studio still "
+                       "uses {} for it, but the band's own light and screen "
+                       "will not match.".format(_role_error_text(e),
+                                                role or "no role"))
+            with self._lock:
+                dev = self._devices.get(device_id)
+                if dev is not None:
+                    dev.role_note = message
+                    dev.role_pushed_at = 0.0
+            logger.warning("discovery: set_role to %s failed: %s", device_id, e)
+            return {"ok": True, "role": role, "band": "failed", "message": message}
+        with self._lock:
+            dev = self._devices.get(device_id)
+            if dev is not None:
+                dev.band_role = role
+                dev.role_note = ""
+                dev.role_pushed_at = time.time()
+        return {"ok": True, "role": role, "band": "updated", "message": ""}
+
+    def _push_role(self, ip, cmd_port, role):
+        """Send the band's set_role verb on a short-lived command connection and
+        check that the ack echoes the role. Raises on any failure."""
+        tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            tcp.settimeout(TCP_TIMEOUT_S)
+            tcp.connect((ip, int(cmd_port)))
+            ack = _send_cmd(tcp, 1, "set_role", role=role)
+        finally:
+            try:
+                tcp.close()
+            except Exception:
+                pass
+        ack = ack if isinstance(ack, dict) else {}
+        data = ack.get("data") or {}
+        if ack.get("status") not in (None, "ok"):
+            raise RuntimeError(str(data.get("message") or ack.get("status")))
+        if "role" not in data:
+            raise RuntimeError("the band's reply did not include a role")
+        if (data.get("role") or "") != role:
+            raise RuntimeError("the band answered with role '{}'".format(
+                data.get("role") or ""))
+
+    def observe_role(self, device_id, role):
+        """The band reported its own role (get_info reply, status frame
+        meta.role). Adopt it as the Studio's tag when that is what the user
+        would expect. Returns True if the local role changed.
+
+        Rules: an empty or unknown report never clears a tag. The first report
+        from a band is adopted only when the Studio has no tag for it (a tag
+        chosen here, e.g. kept from the last run, wins). After that, a report
+        that differs from the band's previous one means the band was re-tagged
+        (sticker tool, setup page), so it is adopted. A report equal to the
+        previous one changes nothing, so a role cleared or changed in the
+        Studio whose push failed is not undone by the band's old value.
+        Reports inside ROLE_HOLDOFF_S of a push are dropped (frames in flight).
+        """
+        role = (role or "").strip().lower() if isinstance(role, str) else None
+        if role is None or role not in ("",) + ROLES:
+            return False
+        changed = False
+        with self._lock:
+            dev = self._devices.get(device_id)
+            if dev is None:
+                return False
+            if time.time() - dev.role_pushed_at < ROLE_HOLDOFF_S:
+                return False
+            prev = dev.band_role
+            dev.band_role = role
+            if role and role != dev.role:
+                if (prev is None and not dev.role) or (prev is not None and role != prev):
+                    dev.role = role
+                    dev.role_note = ""
+                    changed = True
+        if changed:
+            logger.info("discovery: adopted role '%s' reported by %s", role, device_id)
+            self._save_cache()
+        return changed
 
     def snapshot(self):
         """List of device dicts for the web UI / API."""

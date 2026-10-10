@@ -121,7 +121,7 @@ The full card is [device-reference.md](device-reference.md). In short:
 | Amber, slow pulse | Wi-Fi was lost, still retrying | Check the router |
 | Red, fast blink | The band recovered from a crash | Usually clears within a minute; if it stays, restart it |
 | Magenta, blinking | MENU and SELECT are being held | Let go now to wipe the Wi-Fi settings, or hold to 3 seconds to do it |
-| Short pulse every 3 seconds (blue, red, green or white) | Waiting for a computer to connect. The colour is the band's role: blue left, red right, green labeler, white not set | Open the Studio. White means no role yet; set it in the Studio |
+| Short pulse every 3 seconds (blue, red, green or white) | Waiting for a computer to connect. The colour is the band's role: blue left, red right, green labeler, white not set | Open the Studio. White means no role yet; set it in the Studio and the band's colour follows within a moment. If the Studio says the band itself was not updated, check it is on the same Wi-Fi and pick the role again |
 | Orange, steady | A computer is receiving its readings | Nothing; this is the normal working state |
 | Orange with a cyan flash every 5 seconds | Same, with USB plugged in | Nothing |
 | Cyan, slow breathing | Paused (you tapped SELECT) | Tap SELECT to resume |

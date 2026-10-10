@@ -1352,7 +1352,10 @@ async function setBandRole(deviceId, role) {
         });
         if (r.ok) {
             const short = (deviceId || '').slice(-6);
-            setStatus(role ? `tagged ${short} = ${role}` : `cleared ${short}`);
+            let out = {};
+            try { out = await r.json(); } catch (e) { /* no body */ }
+            if (out && out.warning) setStatus(`${short}: band not updated`);
+            else setStatus(role ? `tagged ${short} = ${role}` : `cleared ${short}`);
         } else {
             let detail = `HTTP ${r.status}`;
             try { const err = await r.json(); if (err && err.detail) detail = err.detail; }

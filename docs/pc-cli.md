@@ -202,7 +202,9 @@ openmuscle simulate --device-type rehearsal     # terminal 2
 0..1 plus a joystick) at 25 Hz. The bands announce on the discovery beacon port and
 answer the command channel, so they show up in the Sources list like real hardware, with
 IMU and battery telemetry. Once discovered they are tagged left / right and the LASK5 as
-labeler for you (`--no-tag-roles` to do it by hand in Sources). The bands and the LASK5
+labeler for you (`--no-tag-roles` to do it by hand in Sources). The practice bands keep
+the role the Studio gives them, like real bands: it shows in their `get_info` reply and in
+their status frames. The bands and the LASK5
 are driven by the same finger curls, with a rest then move schedule, so a capture you
 record from them is learnable: record, train and predict give a sensible model. Left and
 right have different per-cell gain and offset, so train one model per hand.
