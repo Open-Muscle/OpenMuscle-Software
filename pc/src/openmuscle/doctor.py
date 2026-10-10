@@ -33,6 +33,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
@@ -629,7 +630,8 @@ def run_doctor(http_port=8000, udp_port=3141, announce_port=3140,
     cause, sentence, action = infer_cause(facts)
 
     heard = [d for d in devices if d.get("heard")]
-    bands_chk = _bands_check(heard, devices, cause, sentence, action)
+    studio = [] if (heard or ctx["running"]) else studio_bands(http_port)
+    bands_chk = _bands_check(heard, devices, cause, sentence, action, studio)
     checks.append(bands_chk)
 
     if ctx.get("temp_discovery") and ctx_disc is not None:
@@ -657,8 +659,39 @@ def run_doctor(http_port=8000, udp_port=3141, announce_port=3140,
     }
 
 
-def _bands_check(heard, devices, cause, sentence, action):
+def studio_bands(http_port):
+    """Band ids the OpenMuscle already running on this computer is receiving
+    from, or []. That Studio holds the discovery and data ports, so this check
+    cannot hear the bands itself; the Studio's own device list is the truth."""
+    if not netutil.find_running_instance(http_port):
+        return []
+    import ssl
+    insecure = ssl.create_default_context()
+    insecure.check_hostname = False
+    insecure.verify_mode = ssl.CERT_NONE
+    for scheme, sctx in (("http", None), ("https", insecure)):
+        try:
+            with urllib.request.urlopen(
+                    "%s://127.0.0.1:%d/api/devices" % (scheme, http_port),
+                    timeout=2.0, context=sctx) as r:
+                rows = json.loads(r.read(1 << 20).decode("utf-8", "replace"))
+        except Exception:
+            continue
+        if not isinstance(rows, list):
+            return []
+        return [str(d.get("device_id")) for d in rows
+                if isinstance(d, dict) and d.get("device_type") == "flexgrid"
+                and d.get("device_id") and (d.get("last_seen_age") or 0) < 5.0]
+    return []
+
+
+def _bands_check(heard, devices, cause, sentence, action, studio=()):
     title = "Bands on the network"
+    if not heard and studio:
+        return _chk("bands", title, PASS,
+                    "The OpenMuscle Studio that is already open is receiving from: "
+                    "%s. (This check cannot listen while the Studio is open, so it "
+                    "asked the Studio.)" % ", ".join(studio))
     if heard and cause == "none":
         names = ", ".join("%s at %s" % (d["device_id"], d["ip"]) for d in heard)
         return _chk("bands", title, PASS, "Found: %s." % names)

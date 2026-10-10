@@ -10,6 +10,7 @@ Launch via the CLI: `openmuscle web --port 8000`
 
 import asyncio
 import ipaddress
+import logging
 import os
 import mimetypes
 import shutil
@@ -1367,6 +1368,18 @@ class ServerStartError(RuntimeError):
     """The server could not start (port busy). str(e) is one plain sentence."""
 
 
+class _DropNonHttpProbeNoise(logging.Filter):
+    """Hide uvicorn's "Invalid HTTP request received." warning.
+
+    The practice kit (`openmuscle simulate`) checks whether the page is https
+    by sending a TLS hello to the port, and a plain-http server answers that
+    with this warning in the window a non-engineer is told to leave open.
+    `--verbose` keeps it."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "Invalid HTTP request received" not in record.getMessage()
+
+
 def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
           captures_dir: Optional[str] = None,
           model_path: Optional[str] = None,
@@ -1430,6 +1443,8 @@ def serve(host: str = "127.0.0.1", port: int = 8000, udp_port: int = 3141,
         from openmuscle.keepawake import KeepAwake
         awake = KeepAwake()
         awake.start()
+    if not verbose:
+        logging.getLogger("uvicorn.error").addFilter(_DropNonHttpProbeNoise())
     try:
         uvicorn.run(app, host=host, port=port,
                     log_level="info" if verbose else "warning",
