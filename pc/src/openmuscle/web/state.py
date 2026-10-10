@@ -52,6 +52,10 @@ QUEST_JOINT_CHANNEL_ORDER = ("px", "py", "pz", "rx", "ry", "rz", "rw")
 HAND_POSE_TYPES = ("quest_hand", "webcam_hand")
 
 
+class ModelInUseError(RuntimeError):
+    """A model that is loaded in a prediction slot cannot be deleted."""
+
+
 class TrainDataError(RuntimeError):
     """The selected recordings cannot be trained on. str(e) is a plain-language
     sentence for the person at the screen (the /api/train 400 body); `checks`
@@ -2997,7 +3001,8 @@ class AppState:
                             test_split: float = 0.2,
                             activate: bool = True,
                             role: str = None,
-                            holdout_captures: list = None) -> dict:
+                            holdout_captures: list = None,
+                            labels: str = "curls") -> dict:
         """Combine N captures from captures_dir, train a model, optionally
         hot-swap it into the inference engine.
 
@@ -3025,7 +3030,13 @@ class AppState:
                            captures_dir. Each is whitelisted via
                            capture_path() before use.
             model_type:    'random_forest' for now.
-            n_estimators:  RF n_estimators (default 100).
+            n_estimators:  RF n_estimators (default 100, at most 100; the minimum
+                           leaf size is chosen to keep the model small, see
+                           ml/training.py plan_forest).
+            labels:        'curls' (default) trains only the five finger curls from
+                           a hand skeleton, which keeps the model small; 'full'
+                           keeps all 175 hand columns (a larger model, needed for
+                           the predicted 3D hand).
             test_split:    fraction held out for evaluation (last captures,
                            or the tail of a single capture).
             activate:      if True, the trained model is loaded into
@@ -3055,10 +3066,14 @@ class AppState:
         role = (role or "").strip().lower() or None
         if role is not None and role not in ("left", "right"):
             raise TrainDataError("The hand must be 'left' or 'right'.")
+        labels = (labels or "curls").strip().lower()
+        if labels not in ("curls", "full"):
+            raise TrainDataError("The labels option must be 'curls' or 'full'.")
         self.log_buffer.info("training",
-            "started: {} captures, model={}, trees={}, test_split={}{}".format(
+            "started: {} captures, model={}, trees={}, test_split={}{}{}".format(
                 len(capture_names), model_type, n_estimators, test_split,
-                ", role={}".format(role) if role else ""))
+                ", role={}".format(role) if role else "",
+                ", full hand" if labels == "full" else ""))
 
         found = []
         bad_captures = []
@@ -3109,7 +3124,7 @@ class AppState:
             if plan:
                 return self._train_each_side(
                     plan, found, model_type, n_estimators, test_split, activate,
-                    holdout_captures, bad_captures)
+                    holdout_captures, bad_captures, labels)
 
         paths = [str(p) for _n, p in found]
         names = [n for n, _p in found]
@@ -3164,6 +3179,7 @@ class AppState:
                     role=role,
                     holdout_captures=holdout_captures,
                     extra_meta=provenance,
+                    labels=labels,
                 )
             except TrainDataError:
                 raise
@@ -3278,7 +3294,8 @@ class AppState:
         }
 
     def _train_each_side(self, plan: dict, found: list, model_type, n_estimators,
-                         test_split, activate, holdout_captures, bad_captures) -> dict:
+                         test_split, activate, holdout_captures, bad_captures,
+                         labels: str = "curls") -> dict:
         """Left files and right files recorded at different times: check both
         sides first (so a problem on the second never leaves a half-done run),
         then train and load one model per hand. The payload keeps the usual
@@ -3297,7 +3314,7 @@ class AppState:
             hold = [h for h in (holdout_captures or []) if h in sides[side]] or None
             results[side] = self.train_from_captures(
                 sides[side], model_type, n_estimators, test_split, activate,
-                side, hold)
+                side, hold, labels)
         merged_checks = [dcheck.each_side_note()]
         for side in ("left", "right"):
             for c in results[side]["checks"]:
@@ -3717,6 +3734,33 @@ class AppState:
             except Exception:
                 pass
             self._hand_sock = None
+
+    def delete_model(self, name: str) -> dict:
+        """Delete one trained model (its whole folder) from the models folder.
+
+        Refuses a model that is loaded in a prediction slot (ModelInUseError,
+        the UI hides the button for those rows too): load another model first.
+        Raises FileNotFoundError for a name that is not a model folder. Recordings
+        are never touched. Returns {deleted, freed_bytes}.
+        """
+        from openmuscle.ml.registry import ModelRegistry
+        reg = ModelRegistry()
+        folder = reg.model_dir(name)
+        if folder is None:
+            raise FileNotFoundError(name)
+        target = folder.resolve()
+        engines = [("shared", self.engine)] + [
+            (r, self.engines.get(r)) for r in ("left", "right")]
+        for slot, eng in engines:
+            if eng is not None and Path(eng.model_path).resolve().parent == target:
+                raise ModelInUseError(
+                    "This model is in use{}. Load another model first, then delete "
+                    "this one.".format(
+                        "" if slot == "shared" else " by the {} band".format(slot)))
+        freed = reg.delete(name)
+        self.log_buffer.info("training", "model deleted: {} ({:.1f} MB freed)".format(
+            name, freed / 1e6))
+        return {"deleted": name, "freed_bytes": freed}
 
     def list_models(self) -> list:
         """List models in the registry, augmented with per-slot active flags.

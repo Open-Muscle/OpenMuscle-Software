@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from openmuscle import paths as om_paths
 from openmuscle.data import export_bundle as eb
 from openmuscle import doctor, netutil
-from openmuscle.web.state import AppState, ModelGuardError, TrainDataError
+from openmuscle.web.state import AppState, ModelGuardError, ModelInUseError, TrainDataError
 from openmuscle import assets as om_assets
 from openmuscle import paths
 from openmuscle.web import help as help_pages
@@ -945,6 +945,10 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
         # Capture names to hold out whole for the honest score (multi-capture
         # only). Default: the most recently recorded captures.
         holdout_captures: Optional[list[str]] = None
+        # "curls" (default) trains the five finger curls only, which keeps the
+        # model small; "full" keeps every hand-skeleton column (a much larger
+        # model, needed to draw the predicted 3D hand).
+        labels: str = "curls"
 
     @app.post("/api/train")
     async def train_endpoint(body: TrainBody):
@@ -963,6 +967,7 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
                 body.activate,
                 body.role,
                 body.holdout_captures,
+                body.labels,
             )
         except TrainDataError as e:
             # The recordings cannot be trained on: say why, in words. `checks`
@@ -983,6 +988,22 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
     @app.get("/api/models")
     async def list_models():
         return state.list_models()
+
+    @app.delete("/api/models/{name}")
+    async def delete_model(name: str):
+        """Delete one trained model folder. 409 if it is loaded in a prediction
+        slot (load another model first), 404 if there is no such model."""
+        try:
+            return state.delete_model(name)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Model not found")
+        except ModelInUseError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except OSError as e:
+            raise HTTPException(
+                status_code=500,
+                detail="The model could not be deleted ({}). It may be open in "
+                       "another program.".format(e.strerror or e))
 
     class SetModelBody(BaseModel):
         path: str

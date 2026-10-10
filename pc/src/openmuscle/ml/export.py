@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from openmuscle.data.dataset import load_training_data
+from openmuscle.data.dataset import load_training_frame
 from openmuscle.ml.registry import ModelRegistry
 
 
@@ -28,7 +28,12 @@ def export_predictions(model_path: str, data_path: str, output_path: str) -> dic
     registry = ModelRegistry()
     model = registry.load(model_path)
 
-    X, y = load_training_data(data_path)
+    X, y, extras = load_training_frame(data_path)
+    if getattr(model, "n_outputs_", None) == 5 and y.shape[1] == 175:
+        # A model trained on the five finger curls (the default for a hand
+        # skeleton): compare it with the curls, not the 175 joint columns.
+        from openmuscle.ml.training import curl_targets
+        X, y, extras = curl_targets(X, y, extras)
     sensor_cols = list(X.columns)
     label_cols = list(y.columns)
 

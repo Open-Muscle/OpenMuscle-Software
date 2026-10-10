@@ -201,7 +201,7 @@ def score_heldout(y_true, y_pred, label_cols, y_all, canon_true=None):
 
     Returns dict: r2, mse (legacy, constant columns ignored), n_constant_labels,
     curl_r2, curl_mae, per_finger (list of {finger, r2, mae, constant}) and
-    score_space ('curl' for pose labels, 'piston' for 4-piston LASK5 labels,
+    score_space ('curl' for pose labels or trained curls, 'piston' for 4-piston LASK5 labels,
     'label' for anything else).
     """
     y_true = np.asarray(y_true, dtype=float)
@@ -211,7 +211,12 @@ def score_heldout(y_true, y_pred, label_cols, y_all, canon_true=None):
     out["n_constant_labels"] = int(const.sum())
     n_labels = y_true.shape[1] if y_true.ndim == 2 else 0
 
-    if n_labels == POSE_LABEL_WIDTH:
+    if tuple(str(c) for c in label_cols) == _FLEX_KEYS:
+        # A model trained on the five finger curls directly (the default for a
+        # hand skeleton): the labels already are the curls, nothing to derive.
+        space, names = "curl", POSE_FINGERS
+        t, p = y_true, y_pred
+    elif n_labels == POSE_LABEL_WIDTH:
         space, names = "curl", POSE_FINGERS
         truth = None
         if canon_true is not None and all(k in canon_true.columns for k in _FLEX_KEYS):
