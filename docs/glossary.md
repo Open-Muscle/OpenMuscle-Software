@@ -38,7 +38,8 @@ camera to follow your hand. See [webcam-labeling.md](webcam-labeling.md).
 companion files. Also called a [take](#t).
 
 **Cell** One of the 60 sensing points on a band. The Studio draws them as a grid
-15 across and 4 down. Each cell reports how hard it is being pressed.
+(4 by 15, or 15 by 4 depending on how the band reports it; the Studio prints the
+size the band gives, for example `4×15`). Each cell reports how hard it is being pressed.
 
 **Check** One of the three words for the quality of a take (Good, Check or Bad).
 "Check" means usable, but worth a look. See
@@ -229,7 +230,7 @@ do not have to use it after the first time.
 **Time window** See [window ms](#w).
 
 **Training** The step where the computer studies your takes and builds a
-[model](#m). Started with **Train**. It can take a minute or two.
+[model](#m). Started with **Train**. It takes a few minutes for each band, and a two-band recording trains one band after the other.
 
 ## U
 

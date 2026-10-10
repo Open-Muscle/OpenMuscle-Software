@@ -1,4 +1,4 @@
-# Your first model in about 15 minutes
+# Your first model: about 15 minutes of recording, plus training
 
 This is a script. Follow it once, in order, and you finish with a trained model
 that predicts finger movement from the bands, running live in the Studio. Nothing
@@ -15,7 +15,7 @@ is in [movement-sheet.md](movement-sheet.md).
   [troubleshooting.md](troubleshooting.md).
 - You have a computer with a camera (the built-in one is fine) and the Studio is
   open at `http://localhost:8000`.
-- Bright, even light, and a place to sit comfortably for 15 minutes with your
+- Bright, even light, and a place to sit comfortably for about half an hour with your
   forearms resting on a table or your lap.
 - A participant code in mind, such as `P01`. A code is a made-up label. Never use
   a real name anywhere in the Studio. Keep the list that links codes to people
@@ -33,11 +33,13 @@ you cannot finish this script without a labeler. See
 | 0 to 3 | Start a session, put the bands on, switch the camera on |
 | 3 to 5 | Check that everything is live |
 | 5 to 12 | Record eight takes of 30 seconds |
-| 12 to 14 | Train and read the result |
-| 14 to 15 | Watch the live prediction |
+| 12 to 20 or so | Train (a few minutes for each band, one band after the other) and read the result |
+| after training | Watch the live prediction |
 
-These are guides, not limits. The first time through, expect it to take a little
-longer.
+That is about 15 minutes of setup and recording, plus training time. Training is
+the part that varies most: on an ordinary laptop expect roughly 4 to 5 minutes
+per band, so about 5 minutes with one band and about 10 with two. These times are
+guides, not limits. The first time through, expect it to take a little longer.
 
 ## 1. Start a session (1 minute)
 
@@ -51,18 +53,29 @@ A session keeps this sitting's takes together and remembers who and which arm.
 5. **Finger data from**: choose **Webcam**.
 6. Open **More details**. In **Planned gestures** type
    `rest, open and close, single fingers, grips`. This is only a reminder.
-7. Press **Start session**.
+7. Only if you wear two bands: still in **More details**, set **Mirrored** to
+   **Yes, labels measured on the left hand** or **Yes, labels measured on the right
+   hand**, whichever hand the camera will watch. See the box below for why.
+8. Press **Start session**.
 
 The tag in the top strip now shows `first-model`.
 
-> *Mirrored.* If the hand you want a model for cannot be measured (for example
-> it is missing, or it is busy), put the band on that limb, point the camera at
-> your other hand, and move both sides together. In **More details**, set
-> **Mirrored** to **Yes, labels measured on the left hand** or **Yes, labels
-> measured on the right hand**, whichever hand the camera watches. Every take in the
-> session is then marked as mirrored, and the model is a model for the banded
-> limb trained on the other hand's movements. More in
-> [webcam-labeling.md](webcam-labeling.md#mirrored-training).
+> *Two bands, one camera.* The camera watches one hand, and that one hand supplies
+> the finger data for every band in the recording. So with a band on each arm, move
+> both hands together, making the same movement at the same time, and keep just
+> one of them in front of the camera. Each band is then trained against that camera
+> hand, which is why **Mirrored** is part of the main path for two bands: it marks
+> the takes as having labels from one hand. Do not rest one arm while the other
+> moves; its band would be taught to match a moving hand while the arm stays still,
+> and its result card could look fine and still be wrong. If you do not want to move
+> both hands, wear just one band, on the arm the camera watches, choose that arm in
+> step 4, and skip step 7. Each result card is a model for one band.
+>
+> *Mirrored with one band.* If the hand you want a model for cannot be measured (for
+> example it is missing, or it is busy), put the single band on that limb, point the
+> camera at your other hand, and move both sides together. Set **Mirrored** as in
+> step 7. The model is then a model for the banded limb trained on the other hand's
+> movements. More in [webcam-labeling.md](webcam-labeling.md#mirrored-training).
 
 ## 2. Bands on, and the same way every time (1 minute)
 
@@ -88,7 +101,9 @@ adjust it, start the script again.
    on, fix that first: in each band's card choose **left** or **right** in the
    **role** menu.
 
-Keep that hand in view of the camera for the whole script. Rest the other hand.
+Keep that hand in view of the camera for the whole script. If you wear two bands,
+the hand on the other arm makes the same movements at the same time, out of the
+camera's view (see *Two bands, one camera* in step 1).
 
 ## 4. Check everything is live (2 minutes)
 
@@ -157,7 +172,7 @@ The card tells you why in plain words. Typical cases:
 A **Check** take can still be used. A **Bad** take is better redone. The old take stays
 in the list; untick it before you train.
 
-## 6. Train (2 to 3 minutes)
+## 6. Train (a few minutes per band)
 
 1. Scroll down to **Data & Models**, or press **Go to Train** on the last card.
 2. In the **Captures** list, tick your eight takes. The tick box in the column
@@ -165,12 +180,15 @@ in the list; untick it before you train.
    only that session's takes, so these are the eight you see. (To see older takes
    too, pick **All sessions** in the session box.)
 3. Untick any take marked **Bad**.
-4. Press **Train** and wait. It can take from under a minute to a few minutes,
-   depending on the computer. The line beside the button says **Training** while
-   it works, and when it finishes the result card appears. Do not close the page.
+4. Press **Train** and wait. Expect roughly 4 to 5 minutes for each band on an
+   ordinary laptop, less on a fast computer. The line beside the button says
+   **Training** while it works, and when it finishes the result card appears. Do
+   not close the page.
 
-If you recorded with two bands at once, you get two cards, **Left hand** and
-**Right hand**: one model for each band.
+If you recorded with two bands at once, the bands are trained one after the other
+and the line beside the button shows "1/2" and then "2/2". You then get two
+cards, **Left hand** and **Right hand**. Each card is a model for one band (the
+band you set to left or right), not a model for a hand you did not move.
 
 If the Studio says **Could not train yet**, its message says what to change. The
 usual causes are not enough recording, a band that was not touching the arm, or a
@@ -185,10 +203,12 @@ one bar per finger, an explanation and a line called **What to do next:**.
 
 ### The headline
 
-The headline is one word plus a percentage. The percentage is the model's score on
-the take or takes it never trained on, shown as how much of your finger movement
-it explains. 100% would be a perfect match. 0% is no better than guessing the
-same average position all the time. These are the words and where they start:
+The headline is a word and, for **Good**, **Fair** and **Weak**, a percentage.
+**Not working yet** and **Not tested yet** show the word alone. The percentage is
+the model's score on the take or takes it never trained on, shown as how much of
+your finger movement it explains. 100% would be a perfect match. 0% is no better
+than guessing the same average position all the time. These are the words and
+where they start:
 
 | Word | Starts at | In plain terms |
 |---|---|---|
@@ -231,6 +251,11 @@ The card gives one next step. They are:
 - **Fair**: "It follows the big movements. Record more takes (including each finger on its own) and train again."
 - **Weak**: "Check the band sits snug on the same spot of the arm, record a rest take plus slow single-finger takes, then train again."
 - **Not working yet**: "Check the band is snug on the arm and the labeler is moving, then record new takes and train again."
+
+If you trained on only one recording and the result is not **Good**, the line gets
+one more sentence: "Using two or more separate recordings also gives a fairer
+test." The wording above follows the card closely; treat the card itself as the
+exact text.
 
 ### The status line
 

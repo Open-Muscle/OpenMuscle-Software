@@ -157,8 +157,8 @@ What the words mean:
   not start, use Chrome or Edge. The page itself says the same when it cannot start.
 - **Not available.** There is no such browser for that computer.
 
-Use the current version of the browser. Safari on a Mac also needs to be recent
-(Safari 16.4 or later) for the hand tracker.
+Use the current version of the browser. Safari on a Mac, if you try it, also needs
+to be a recent version; that is expected, untested.
 
 ### What does not work, and why
 

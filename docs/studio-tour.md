@@ -177,7 +177,7 @@ The **card** shows:
 
 - the band's id, with a badge that says **streaming**, **subscribed**, **known**
   or **error**;
-- the size of the grid (`4×15`: the 60 sensing cells drawn as 4 rows of 15),
+- the size of the grid as the band reports it (for example `4×15`, which describes the 60 sensing cells; a real band may print the two numbers the other way round),
   how fast data arrives in Hz, and **live** when data is fresh or the number of
   seconds since the last data when it is not;
 - the battery, how long the band has been on, and the Wi-Fi signal strength in dBm
@@ -277,8 +277,10 @@ visible takes.
 
 The **Train** button sits between the two lists and is only available when at least
 one capture is ticked. While it works, the line beside it says it is training,
-which can take from under a minute to several minutes, depending on the computer. When it finishes, the result card appears underneath
-([how to read it](first-model.md#reading-the-result-card)).
+which takes a few minutes for each band (roughly 4 to 5 minutes on an ordinary
+laptop), depending on the computer. With two bands they are trained one after the
+other and the line shows "1/2" and then "2/2". When it finishes, the result card
+appears underneath ([how to read it](first-model.md#reading-the-result-card)).
 
 ### Models
 
@@ -343,7 +345,7 @@ README inside. Trained models are never included.
 
 ## What to read next
 
-- [first-model.md](first-model.md): a 15-minute plan for your first model.
+- [first-model.md](first-model.md): a plan for your first model, about 15 minutes of recording plus training time.
 - [troubleshooting.md](troubleshooting.md): what to do when something does not
   appear or does not work.
 - [glossary.md](glossary.md): the words used in this guide.

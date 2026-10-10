@@ -14,7 +14,10 @@ Participant code: ____________   Date: ____________   Bands on: left [ ]  right 
 4. Press **Stop** at about 0:30. Never under 0:10.
 5. Read the card. Press **Record next take**.
 
-Keep the camera hand in view the whole time. Do not move the bands.
+Keep the camera hand in view the whole time. Do not move the bands. With two
+bands, move both hands together, the same movement at the same time, with only one
+of them in front of the camera (see [first-model.md](first-model.md#1-start-a-session-1-minute)).
+Never rest one arm while the other moves.
 
 ## Round one
 
