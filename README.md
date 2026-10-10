@@ -23,7 +23,7 @@ More guides:
 - [Webcam hand labeling](docs/webcam-labeling.md): using the computer's camera to record finger movement.
 - [Glossary](docs/glossary.md): plain-language meanings of the words you will meet.
 
-Want to look around before your bands are on Wi-Fi? Start the Studio, then in a second terminal run `openmuscle simulate --device-type rehearsal`. It pretends to be two bands and a finger labeler so you can try record, train and predict with no hardware (see [Command-line tools](docs/pc-cli.md)).
+Want to look around before your bands are on Wi-Fi? Start the Studio, then in a second terminal run the practice kit. It pretends to be two bands and a hand seen by a camera, so you can try record, train and predict with no hardware. Windows: `& "$env:USERPROFILE\OpenMuscle\app\Scripts\openmuscle.exe" simulate --device-type rehearsal --labeler webcam`. Mac and Linux: `~/OpenMuscle/app/bin/openmuscle simulate --device-type rehearsal --labeler webcam`. Press Ctrl+C in that terminal to stop it (see [Command-line tools](docs/pc-cli.md); the full steps are in [Getting started](docs/getting-started.md)).
 
 **Your recordings are private.** `openmuscle web` saves everything you record (takes, sessions, trained models, exports, logs) under `~/OpenMuscle`, outside this repository, and the repository's `.gitignore` also covers those file types if you point `--data-dir` somewhere inside a clone. Recordings are labeled with a participant code, not a name. Nothing is uploaded; share a take only by sending the file yourself.
 

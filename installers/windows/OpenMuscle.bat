@@ -64,13 +64,15 @@ if not exist "%EXE%" (
 REM --- Already running? Then just open the page. ---------------------------
 REM curl.exe ships with Windows 10 and 11. If it is missing the check is
 REM skipped, and "openmuscle web" itself refuses to start a second copy.
+REM The port the last run used is tried first (it is saved in logs\last-port.txt
+REM in the data folder), then 8000 to 8010. Only a server that answers as
+REM OpenMuscle counts; the address that gets opened is always printed.
 set "RUNNING="
 where curl >nul 2>nul
-if not errorlevel 1 (
-    for /l %%P in (8000,1,8010) do call :probe %%P
-)
+if not errorlevel 1 call :find_running
 if defined RUNNING (
-    echo OpenMuscle is already running, so opening it in your browser.
+    echo OpenMuscle is already running at http://localhost:%RUNNING%
+    echo Opening that address in your browser.
     start "" "http://localhost:%RUNNING%"
     timeout /t 3 /nobreak >nul
     exit /b 0
@@ -95,4 +97,13 @@ exit /b %RC%
 :probe
 if defined RUNNING exit /b 0
 curl -s --max-time 2 "http://127.0.0.1:%1/api/mode" 2>nul | findstr /c:"openmuscle" >nul && set "RUNNING=%1"
+exit /b 0
+
+:find_running
+set "LASTPORT="
+if exist "%ROOT%\logs\last-port.txt" set /p LASTPORT=<"%ROOT%\logs\last-port.txt"
+REM Keep it only if it is all digits (a damaged file must not reach the URL).
+if defined LASTPORT for /f "delims=0123456789" %%X in ("%LASTPORT%") do set "LASTPORT="
+if defined LASTPORT call :probe %LASTPORT%
+for /l %%P in (8000,1,8010) do call :probe %%P
 exit /b 0

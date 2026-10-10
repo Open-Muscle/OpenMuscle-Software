@@ -58,16 +58,34 @@ if [ ! -x "$EXE" ]; then
     exit 1
 fi
 
-# Already running? Then just open the page (curl ships with macOS).
+# Already running? Then just open the page. The port the last run used is tried
+# first (it is saved in logs/last-port.txt in the data folder), then 8000 to
+# 8010. Only a server that answers as OpenMuscle counts, and the address that
+# gets opened is always printed.
+ports=""
+last=""
+if [ -r "$OPENMUSCLE_HOME/logs/last-port.txt" ]; then
+    read -r last < "$OPENMUSCLE_HOME/logs/last-port.txt" || true
+    last="$(printf '%s' "$last" | tr -d '\r')"
+fi
+case "$last" in
+    ''|*[!0-9]*) ;;
+    *) ports="$last" ;;
+esac
 p=8000
 while [ "$p" -le 8010 ]; do
+    ports="$ports $p"
+    p=$((p + 1))
+done
+# shellcheck disable=SC2086  # the list is meant to split into words
+for p in $ports; do
     if curl -s --max-time 2 "http://127.0.0.1:$p/api/mode" 2>/dev/null | grep -q openmuscle; then
-        echo "OpenMuscle is already running, so opening it in your browser."
+        echo "OpenMuscle is already running at http://localhost:$p"
+        echo "Opening that address in your browser."
         open "http://localhost:$p"
         sleep 2
         exit 0
     fi
-    p=$((p + 1))
 done
 
 echo "Starting OpenMuscle. Leave this window open while you work."

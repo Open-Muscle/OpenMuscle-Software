@@ -271,6 +271,9 @@ def web(ctx, host, lan, vr, port, udp_port, announce_port, data_dir, captures_di
         click.echo(f"Note: {why} Bands may take longer to appear; "
                    f"'openmuscle doctor' explains.")
 
+    # The launchers read this to reopen the same address on the next start.
+    paths.write_last_port(port)
+
     from openmuscle.web.app import ServerStartError, serve
 
     scheme = "https" if ssl_certfile else "http"

@@ -50,5 +50,25 @@
         return '';
     }
 
-    return { PLACEHOLDER, HELPER, WARNING, looksLikeName, nameWarning, codeOf, armText };
+    // A session that was still open when OpenMuscle stopped is closed on the next
+    // start and marked closed_on_restart. Said once in the empty session card and
+    // as a short tag on the past-session row.
+    const CLOSED_TAG = 'closed when OpenMuscle stopped';
+
+    function wasClosedOnRestart(session) {
+        return !!(session && session.closed_on_restart);
+    }
+
+    // The sentence for the empty session card: only when the newest past session
+    // is one that was closed on restart (a later session replaces it).
+    function closedNotice(pastSessions) {
+        const list = Array.isArray(pastSessions) ? pastSessions : [];
+        if (!list.length || !wasClosedOnRestart(list[0])) return '';
+        const s = list[0];
+        return 'Your session "' + (s.name || s.id) + '" was ' + CLOSED_TAG
+            + ', so it is now under Past sessions with its recordings. Start a new session to group new recordings.';
+    }
+
+    return { PLACEHOLDER, HELPER, WARNING, CLOSED_TAG, looksLikeName, nameWarning, codeOf, armText,
+             wasClosedOnRestart, closedNotice };
 });

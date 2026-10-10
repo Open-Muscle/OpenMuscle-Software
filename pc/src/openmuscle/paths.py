@@ -74,6 +74,33 @@ def logs_dir() -> Path:
     return data_root() / "logs"
 
 
+def last_port_path() -> Path:
+    """Where `openmuscle web` records the port it is serving on, so the launchers
+    can reopen the same address next time instead of guessing."""
+    return logs_dir() / "last-port.txt"
+
+
+def write_last_port(port) -> None:
+    """Record the web port for the launchers. Never raises: a read-only data
+    folder only costs the launchers their hint."""
+    try:
+        path = last_port_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("%d\n" % int(port), encoding="ascii")
+    except (OSError, ValueError):
+        pass
+
+
+def read_last_port():
+    """The port recorded by the last `openmuscle web` run, or None."""
+    try:
+        text = last_port_path().read_text(encoding="ascii", errors="replace").strip()
+        port = int(text)
+    except (OSError, ValueError):
+        return None
+    return port if 0 < port < 65536 else None
+
+
 def assets_dir() -> Path:
     """Offline browser assets. Not in SUBDIRS: only `assets fetch` creates it."""
     return data_root() / "assets"

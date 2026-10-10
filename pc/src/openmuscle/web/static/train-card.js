@@ -136,8 +136,13 @@
         return r === 'left' ? 'Left band' : (r === 'right' ? 'Right band' : 'One band');
     }
 
+    // The code as typed (participant_label), else the stored key.
+    function participantCode(m) {
+        return String((m && (m.participant_label || m.participant)) || '').trim();
+    }
+
     function participantLabel(m) {
-        const p = String((m && m.participant) || '').trim();
+        const p = participantCode(m);
         return p ? p : 'unknown participant';
     }
 
@@ -174,7 +179,7 @@
             when: whenText(m && m.created),
             hand: handLabel(m),
             participant: participantLabel(m),
-            unknownParticipant: !String((m && m.participant) || '').trim(),
+            unknownParticipant: !participantCode(m),
             units: bandUnits(m),
             session: (m && m.session_name) || '',
             tone: toneOf(v.grade),
@@ -201,7 +206,7 @@
     return {
         toneOf: toneOf, wordOf: wordOf, fingerBars: fingerBars, shouldAutoStart: shouldAutoStart,
         cardModel: cardModel, cardsFor: cardsFor, allAutoStart: allAutoStart,
-        handLabel: handLabel, participantLabel: participantLabel, whenText: whenText,
+        handLabel: handLabel, participantLabel: participantLabel, participantCode: participantCode, whenText: whenText,
         scoreText: scoreText, modelRow: modelRow, bandUnits: bandUnits,
         normCode: normCode, sameParticipant: sameParticipant, guardPrompt: guardPrompt,
         FINGER_FOLLOWS: FINGER_FOLLOWS, FINGER_LOST: FINGER_LOST,

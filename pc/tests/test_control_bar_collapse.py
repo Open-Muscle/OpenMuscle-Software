@@ -49,7 +49,8 @@ def test_collapsed_card_hides_detail_but_never_verdict_or_actions():
 
 def test_app_renders_card_from_shared_action_list_and_arms_collapse():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "OMRecStatus.savedActions(result)" in js
+    # the card is built from savedSummary (verdict word + the shared action list)
+    assert "OMRecStatus.savedSummary(result)" in js and "sum.actions" in js
     assert 'id="rec-card"' in js
     assert 'id="rec-verdict-toggle"' in js
     assert "OMRecStatus.COLLAPSE_AFTER_MS" in js
