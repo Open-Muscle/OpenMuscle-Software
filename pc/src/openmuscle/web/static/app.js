@@ -2707,6 +2707,9 @@ function updateSelectionStatus() {
     // selected captures the current filters are hiding.
     const n = selectedCaptures.size;
     const boxes = [...capturesBody.querySelectorAll('input.cap-check')];
+    // The set is the truth: tick the rows to match it, so a take added from
+    // outside the list (Go to Train on the saved card) shows as ticked.
+    boxes.forEach(b => { b.checked = selectedCaptures.has(b.dataset.name); });
     const visibleNames = new Set(boxes.map(b => b.dataset.name));
     const hiddenSel = [...selectedCaptures].filter(name => !visibleNames.has(name)).length;
     selStatus.textContent = `${n} selected` + (hiddenSel ? ` (${hiddenSel} filtered out)` : '');

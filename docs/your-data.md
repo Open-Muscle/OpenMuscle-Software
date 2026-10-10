@@ -40,6 +40,8 @@ Only `captures`, `sessions`, `models` and `exports` hold your work. `app` and `a
 
 `devices.json` is a remembered list of bands, not a recording. It lives in the data folder, so using a different `--data-dir` starts with a clean list. The first time you run this version, an older copy kept in your user profile (`.openmuscle/discovered_devices.json`) is copied across once and then left alone. Deleting `devices.json` is safe: bands show up again as soon as they announce themselves. The Studio lists it under **Remembered bands are listed in**, and `openmuscle doctor` shows its path.
 
+**Disk space:** a take is a couple of megabytes, but a model trained from camera hand data is large, a few hundred megabytes for each band, and every **Train** makes a new one. With two bands, plan on about a gigabyte per training. Keep a few gigabytes free, and delete models you no longer need: close OpenMuscle and delete that model's folder inside `models`.
+
 ## The files for one take
 
 A **take** is one recording, from pressing **Record** to pressing **Stop**. Each take is a small set of files in `captures/` with the same start of name:

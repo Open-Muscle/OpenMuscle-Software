@@ -672,3 +672,64 @@ def test_firewall_command_on_other_systems_only_explains(monkeypatch):
     res = CliRunner().invoke(cli.main, ["firewall"])
     assert res.exit_code == 0
     assert "ufw allow 3140:3141/udp" in res.output
+
+
+# ---- a Studio that is already open holds the band ports ---------------------------
+
+def _fake_studio(devices):
+    """A tiny stand-in for a running `openmuscle web`: /api/mode and /api/devices."""
+    import http.server
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/api/mode":
+                body = {"app": "openmuscle", "debug": False}
+            elif self.path == "/api/devices":
+                body = devices
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_running_studio_is_asked_when_the_check_cannot_hear_bands(calm):
+    srv = _fake_studio([
+        {"device_id": "flexgrid-aa11", "device_type": "flexgrid", "last_seen_age": 0.2},
+        {"device_id": "flexgrid-old", "device_type": "flexgrid", "last_seen_age": 90.0},
+        {"device_id": "lask5-1", "device_type": "lask5", "last_seen_age": 0.1}])
+    try:
+        r = _run(calm, http_port=srv.server_address[1])
+    finally:
+        srv.shutdown()
+    c = _by_id(r)["bands"]
+    assert c["status"] == "pass"
+    assert "flexgrid-aa11" in c["detail"]
+    assert "flexgrid-old" not in c["detail"] and "lask5-1" not in c["detail"]
+    assert "already open" in c["detail"]
+
+
+def test_running_studio_with_no_bands_still_warns(calm):
+    srv = _fake_studio([])
+    try:
+        r = _run(calm, http_port=srv.server_address[1])
+    finally:
+        srv.shutdown()
+    assert _by_id(r)["bands"]["status"] == "warn"
+
+
+def test_no_studio_means_no_extra_request(calm):
+    assert doctor.studio_bands(_free_tcp_port()) == []

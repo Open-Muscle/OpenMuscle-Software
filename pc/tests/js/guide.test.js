@@ -31,9 +31,9 @@ const BLOCKED = [
     ['both tagged right', [band('flexgrid-a', 'right'), band('flexgrid-b', 'right'), lask()], 'none',
         'Both bands are set to the same arm (right). Set one of them to the left arm.'],
     ['one tagged, one untagged', [band('flexgrid-a', 'left'), band('flexgrid-d7af0b'), lask()], 'lask5',
-        'flexgrid-d7af0b has no arm set. Set it to Left arm or Right arm, or unplug it if you do not want to record it.'],
+        'flexgrid-d7af0b has no arm set. Set it to Left arm or Right arm, or press Unsubscribe on its card (or unplug it) if you do not want to record it.'],
     ['one tagged, one untagged (vr)', [band('flexgrid-a', 'right'), band('flexgrid-x'), quest()], 'vr',
-        'flexgrid-x has no arm set. Set it to Left arm or Right arm, or unplug it if you do not want to record it.'],
+        'flexgrid-x has no arm set. Set it to Left arm or Right arm, or press Unsubscribe on its card (or unplug it) if you do not want to record it.'],
     ['lask5 not streaming', [band('flexgrid-a', 'left')], 'lask5',
         'The finger labeler (LASK5) is not sending data. Check it is turned on and on the same Wi-Fi as this computer.'],
     ['lask5 stale', [band('flexgrid-a', 'left'), lask(5)], 'lask5',
@@ -198,11 +198,16 @@ test('autoLabelSource: a second labeler does not steal a streaming pick', () => 
     assert.equal(G.autoLabelSource([cam(), lask()], 'webcam', false), 'webcam');
 });
 
-test('autoLabelSource: nothing streaming defaults to LASK5', () => {
-    assert.equal(G.autoLabelSource([], null, false), 'lask5');
-    assert.equal(G.autoLabelSource([], undefined, false), 'lask5');
-    assert.equal(G.autoLabelSource([band('b', 'left')], 'keyboard', false), 'lask5');
-    assert.equal(G.autoLabelSource([lask(9)], '', false), 'lask5');   // stale labeler is not streaming
+test('autoLabelSource: nothing streaming defaults to the webcam (the kit labeler)', () => {
+    assert.equal(G.autoLabelSource([], null, false), 'webcam');
+    assert.equal(G.autoLabelSource([], undefined, false), 'webcam');
+    assert.equal(G.autoLabelSource([band('b', 'left')], 'keyboard', false), 'webcam');
+    assert.equal(G.autoLabelSource([lask(9)], '', false), 'webcam');   // stale labeler is not streaming
+});
+
+test('autoLabelSource: a pick that is not streaming is kept until something else streams', () => {
+    assert.equal(G.autoLabelSource([band('b', 'left')], 'lask5', false), 'lask5');
+    assert.equal(G.autoLabelSource([band('b', 'left')], 'webcam', false), 'webcam');
 });
 
 test('autoLabelSource: a manual choice is never overridden', () => {

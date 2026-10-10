@@ -94,7 +94,7 @@ OpenMuscle asks Windows and macOS not to sleep from inactivity, but closing the 
 
 ## A band does not show up in the Studio
 
-**You should see**, a few seconds after the band joined your Wi-Fi, a row for the band with a heatmap. Instead you see **No devices found yet.** Check these in order:
+**You should see**, a few seconds after the band joined your Wi-Fi, a row for the band with a heatmap. Instead you see **No band found yet.** Check these in order:
 
 1. **Is the band on and joined?** Its screen should show `WIFI OK` for a few seconds after joining and then the heatmap, with the light green and then pulsing (waiting for a computer) or orange (a computer is receiving). If it says `WIFI SETUP`, it is not on your Wi-Fi yet: see [wifi-setup.md](wifi-setup.md). Tap **MENU** on the band to see its status page with its address.
 2. **Is your computer on the same Wi-Fi?** Check the Wi-Fi icon. A computer on the guest network, on another router, on a VPN, or still on the band's `OM-` network cannot see the band. Turn off any VPN while you work.

@@ -63,17 +63,17 @@
             windows: [
                 'Click the Wi-Fi icon at the bottom right of the screen.',
                 'Choose the network whose name starts with OM-.',
-                'Type the code from the last line of the device screen (or from its label), then connect.',
+                'Type the password from the last line of the device screen (the part after PW), or from its label, then connect.',
             ],
             mac: [
                 'Click the Wi-Fi icon in the bar at the top of the screen.',
                 'Choose the network whose name starts with OM-.',
-                'Type the code from the last line of the device screen (or from its label), then join.',
+                'Type the password from the last line of the device screen (the part after PW), or from its label, then join.',
             ],
             linux: [
                 'Open the network menu from the top or bottom bar and choose Wi-Fi.',
                 'Choose the network whose name starts with OM-.',
-                'Type the code from the last line of the device screen (or from its label), then connect.',
+                'Type the password from the last line of the device screen (the part after PW), or from its label, then connect.',
             ],
         },
         joinBrief: 'This computer will briefly leave your usual Wi-Fi, so web pages may stop loading for a few minutes. This page keeps working. We bring you back at the end.',

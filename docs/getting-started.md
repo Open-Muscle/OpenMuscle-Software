@@ -111,11 +111,11 @@ OpenMuscle is running.
   Your data folder:                   ...\OpenMuscle
 ```
 
-and your browser opens a page called **OpenMuscle Studio**. If it does not open, copy the address into Chrome or Edge. The badge at the top right says **connected**. The page says **No devices found yet.** because no band is on your Wi-Fi yet.
+and your browser opens a page called **OpenMuscle Studio**. If it does not open, copy the address into Chrome or Edge. The badge at the top right says **connected**. The band area says **No band found yet.** because no band is on your Wi-Fi yet.
 
 (If the address printed is not 8000, use the one printed. Other copies of OpenMuscle running? See [Port 8000 is busy](troubleshooting.md#port-8000-is-busy-or-another-copy-is-running).)
 
-**Want to practise with no bands?** In a terminal, with the Studio running, start the practice kit: it pretends to be two bands and a finger labeler, so you can try every step below. Windows: `& "$env:USERPROFILE\OpenMuscle\app\Scripts\openmuscle.exe" simulate --device-type rehearsal`. Mac and Linux: `~/OpenMuscle/app/bin/openmuscle simulate --device-type rehearsal`. Press Ctrl+C in that terminal to stop it. Recordings made from it are practice data; delete them afterwards.
+**Want to practise with no bands?** In a terminal, with the Studio running, start the practice kit: it pretends to be two bands and a hand seen by a camera, so you can try every step below from step 5 on (the practice hand takes the place of your own camera, so you can skip step 6). Windows: `& "$env:USERPROFILE\OpenMuscle\app\Scripts\openmuscle.exe" simulate --device-type rehearsal --labeler webcam`. Mac and Linux: `~/OpenMuscle/app/bin/openmuscle simulate --device-type rehearsal --labeler webcam`. Within a few seconds the two practice bands appear, already set to left and right, and **Finger data from** says **Webcam**. Press Ctrl+C in that terminal to stop it. Recordings made from it are practice data; delete them afterwards, and note that each trained model takes a few hundred megabytes of disk. (Leave out `--labeler webcam` to practise with a pretend LASK5 finger labeler instead; then choose **Finger labeler (LASK5)** where the steps say Webcam.)
 
 ## 4. Put the bands on your Wi-Fi
 

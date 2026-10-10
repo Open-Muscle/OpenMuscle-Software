@@ -42,6 +42,16 @@ class InferenceEngine:
         with open(self.model_path, "rb") as f:
             self.model = pickle.load(f)
 
+        # Training fits with n_jobs=-1 and the pickle keeps it. For one row at
+        # a time that makes every predict() spin up a thread pool (about 4x
+        # slower than a plain call on a laptop), and live inference runs on the
+        # server's own event loop, so a slow predict() freezes the whole page.
+        if hasattr(self.model, "n_jobs"):
+            try:
+                self.model.n_jobs = 1
+            except Exception:
+                pass
+
         # Sidecar metadata.json next to model.pkl (the registry layout)
         self.metadata: dict = {}
         # (<stem>.metadata.json wins: `train -o` writes one per pickle so several

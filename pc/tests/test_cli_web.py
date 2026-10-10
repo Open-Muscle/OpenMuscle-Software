@@ -259,3 +259,15 @@ def test_discovery_beacon_prints_found_with_ip_and_dedupes(tmp_path):
     s.discovery.on_announce({"id": "fg-9", "dev": "flexgrid"}, "192.168.1.23")
     s._handle_packet(_flexgrid_packet("fg-9"))           # first data frame: no repeat
     assert events == ["Found FlexGrid band at 192.168.1.23"]
+
+
+def test_tls_probe_warning_is_hidden_unless_verbose():
+    import logging
+    from openmuscle.web.app import _DropNonHttpProbeNoise
+
+    def rec(msg):
+        return logging.LogRecord("uvicorn.error", logging.WARNING, __file__, 1, msg, (), None)
+
+    f = _DropNonHttpProbeNoise()
+    assert f.filter(rec("Invalid HTTP request received.")) is False
+    assert f.filter(rec("Address already in use")) is True

@@ -578,6 +578,9 @@ class AppState:
         # Each FlexGrid band is run through the model independently so the VR
         # client can draw a predicted ghost hand next to EACH real hand.
         self._inference_by_device: dict = {}
+        # device_id -> time.monotonic() of that band's last predict() (see
+        # _inference_due: live prediction is rate-limited per band).
+        self._inference_mono_by_device: dict = {}
 
         # ----- replay (test the pipeline on a past capture, no hardware) -----
         # A background thread re-feeds a recorded capture's FlexGrid + Quest
@@ -729,6 +732,15 @@ class AppState:
 
             await self._broadcast_latest_frames()
 
+    # Live prediction runs at most this many times a second per band.
+    INFERENCE_MAX_HZ = 15.0
+
+    def _inference_due(self, device_id: str) -> bool:
+        """True when this band's next frame should be run through the model
+        (see INFERENCE_MAX_HZ). Frames in between are simply not predicted."""
+        last = self._inference_mono_by_device.get(device_id, 0.0)
+        return time.monotonic() - last >= 1.0 / self.INFERENCE_MAX_HZ
+
     def _handle_packet(self, pkt: OpenMusclePacket):
         # The UDPListener doesn't expose the src addr through the queue
         # (it just enqueues the parsed packet). We'll synthesize one from
@@ -748,10 +760,14 @@ class AppState:
 
         # Run inference on flexgrid frames if an engine is loaded and not
         # paused. We do this synchronously in the same thread as packet
-        # handling -- RF predict is ~ms, well under the 40ms inter-frame
-        # budget at 25Hz.
+        # handling, so it is rate-limited per band: a real band sends ~60
+        # frames a second and a random-forest predict costs several ms (more
+        # on a slow laptop), so predicting every frame would fall behind, let
+        # the packet queue grow without bound and freeze the page. The ghost
+        # hand does not need more than INFERENCE_MAX_HZ updates a second.
         if (self.inference_enabled and self._has_any_engine()
-                and pkt.device_type == "flexgrid"):
+                and pkt.device_type == "flexgrid"
+                and self._inference_due(pkt.device_id)):
             mat = pkt.data.get("matrix")
             if mat:
                 # Route the band to ITS hand's model (separate-model-per-hand):
@@ -760,6 +776,8 @@ class AppState:
                 # panel tag (refreshed into _role_by_device each snapshot).
                 role = self._role_by_device.get(pkt.device_id, "")
                 eng = self._engine_for_role(role)
+                if eng is not None:
+                    self._inference_mono_by_device[pkt.device_id] = time.monotonic()
                 pred = eng.predict(mat) if eng is not None else None
                 if pred is not None:
                     now = time.time()

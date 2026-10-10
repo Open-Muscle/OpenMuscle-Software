@@ -47,11 +47,13 @@ only when there is something to say, so it is not marked.)
 
 ## 1. The top bar
 
-The top bar holds the name, **OpenMuscle Studio**, and three things on the right:
+The top bar holds the name, **OpenMuscle Studio**, and four things on the right:
 
 - **Set up a device** opens a step-by-step page that puts a band on your Wi-Fi.
   Use it the first time for each band. More help with Wi-Fi is in
   [wifi-setup.md](wifi-setup.md).
+- **Help** opens these guides in a new tab. It works without internet, so you can
+  keep it open beside the Studio.
 - **stream view** opens a small read-only copy of the heatmaps in a new window.
   It is meant for screen-capture software and changes nothing.
 - The round badge says **connected** when the page can talk to the program, and
