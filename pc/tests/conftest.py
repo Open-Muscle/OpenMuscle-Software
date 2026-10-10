@@ -16,6 +16,9 @@ def _isolated_data_root(tmp_path_factory, monkeypatch):
     root = tmp_path_factory.mktemp("om_home")
     monkeypatch.setenv(paths.ENV_HOME, str(root))
     paths.set_data_root(None)
+    # The older profile-level bands file must not leak in from the real home.
+    monkeypatch.setattr(paths, "legacy_devices_cache_path",
+                        lambda: root.parent / "no_legacy_home" / "discovered_devices.json")
     yield root
     paths.set_data_root(None)
 

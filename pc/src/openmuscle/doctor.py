@@ -116,6 +116,36 @@ def check_data_folder():
                 "Recordings are saved in %s and the folder is writable." % root)
 
 
+def devices_file_path(ctx):
+    """The remembered-bands file this run reads: the running manager's, an
+    explicit override, else devices.json under the data root."""
+    disc = ctx.get("discovery")
+    if disc is not None and getattr(disc, "cache_path", ""):
+        return disc.cache_path
+    if ctx.get("cache_path"):
+        return ctx["cache_path"]
+    from openmuscle.discovery.manager import default_cache_path
+    return default_cache_path()
+
+
+def check_devices_file(ctx):
+    """Where the remembered bands are kept. Always informational (PASS): a
+    missing file just means no band has been seen under this data folder."""
+    path = devices_file_path(ctx)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        n = len(data) if isinstance(data, list) else 0
+        detail = "Remembered bands are listed in %s (%d remembered)." % (path, n)
+    except FileNotFoundError:
+        detail = ("Remembered bands will be listed in %s (no band has been seen "
+                  "under this data folder yet)." % path)
+    except (OSError, ValueError):
+        detail = ("Remembered bands are listed in %s (the file could not be "
+                  "read, so it is ignored)." % path)
+    return _chk("devices_file", "Remembered bands file", PASS, detail)
+
+
 def check_http_port(ctx):
     port = ctx["http_port"]
     title = "Browser page port (%d)" % port
@@ -300,9 +330,7 @@ def _known_devices(ctx):
                 "source": d.get("source") or "",
                 "subscribed": bool(d.get("subscribed")), "heard": True}
     try:
-        from openmuscle.discovery.manager import default_cache_path
-        with open(ctx.get("cache_path") or default_cache_path(), "r",
-                  encoding="utf-8") as f:
+        with open(devices_file_path(ctx), "r", encoding="utf-8") as f:
             cached = json.load(f)
     except (OSError, ValueError):
         cached = []
@@ -583,7 +611,7 @@ def run_doctor(http_port=8000, udp_port=3141, announce_port=3140,
 
     # ---- checks
     checks = [check_python(), check_packages(), check_static(), check_data_folder(),
-              check_http_port(ctx)]
+              check_devices_file(ctx), check_http_port(ctx)]
     checks.append(_udp_port_check(
         ctx, "port_udp_data", "Sensor data port (UDP %d)" % udp_port, udp_port,
         "udp-port", data_ok,

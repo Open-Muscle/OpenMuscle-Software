@@ -2414,6 +2414,7 @@ class AppState:
         `root` is the data root (~/OpenMuscle unless --data-dir / OPENMUSCLE_HOME
         moved it). `captures` follows --captures-dir when that was given, and
         `sessions` sits beside it exactly as sessions_dir resolves it.
+        `devices` is the remembered-bands file (devices.json under the data root).
         `legacy_hint` is a one-line note when the current directory still holds
         recordings from before the single data root, else None.
         """
@@ -2429,6 +2430,12 @@ class AppState:
             "models": str(om_paths.models_dir()),
             "exports": str(om_paths.exports_dir()),
             "logs": str(om_paths.logs_dir()),
+            # The remembered-bands file (a file, not a folder): follows the
+            # running discovery manager so an override is reported truthfully.
+            "devices": os.path.abspath(
+                (self.discovery.cache_path if self.discovery is not None
+                 and self.discovery.cache_path else None)
+                or str(om_paths.devices_cache_path())),
             "legacy_hint": om_paths.legacy_hint(),
             # Free space on the drive recordings are saved to; the dashboard
             # warns below low_space_bytes (a few long takes fill a small disk).
