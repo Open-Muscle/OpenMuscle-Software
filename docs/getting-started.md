@@ -47,21 +47,21 @@ Some words on this page are explained in the [glossary](glossary.md).
 ## 1. Charge the bands and switch them on
 
 1. Plug a USB-C cable into a band and into a USB power source. A band switches on whenever USB power is connected, and charges whenever USB is connected.
-2. If the band does not show anything, press its power button.
+2. If the light on the band stays off, press its power button once (the switch at the top edge). Pressing it again switches the band off.
 3. Leave it plugged in for the first hour or two.
 
-**You should see:** a small screen with writing, and a light on the band. A band that has never been set up shows this and blinks blue once a second:
+**You should see:** a light on the band blinking **blue, two quick blinks then a pause**. The kit bands have no screen, so that is the normal pattern for a band that has never been set up, not a fault. It is setup mode, exactly what you want for step 4.
+
+Find the **sticker** on each band. It carries the band's own setup Wi-Fi name and password, which you need in step 4:
 
 ```
-WIFI SETUP
-OM-flexgrid-
-d7af0b
-PW kd3mpq72xy
+Setup Wi-Fi      OM-flexgrid-d7af0b
+Setup password   kd3mpq72xy
 ```
 
-That is setup mode and is exactly what you want for step 4. The name and the password are different on every band. The lights and screens are listed on the [device reference](device-reference.md) card and in [troubleshooting.md](troubleshooting.md#what-the-bands-light-and-screen-mean).
+The name and the password are different on every band (yours will differ from this example). Keep each band with its own sticker. If a band does have a small screen, it shows the same name and password and its light blinks blue once a second. The lights are listed on the [device reference](device-reference.md) card and in [troubleshooting.md](troubleshooting.md#what-the-bands-light-and-screen-mean).
 
-Not seeing a screen at all? Try another USB cable or port and give it a few minutes. See [Battery and charging](troubleshooting.md#battery-and-charging).
+Not seeing any light at all? Try another USB cable or port and give it a few minutes. See [Battery and charging](troubleshooting.md#battery-and-charging).
 
 ## 2. Install the software
 
@@ -122,11 +122,11 @@ and your browser opens a page called **OpenMuscle Studio**. If it does not open,
 You do this once per band. The Studio walks you through it.
 
 1. In the Studio, click **Set up a device** (top right).
-2. Follow the pages: **Get ready**, **Choose** (**A band**), **Join** (connect your computer to the `OM-flexgrid-...` network shown on the band's screen, using the password after `PW`), **Your Wi-Fi** (pick your network and type its password), **Finish**.
+2. Follow the pages: **Get ready**, **Choose** (**A band**), **Join** (connect your computer to the `OM-flexgrid-...` network named on the band's sticker, using the setup password from the sticker), **Your Wi-Fi** (pick your network and type its password), **Finish**.
 3. Your computer loses internet while it is joined to the band's own network. That is normal. The page tells you when to rejoin your usual Wi-Fi.
 4. Repeat for the second band. Tick **Remember for the next device** so you do not retype the password.
 
-**You should see:** **Band flexgrid-... is online at ...** at the end of each setup, and then on the band's screen `WIFI OK` and its address. Back in the Studio each band appears with a heatmap.
+**You should see:** **Band flexgrid-... is online at ...** at the end of each setup, and the band's light goes green for two seconds. Back in the Studio each band appears with a heatmap.
 
 Details and every warning (2.4 GHz, guest networks, sign-in pages): [wifi-setup.md](wifi-setup.md). If a band never appears: [troubleshooting.md](troubleshooting.md#a-band-does-not-show-up-in-the-studio).
 

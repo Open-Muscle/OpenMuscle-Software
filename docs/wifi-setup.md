@@ -10,6 +10,8 @@ Until it knows your Wi-Fi, a band makes a small Wi-Fi network of its own, named 
 
 Your Wi-Fi password is stored in the band's own memory, so you only do this once per band (and again only if you change networks).
 
+**The kit bands have no screen.** The small screen header on the band is left empty, so there is nothing to read. The name and the password of the band's own setup network are on the **sticker** on the band, in the lines **Setup Wi-Fi** and **Setup password**. The band's light tells you what it is doing; the table in [troubleshooting.md](troubleshooting.md#what-the-bands-light-and-screen-mean) lists every pattern. A band that does have a screen shows the same name and password on it.
+
 ## Before you start
 
 Check these first. Almost every setup problem comes from one of them.
@@ -38,7 +40,18 @@ While your computer is joined to the band's `OM-` network it **has no internet**
 
 You need the Studio running first (see [getting-started.md](getting-started.md), step 3). The wizard works only in the browser on the computer that runs OpenMuscle.
 
-1. **Turn the band on.** A band that has never been set up goes straight to setup mode. You should see this on its small screen, and its light blinking blue about once a second:
+1. **Turn the band on, and find its name and password on the sticker.** Press the power button at the top edge once (a band on USB power may already be on). A band that has never been set up goes straight to setup mode. You should see its light blink **blue, two quick blinks then a pause**. For a band without a screen, that is the normal setup pattern and not a fault.
+
+   Find the sticker on the band. It has lines like these (yours will differ):
+
+   ```
+   Setup Wi-Fi      OM-flexgrid-d7af0b
+   Setup password   kd3mpq72xy
+   ```
+
+   The password is ten lowercase letters and digits, never the letters `l` or `o` and never the digits `0` or `1`. The name and password are different on every band and do not change when you set up your own Wi-Fi.
+
+   If your band does have a screen, it shows the same thing and its light blinks blue once a second:
 
    ```
    WIFI SETUP
@@ -47,9 +60,9 @@ You need the Studio running first (see [getting-started.md](getting-started.md),
    PW kd3mpq72xy
    ```
 
-   The first line changes every few seconds (it also shows "see guide"). The network name is long, so it is split over two lines: read them together as `OM-flexgrid-d7af0b`. The last line, after `PW`, is the band's temporary password: ten lowercase letters and digits, never the letters `l` or `o` and never the digits `0` or `1`. Your kit may also have a label with the same name and password.
+   The network name is long, so the screen splits it over two lines: read them together as `OM-flexgrid-d7af0b`. The last line, after `PW`, is the password.
 
-   Not showing that? The band already has a Wi-Fi saved. Hold the **MENU** and **SELECT** buttons together for 3 seconds (see [Starting over](#starting-over) below).
+   Not blinking blue? The band already has a Wi-Fi saved. Hold the **MENU** and **SELECT** buttons together for 3 seconds (see [Starting over](#starting-over) below). If the light is off, press the power button once; if it still does nothing, plug in USB-C for a few minutes.
 
 2. **Open the wizard.** In the Studio, click **Set up a device** in the top right. (Or open `http://localhost:8000/setup`; use the address your start-up window printed if it is not 8000.)
 
@@ -62,13 +75,13 @@ You need the Studio running first (see [getting-started.md](getting-started.md),
    - **Mac:** click the Wi-Fi icon in the bar at the top of the screen and choose the network starting with `OM-`.
    - **Linux:** open the network menu, choose Wi-Fi, then the network starting with `OM-`.
 
-   Type the password from the last line of the band's screen (the part after `PW`). When your computer is connected, the page shows a green tick and **Found Band flexgrid-d7af0b**. It asks **Does the screen end with d7af0b?** Check the last six characters against the band's screen and click **Yes, that is the one**. (If several bands are in setup mode at once, turn the others off so only one answers.)
+   Type the **Setup password** from the sticker (on a band with a screen, the part after `PW`). When your computer is connected, the page shows a green tick and **Found Band flexgrid-d7af0b**. It asks **Does the name end with d7af0b?** Check the last six characters against the **Setup Wi-Fi** line on the sticker and click **Yes, that is the one**. (If several bands are in setup mode at once, turn the others off so only one answers.)
 
 6. **Choose your Wi-Fi.** Pick your network from the list the band can see (only 2.4 GHz networks are listed), or choose **Another network (type it)** and type the name exactly, including capital letters and spaces. Type the password; **Show** lets you check it. Leave **Remember for the next device (this browser tab only)** ticked if you have a second band to set up: the details are kept only in this browser tab and never saved on disk. Click **Send to the device**.
 
 7. **Reconnect your computer.** The page says **Saved. The device is restarting (about 20 seconds). Now reconnect this computer to "your Wi-Fi name".** Join your normal Wi-Fi again from the Wi-Fi menu. The page shows a checklist that ticks off as the band restarts, your computer comes back, and the band appears.
 
-8. **Done.** You should see **Band flexgrid-d7af0b is online at 192.168.x.x** (the numbers are the band's address on your network; you never need to type them). The band's screen shows `WIFI OK` and the same address, and its light is green for two seconds, then steady orange once your computer is receiving its readings. Click **Set up the next device** for the second band, or **Go to the live view**.
+8. **Done.** You should see **Band flexgrid-d7af0b is online at 192.168.x.x** (the numbers are the band's address on your network; you never need to type them). The band's light is green for two seconds, then steady orange once your computer is receiving its readings (a band with a screen also shows `WIFI OK` and the same address). Click **Set up the next device** for the second band, or **Go to the live view**.
 
 9. **Tidy up.** In your computer's Wi-Fi list, tell it to forget the `OM-` network so it does not reconnect to the band by mistake:
    - **Windows:** Settings, Network and internet, Wi-Fi, Manage known networks, choose the `OM-` network, **Forget**.
@@ -81,16 +94,16 @@ Repeat from step 1 for the second band. It makes its own `OM-flexgrid-...` netwo
 
 The wizard shows an ordered list of things to try. The usual reasons, most likely first:
 
-1. **Wrong password.** The band goes back to `WIFI SETUP` by itself after about 30 seconds and its top line adds `LAST TRY FAILED` and a reason (see the table below). Start the wizard again and retype the password with **Show** turned on.
+1. **Wrong password.** The band goes back to setup mode by itself after about 30 seconds (its light returns to blue; a band with a screen shows `WIFI SETUP` and adds `LAST TRY FAILED` and a reason, see the table below). Start the wizard again and retype the password with **Show** turned on.
 2. **The network is 5 GHz only, or asks you to sign in.** Use your phone as a hotspot.
 3. **Your computer joined a different network** from the band. Check the Wi-Fi icon.
 4. **Your computer's firewall** is blocking the band. See [troubleshooting.md](troubleshooting.md).
 5. **Your router keeps devices apart** ("client isolation", "AP isolation" or a guest network). Use the main network.
 6. The wizard's **Run a check** and **Find my devices** buttons, or typing the band's address (you can read it from your router's list of devices), help in the last cases.
 
-When a band fails to join, its screen and light tell you why:
+When a band fails to join, its light shows an amber fast blink and then the blue setup pattern again. A band without a screen cannot say why, so go through the list above in order. A band with a screen tells you why:
 
-| Band screen | Meaning | What to do |
+| Band screen (if fitted) | Meaning | What to do |
 |---|---|---|
 | `WIFI FAILED` then `check password` | The password was rejected | Retype it carefully |
 | `WIFI FAILED` then `network not found or 5 GHz` | The name was misspelled, the router is out of range, or the network is 5 GHz only | Check the name, move closer, or use a 2.4 GHz network |
@@ -102,11 +115,11 @@ A failed first join shows an amber fast blink for about 2 seconds, then the band
 
 You can skip the wizard. This works from a phone too, which is handy if your computer is busy.
 
-1. Turn the band on and read its screen as in Method 1, step 1.
-2. On the computer or phone, join the `OM-flexgrid-...` network with the password after `PW`. (On a phone, if it asks whether to stay connected to a network with no internet, say yes. Turning off mobile data for a minute helps.)
+1. Turn the band on and find its name and password on the sticker as in Method 1, step 1.
+2. On the computer or phone, join the `OM-flexgrid-...` network with the **Setup password** from the sticker. (On a phone, if it asks whether to stay connected to a network with no internet, say yes. Turning off mobile data for a minute helps.)
 3. Open a browser and type exactly `http://192.168.4.1` (use `http`, not `https`). The page is titled **OpenMuscle: connect to Wi-Fi**.
 4. Fill in **Wi-Fi name (SSID)** and **Wi-Fi password**, and press **Connect**. The page says **Saved. Device is rebooting; reconnect to your home Wi-Fi.**
-5. Reconnect to your usual Wi-Fi and wait about 30 seconds. The band's screen shows `WIFI OK`.
+5. Reconnect to your usual Wi-Fi and wait about 30 seconds. The band's light turns green for two seconds, and a band with a screen shows `WIFI OK`.
 
 The band shows up in the Studio by itself within about half a minute.
 
@@ -116,13 +129,13 @@ To make a band forget its Wi-Fi and go back to setup mode (you changed networks,
 
 1. Hold the **MENU** and **SELECT** buttons together.
 2. The light blinks magenta. If you let go now, the Wi-Fi settings are wiped.
-3. Keep holding for 3 seconds, then let go. The band restarts into setup mode and shows `WIFI SETUP` again. Its network name and password are the same as before.
+3. Keep holding for 3 seconds, then let go. The band restarts into setup mode (blue light; a band with a screen shows `WIFI SETUP`). Its network name and password are the same as before, and still match the sticker.
 
 If you let go early, nothing happens. Releasing one button before the 3 seconds are up does nothing, and the other button is ignored until both are up.
 
 ## The optional finger labeler (LASK5)
 
-The LASK5 is not part of the starter kit. If you have one, it is set up the same way: the wizard has a **A finger labeler (optional)** choice, the labeler shows its own `WIFI SETUP` screen, and you join its `OM-` network. To put it back into setup mode, open its menu and choose **Reset Wi-Fi**.
+The LASK5 is not part of the starter kit. If you have one, it is set up the same way: the wizard has a **A finger labeler (optional)** choice, the labeler shows its own `WIFI SETUP` screen with its network name and password, and you join its `OM-` network. To put it back into setup mode, open its menu and choose **Reset Wi-Fi**.
 
 ## Privacy
 

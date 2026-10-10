@@ -839,7 +839,7 @@ class DiscoveryManager:
             self._push_role(ip, port, role)
         except Exception as e:
             message = ("The band itself was not updated ({}). The Studio still "
-                       "uses {} for it, but the band's own light and screen "
+                       "uses {} for it, but the band's own light (and screen, if it has one) "
                        "will not match.".format(_role_error_text(e),
                                                 role or "no role"))
             with self._lock:
