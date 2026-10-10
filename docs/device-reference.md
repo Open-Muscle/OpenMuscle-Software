@@ -2,9 +2,11 @@
 
 What every button, light and screen on the band means, how power and charging work, and what to do when it will not connect. The first section is a one-page quick card you can print.
 
+**Kit bands have no screen.** They ship with the small screen (SSD1306) not plugged in, and the firmware simply carries on without it. Wherever this page says "read the screen", a band without one uses the **sticker** (printed by `tools/kit_check.py`) for the setup Wi-Fi name and password, and the **light** for everything else. The screen sections are for a band that has one fitted.
+
 > A copy of this page is kept in `OpenMuscle-Software/docs/device-reference.md`. Both copies are updated by hand; if they ever disagree, this one (next to the firmware) is the one to trust.
 
-Every line below was checked against the firmware source (file and function in the last section). Things that can only be settled by holding a physical band are collected in [Facts still to confirm on a physical band](#facts-still-to-confirm-on-a-physical-band) instead of being guessed.
+Every line below was checked against the firmware source and the V4 KiCad schematic (file and function in the last section). Things that can only be settled by holding a physical band are collected in [Facts still to confirm on a physical band](#facts-still-to-confirm-on-a-physical-band) instead of being guessed.
 
 ---
 
@@ -12,32 +14,35 @@ Every line below was checked against the firmware source (file and function in t
 
 **OpenMuscle FlexGrid V4 band**
 
-**Switch on and charge.** The band is switched on and off with its power button (how long to press is on the confirm list at the end). Plug in USB-C to charge: the small CHRG light on the board is the charging truth.
+**Switch on and charge.** The power button is the small switch at the top edge: one short press switches the band on, one short press again switches it off. Plug in USB-C to charge: the small CHRG light on the board is the charging truth.
 
-**First time: give the band your Wi-Fi (2.4 GHz, with a password, no sign-in page).**
+**First time: give the band your Wi-Fi (2.4 GHz, with a password, no sign-in page).** Your band has no screen, so everything you need to read is on its sticker.
 
-1. Band screen says `WIFI SETUP` and the light blinks blue once a second.
-2. On a phone or laptop, join the Wi-Fi named on screen (`OM-flexgrid-` plus the next line, read as one name). Password: the 10 characters after `PW`.
+1. The light blinks blue, two quick blinks then a pause. That is normal: it means the band is waiting to be set up.
+2. On a phone or laptop, join the Wi-Fi named on the sticker (`OM-flexgrid-` plus six characters). Password: the **Setup password** on the sticker (10 characters).
 3. Open `http://192.168.4.1` in a browser (type `http://`). Enter your Wi-Fi name and password. Press Connect.
-4. Join your normal Wi-Fi again. The band shows `WIFI OK` and its address, the light goes green, then the live pressure grid appears.
+4. Join your normal Wi-Fi again. The light goes steady blue, then green for 2 s, then pulses while it waits for the computer.
+
+(A band that does have a screen shows the same name and password on `WIFI SETUP`, and its light blinks blue once a second.)
 
 **Buttons** (MENU and SELECT)
 
 | Do this | What happens |
 |---|---|
-| Tap MENU | Status page: Wi-Fi, address, id, role. Tap again for battery and mode, again to go back. |
+| Tap MENU | Status page: Wi-Fi, address, id, role (a band with a screen only). Tap again for battery and mode, again to go back. |
 | Tap SELECT | Pause or resume (Wi-Fi stays on) |
 | Hold MENU 2 s | Charge mode on or off (Wi-Fi off while charging) |
 | Hold SELECT 2 s | Record to SD card on or off (needs an SD card) |
-| Hold MENU and SELECT 3 s | Forget Wi-Fi, go back to `WIFI SETUP` (keep holding until it restarts) |
+| Hold MENU and SELECT 3 s | Forget Wi-Fi, go back to setup (keep holding until it restarts) |
+| Power button (top edge) | Short press: on. Short press again: off |
 | BOOT | Restart the band |
 
 **Lights**
 
 | Light | Meaning |
 |---|---|
-| Blue, blinking once a second | Setup: read the screen, join the band's own Wi-Fi |
-| Blue, two quick blinks then a pause | Setup, but the screen is not working |
+| Blue, two quick blinks then a pause | Setup, band without a screen (the kit): join the Wi-Fi on the sticker |
+| Blue, blinking once a second | Setup, band with a screen: read the screen, join the band's own Wi-Fi |
 | Blue, steady | Joining your Wi-Fi (up to 20 s) |
 | Green, steady for 2 s | Joined |
 | Amber, fast blink | Join failed; going back to setup |
@@ -75,17 +80,17 @@ Every line below was checked against the firmware source (file and function in t
 
 | Topic | What is true |
 |---|---|
-| Switching on | The band has a latching power button (a MAX16054 soft-power controller, labelled "Power Push Button" in the schematic). It is meant to be pressed once to switch on and pressed again to switch off. Whether a short press or a hold is needed is on the [confirm list](#facts-still-to-confirm-on-a-physical-band). |
-| Switching off | Only possible with USB unplugged. With USB plugged in the board is powered from USB and the latch cannot drop the supply (the firmware logs "Still alive, likely USB-powered" if it tries). The firmware's own on-screen power-off menu is retired; use the button. |
+| Switching on | The power button is SW_PWR1, the switch at the top edge. It is wired to a MAX16054 soft-power controller (labelled "Power Push Button" in the schematic). A short press switches the band on. How firm a press must be is on the [confirm list](#facts-still-to-confirm-on-a-physical-band). |
+| Switching off | A short press of the same button switches the band off. The firmware can also switch itself off through its power-off line (GPIO 45, "PWR_OFF"); it cannot drop the supply while USB feeds the board (it logs "Still alive, likely USB-powered" if it tries). Whether a press while USB is plugged in switches the band off is on the [confirm list](#facts-still-to-confirm-on-a-physical-band). The firmware's own on-screen power-off menu is retired; use the button. |
 | Power from USB | With USB plugged in the board stays powered, even after the latch is released (the firmware's notes say so). USB also charges the battery. Whether a band that is switched off still charges is on the [confirm list](#facts-still-to-confirm-on-a-physical-band). |
-| Charging hardware | A single-cell LiPo (500 mAh in the design) on a linear charger (LTC4054 or STC4054). The CHRG light on the board belongs to the charger, not to the firmware. It works even if the firmware is not running. |
-| What the firmware cannot see | The charger's status pin is not wired to the processor. The firmware never knows whether the charger is actually charging. It only guesses that USB is plugged in (next row). Believe the CHRG light, not the band's screen, for "is it charging". |
+| Charging hardware | A single-cell LiPo (500 mAh in the design) on a linear charger (U4, an LTC4054 or STC4054). The CHRG light is D2 ("CHRG LED" in the schematic), driven by the charger chip itself, not by the firmware. It works even if the firmware is not running. Its colour has not been checked yet (see the confirm list). It is a different light from the multi-colour status light (LED_RGB) described below. |
+| What the firmware cannot see | The charger's status pin is not wired to the processor. The firmware never knows whether the charger is actually charging. It only guesses that USB is plugged in (next row). Believe the CHRG light, not the band's screen or the status light, for "is it charging". |
 | How the band guesses USB | It decides USB is plugged in once the battery reads 4.05 V or more, and decides it was unplugged below 3.95 V. A very flat battery on USB therefore looks "unplugged" until it has charged past 4.05 V. A power bank behaves like USB. |
-| Charge mode | Hold MENU for 2 s (or, when USB is detected, wait 5 minutes with no computer connected). Wi-Fi radio off, processor slowed to 80 MHz, so nearly all the charger's current goes into the battery. Screen: `CHARGING / Wi-Fi off / unplug to resume / or tap SELECT`. Light: purple pulse, solid purple when full. Leaving charge mode restarts the band (it rejoins Wi-Fi in about 20 s). Unplugging USB also leaves it. |
+| Charge mode | Hold MENU for 2 s (or, when USB is detected, wait 5 minutes with no computer connected). Wi-Fi radio off, processor slowed to 80 MHz, so nearly all the charger's current goes into the battery. Screen (if fitted): `CHARGING / Wi-Fi off / unplug to resume / or tap SELECT`. Light: purple pulse, solid purple when full. Leaving charge mode restarts the band (it rejoins Wi-Fi in about 20 s). Unplugging USB also leaves it. |
 | Charging while streaming | The battery also charges while the band streams on USB, only more slowly because the radio is on (orange light with a cyan flash every 5 s). |
 | "Full" | Solid purple appears in charge mode when USB is detected and the battery has read 4.18 V or more for 5 seconds in a row. |
 | Percent | A straight line from 3.50 V (0 percent) to 4.20 V (100 percent). A rough guide only; lithium cells do not discharge in a straight line. Shown on status page 2 as `BAT 87% 4.11V`. |
-| Low battery | Under 3.55 V with USB not detected: amber light blinking once a second, and a `LOW BATTERY / ... / charge soon` notice on screen for 4 s, repeated every 5 minutes. It clears again above 3.65 V. |
+| Low battery | Under 3.55 V with USB not detected: amber light blinking once a second, and (on a band with a screen) a `LOW BATTERY / ... / charge soon` notice for 4 s, repeated every 5 minutes. It clears again above 3.65 V. |
 | Battery life and charge time | Not measured for this document. See the confirm list. |
 | Auto charge setting | `auto_charge_idle_s` (default 300). Set it to `0` to stop the band switching to charge mode by itself. |
 
@@ -93,7 +98,7 @@ Every line below was checked against the firmware source (file and function in t
 
 ## Buttons
 
-The band has two buttons the firmware reads: **MENU** and **SELECT**. The board also carries BOOT, a power button and (per the parts list) a reset switch; see the confirm list for which are fitted on your band.
+The band has two buttons the firmware reads: **MENU** and **SELECT** (nets MENU and SELECT on the schematic, switches MENU1 and SELECT1). Three more switches are on the board and the firmware reads none of them: the **power button** (SW_PWR1, top edge), **BOOT** (BOOT1) and the switch printed **SW_RST1** (bottom left).
 
 | Control | Action | Notes |
 |---|---|---|
@@ -102,7 +107,9 @@ The band has two buttons the firmware reads: **MENU** and **SELECT**. The board 
 | Tap SELECT | Streaming to paused, or paused back to streaming | In charge or record mode a tap leaves that mode and restarts the band. |
 | Hold SELECT 2 s | Record to SD on or off | Happens at the 2 s mark. Refused (nothing changes, Wi-Fi stays on) if no SD card mounts: screen shows `NO SD CARD / Record needs one / Wi-Fi stays on` for 3 s. Switched off by the setting `record_enabled: false`; the screen then shows `RECORD OFF`. |
 | Hold MENU and SELECT 3 s | Forget the Wi-Fi password and return to `WIFI SETUP` | The light blinks magenta from the moment both are down. At 3 s the band erases the Wi-Fi name and password and restarts by itself, even if you are still holding. Letting go of either button before 3 s cancels it, and the button still held is ignored until both are up. |
-| BOOT | Restart the band | Wired to the chip's reset line, not to the firmware. It does nothing else. |
+| Power button (SW_PWR1, top edge) | Short press: switch on. Short press again: switch off | Wired to the MAX16054 soft-power controller, not to the firmware. Press feel, and whether a press switches the band off while USB is plugged in, are on the [confirm list](#facts-still-to-confirm-on-a-physical-band). |
+| BOOT (BOOT1) | Restart the band | Wired to the chip's reset line (EN), not to the firmware. It does nothing else. |
+| SW_RST1 (bottom left) | Nothing in normal use | Wired to the net the schematic labels `100`, which is the ESP32-S3 IO0 boot-strap pin. Hold it while you press BOOT, then let go of both: the chip starts in download mode, for reflashing a stuck board that `flash.py` cannot reach. The firmware never reads this pin (it is a boot-strap pin, so using it would change how the chip starts). |
 
 Buttons do nothing while the band is in setup mode (it is busy waiting for your Wi-Fi details). Use them once the band has joined a network. If a band is stuck in a state you do not like, pressing BOOT or switching it off and on again always gets you back to a known place.
 
@@ -119,8 +126,8 @@ How to read it: the colour says what kind of thing is happening, the pattern say
 | Light | Meaning | State name |
 |---|---|---|
 | Dim blue, breathing, for a moment | Switching on | `boot` |
-| Blue, one blink per second | **Setup mode.** Read the screen and join the band's own Wi-Fi. | `setup` |
-| Blue, two quick blinks then a pause | Setup mode, but the screen did not answer (needs repair: nobody can read the password) | `setup_no_oled` |
+| Blue, one blink per second | **Setup mode**, band with a screen. Read the screen and join the band's own Wi-Fi. | `setup` |
+| Blue, two quick blinks then a pause | **Setup mode, no screen fitted.** This is the normal setup pattern for a kit band, not a fault: read the Wi-Fi name and password from the sticker. | `setup_no_oled` |
 | Blue, steady | **Joining** your Wi-Fi | `joining` |
 | Green, steady for 2 s | **Joined** (also each time Wi-Fi comes back) | `joined` |
 | Amber, fast blink | First join **failed**; the band is going back to setup | `join_failed` |
@@ -140,8 +147,6 @@ How to read it: the colour says what kind of thing is happening, the pattern say
 | Purple, steady | Charge mode and the battery is full | `charge_full` |
 
 The start-up story in order: blue blink (setup), blue steady (joining), green for 2 s (joined), then the pulse in the role colour, which becomes steady orange when a computer starts receiving.
-
-The band and the Studio keep the same role. Choosing a role on a band's card in the Studio sends it to the band, which stores it, so the pulse colour and the status screen match from then on. A role already stored on a band (it is saved across restarts) shows up on its card in the Studio as soon as the Studio hears from it, if the Studio has no role for that band yet. If the Studio cannot reach the band when you pick a role, it keeps your choice and says the band itself was not updated; the pulse colour then stays as it was until you pick the role again. The LASK5 labeler has no role setting of its own, so its role lives only in the Studio.
 
 ### Which one shows when several are true
 
@@ -164,9 +169,13 @@ Setup mode (blue blink) is its own program that runs instead of all of this.
 
 If the light is off, the band is switched off, or the battery is empty and USB is not plugged in. The light uses no power when dark.
 
+This is the status light (LED_RGB on the schematic). The separate CHRG light (D2) next to the charger is not part of this table.
+
 ---
 
 ## The screen (OLED)
+
+**Kit bands do not have a screen.** The board has a header for it and the kit leaves it unplugged. The firmware notices at start-up (it logs `No screen` and carries on), so nothing is broken: the setup name and password are on the sticker, and the light, the app and this page cover everything else. Everything in this section applies only to a band that has a screen fitted.
 
 The screen is 128x32 pixels: four lines of 16 characters. Every screen below is written for four lines. (A 128x64 panel also works with `"display_height": 64` in settings, and shows eight lines.)
 
@@ -235,15 +244,17 @@ Record mode writes one file per session to `sessions/` on the SD card, a CSV wit
 
 A band with no Wi-Fi saved starts **setup mode**. It becomes its own Wi-Fi network named `OM-flexgrid-<6 characters>` (WPA2, channel 1, up to 4 devices) and serves a small page at `http://192.168.4.1`.
 
-1. Join that network from a phone or laptop with the password from the screen.
+**A band without a screen (the kit).** The band cannot show its name and password, so they come from the **sticker**: `Setup Wi-Fi` is the network name and `Setup password` is the 10 characters. The light blinks blue, two quick blinks then a pause; that is the normal setup pattern. Wherever the steps below say "from the screen", read "from the sticker". The sticker is the only place the password is written down. If it is lost, hold MENU and SELECT for 3 s to take the band back to setup (the setup name and password are kept), then run `tools/kit_check.py <port>`: it prints them even when the band is not in factory state or is still charging (marked read only, not sticker text). Or reflash the band for a new password and sticker.
+
+1. Join that network from a phone or laptop with the password from the screen (or the sticker).
 2. Open `http://192.168.4.1` in a browser. Use `http://`, not `https://`. Some phones open the page by themselves; if yours does not, type the address.
 3. Type your Wi-Fi name and password and press Connect. The page says it saved and that the band is restarting.
 4. Join your normal Wi-Fi again on the phone or laptop.
-5. The band restarts and tries to join. It shows `Joining Wi-Fi...` and a steady blue light (up to 20 s). On success the light goes green for 2 s and the screen shows `WIFI OK` and the address for 15 s; then the live grid.
+5. The band restarts and tries to join. A steady blue light shows for up to 20 s (a band with a screen also shows `Joining Wi-Fi...`). On success the light goes green for 2 s and a band with a screen shows `WIFI OK` and the address for 15 s; then the live grid. Without a screen, the light going green and then pulsing in the role colour is your sign that it joined.
 
 The PC app can do the same steps for you from its device setup page (`/setup` in the app); see the app's Wi-Fi guide.
 
-**If the first join fails** the band does not retry for ever. It shows `WIFI FAILED` and the reason for about 2 s, blinks amber, forgets the password, restarts and is back in setup mode with the **same network name and password as before** (about 30 s in all). The top line of the setup screen then also shows `LAST TRY FAILED` and the reason. Join its network and enter the details again.
+**If the first join fails** the band does not retry for ever. It shows `WIFI FAILED` and the reason for about 2 s, blinks amber, forgets the password, restarts and is back in setup mode with the **same network name and password as before** (about 30 s in all). The top line of the setup screen then also shows `LAST TRY FAILED` and the reason. Without a screen, the sign is the fast amber blink followed by the blue two-blink pattern again. Join its network (name and password from the sticker) and enter the details again.
 
 | Reason on screen | What it usually means |
 |---|---|
@@ -278,16 +289,15 @@ A reflash or `wipe.py` (for people preparing kits) gives the band a **new id and
 
 These are not guessed in this document. Each one needs someone holding a band. When settled, move the answer into the right section above and delete the line here.
 
-1. **Power button.** Which switch is it, and where is it? Does a short press switch the band on, or must it be held? Does it switch off on battery, and how long to hold? Does the band stay on when USB is removed after being plugged in while off?
-2. **Switches fitted.** The parts list has five tactile switches (BOOT, MENU, SELECT, a power switch and a reset switch). Which are fitted on the shipped band, and what is printed beside each? The firmware reads only MENU and SELECT; BOOT is wired to the chip's reset line per the firmware notes.
-3. **Screen.** The screen is fitted, shows all four lines of the setup, boot and live-grid screens at full contrast, and is legible in the case or sleeve used. (The pre-ship tool `tools/kit_check.py` proves the screen answers on the bus; only eyes prove it is legible.)
-4. **CHRG light.** Its colour, whether it is visible, whether it lights while charging and goes out when full, and how it behaves with no battery connected.
-5. **Charging.** Time from empty to full on a computer port and on a wall charger, and the actual running time while streaming. Whether a band that is switched off charges on USB.
-6. **Charge-state accuracy.** Battery percent against a meter; whether the 4.05 V USB guess behaves with the supplied cable and a typical charger.
-7. **SD socket.** Whether a card seats and is read, and whether the kit ships with or without one.
-8. **Light visibility.** Whether the LED is readable through the case or sleeve in daylight, and the magenta, purple and green previews are easy to tell apart.
-9. **Tap and hold feel.** The 2 s and 3 s holds are comfortable with the case or glove on.
-10. **Download mode on a blank or stuck board.** Whether the programming header on a band exposes GPIO 0, for the case where a band will not respond to `flash.py` at all.
+Already settled from the V4 schematic and board, so not listed: which switch is the power button (SW_PWR1, short press on and short press off), that MENU1 and SELECT1 are the firmware buttons, that BOOT1 is the chip reset, that SW_RST1 is the IO0 boot-strap switch, and that kit bands ship without the screen.
+
+1. **Power button feel.** How firm a press must be, whether the band ever needs a longer hold, whether a press while USB is plugged in switches the band off, and whether a band that is switched off still charges when USB is plugged in.
+2. **CHRG light.** The colour of D2, whether it is visible through the case or sleeve, whether it lights while charging and goes out when full, and how it behaves with no battery connected.
+3. **Charging.** Time from empty to full on a computer port and on a wall charger, and the actual running time while streaming.
+4. **Charge-state accuracy.** Battery percent against a meter; whether the 4.05 V USB guess behaves with the supplied cable and a typical charger.
+5. **SD socket.** Whether a card seats and is read, and whether the kit ships with or without one.
+6. **Light visibility.** Whether the status light is readable through the case or sleeve in daylight, and the magenta, purple and green previews are easy to tell apart.
+7. **Tap and hold feel.** The 2 s and 3 s holds are comfortable with the case or glove on.
 
 ---
 
@@ -298,7 +308,8 @@ These are not guessed in this document. Each one needs someone holding a band. W
 | Every LED colour and pattern | `lib/status_led.py` (`PALETTE_DEFAULT`, `animate`) |
 | Which LED state wins | `flexgrid.py` `_resolve_led_state` |
 | Button actions and timings | `flexgrid.py` `power_mode_loop` (tap, 2 s and 3 s holds) |
-| BOOT is the reset line | `lib/pinmap.py` (button notes) |
+| BOOT is the reset line, SW_RST1 is IO0, the power button | `lib/pinmap.py` (button notes) and the V4 KiCad schematic (`OM-FlexGrid-Rigid-PCB.kicad_sch`: SW_PWR1, BOOT1, SW_RST1 on net `100` = IO0, MENU1, SELECT1, D2) |
+| No screen is normal | `lib/display_manager.py` (logs `No screen`), `flexgrid.py` `main` (setup LED choice), `tools/kit_check.py` (screen is a warning) |
 | Every screen's words | `lib/screens.py`; heatmap in `lib/display_manager.py` |
 | Which screen shows when | `flexgrid.py` `_screen_override`, `_status_info` |
 | Battery curve, USB guess, full | `lib/power_manager.py` |
@@ -307,6 +318,6 @@ These are not guessed in this document. Each one needs someone holding a band. W
 | First join fails and goes back to setup | `flexgrid.py` `_fall_back_to_setup`, `lib/network_manager.py` |
 | Defaults (auto charge, record, height) | `lib/settings_manager.py` |
 | Record file format | `lib/sd_logger.py` |
-| Power button parts | KiCad V4 parts list (OpenMuscle-FlexGrid repo, `BOM-Human-OM-FlexGrid-Rigid-PCB.csv`) |
+| Power button parts | KiCad V4 schematic and parts list (OpenMuscle-FlexGrid repo, `BOM-Human-OM-FlexGrid-Rigid-PCB.csv`) |
 
 The desktop tests (`tests/test_docs.py`) check that every light, screen line and button named here still exists in those files.
