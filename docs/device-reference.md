@@ -141,6 +141,8 @@ How to read it: the colour says what kind of thing is happening, the pattern say
 
 The start-up story in order: blue blink (setup), blue steady (joining), green for 2 s (joined), then the pulse in the role colour, which becomes steady orange when a computer starts receiving.
 
+The band and the Studio keep the same role. Choosing a role on a band's card in the Studio sends it to the band, which stores it, so the pulse colour and the status screen match from then on. A role already stored on a band (it is saved across restarts) shows up on its card in the Studio as soon as the Studio hears from it, if the Studio has no role for that band yet. If the Studio cannot reach the band when you pick a role, it keeps your choice and says the band itself was not updated; the pulse colour then stays as it was until you pick the role again. The LASK5 labeler has no role setting of its own, so its role lives only in the Studio.
+
 ### Which one shows when several are true
 
 Highest first, as resolved by `_resolve_led_state` in `flexgrid.py`:

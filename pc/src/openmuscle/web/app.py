@@ -631,17 +631,25 @@ def create_app(udp_port: int = 3141, captures_dir: Optional[str] = None,
 
     @app.post("/api/discovery/role")
     async def discovery_set_role(body: RoleBody):
-        """Tag a discovered device with a capture role (hub-local, per device_id).
-        Drives multi-band capture: tag two bands left/right + the labeler."""
+        """Tag a discovered device with a capture role (per device_id).
+        Drives multi-band capture: tag two bands left/right + the labeler.
+
+        The tag is kept here and also sent to the band (its set_role verb), so
+        its light and status screen show the same role. If the band cannot be
+        reached the tag still stands; `band` is then "failed" and `warning`
+        says the band itself was not updated. `band` is "local" for a device
+        with no role verb (the LASK5 labeler)."""
         if not state.discovery:
             raise HTTPException(status_code=409, detail="discovery disabled")
-        ok = state.discovery.set_role(body.device_id, body.role)
-        if not ok:
+        res = await asyncio.to_thread(state.discovery.assign_role,
+                                      body.device_id, body.role)
+        if not res["ok"]:
             raise HTTPException(
                 status_code=400,
                 detail=f"could not set role for {body.device_id} "
                        f"(unknown device, or invalid role)")
-        return {"device_id": body.device_id, "role": (body.role or "").strip().lower()}
+        return {"device_id": body.device_id, "role": res["role"],
+                "band": res["band"], "warning": res["message"] or None}
 
     # ----- REST: device setup wizard (loopback only) -----
 

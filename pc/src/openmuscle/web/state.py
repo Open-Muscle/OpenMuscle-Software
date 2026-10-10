@@ -750,6 +750,12 @@ class AppState:
             dev = DeviceInfo(device_id=pkt.device_id, device_type=pkt.device_type)
             self.devices[pkt.device_id] = dev
         dev.update(pkt, ("", 0))
+        # A status frame carries the band's own role (meta.role): let discovery
+        # adopt it when the Studio has no tag for the band, or it was re-tagged.
+        disc = getattr(self, "discovery", None)
+        if disc is not None and isinstance(pkt.metadata, dict) \
+                and "role" in pkt.metadata:
+            disc.observe_role(pkt.device_id, pkt.metadata["role"])
         if self._announced is not None and (
                 pkt.device_id not in self._announced or pkt.device_id in self._lost):
             self._note_found(pkt.device_id, pkt.device_type)
