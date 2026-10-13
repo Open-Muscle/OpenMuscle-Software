@@ -235,6 +235,24 @@ class TestUniqueModelDirs:
         # newest is last, which the "newest model" lookups rely on
         assert listed[-1]["path"] == str(paths[-1])
 
+    def test_listing_follows_creation_time_not_folder_names(self, tmp_path):
+        # Two folders whose names sort the wrong way round: the one made first
+        # must still be listed first (two saves in one millisecond sort by hand).
+        from openmuscle.ml.registry import ModelRegistry
+        reg = ModelRegistry(str(tmp_path / "reg"))
+        for name, created_ns in (("z_first", 1_000), ("a_second", 2_000)):
+            d = reg.base_dir / name
+            d.mkdir()
+            (d / "model.pkl").write_bytes(b"")
+            (d / "metadata.json").write_text(json.dumps({"name": name, "created_ns": created_ns}))
+        assert [m["dir"] for m in reg.list_models()] == ["z_first", "a_second"]
+        # An old folder without the field still lists, by its own mtime.
+        d = reg.base_dir / "legacy"
+        d.mkdir()
+        (d / "model.pkl").write_bytes(b"")
+        (d / "metadata.json").write_text(json.dumps({"name": "legacy"}))
+        assert {m["dir"] for m in reg.list_models()} == {"z_first", "a_second", "legacy"}
+
     def test_trained_left_then_right_get_two_folders_with_the_right_roles(self, tmp_path):
         from tests.test_train_checks import _rows, _write
         from openmuscle.ml.training import train_model

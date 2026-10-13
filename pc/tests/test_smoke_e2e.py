@@ -97,7 +97,9 @@ def test_package_data_globs_cover_every_browser_file(smoke):
     covered = set()
     for pat in _package_data_patterns():
         for hit in glob.glob(pat, root_dir=str(web), recursive=True):
-            if (web / hit).is_file():
+            # The patterns also ship help_docs/ (built by setup.py, absent in a
+            # fresh clone); only the static tree is compared here.
+            if (web / hit).is_file() and Path(hit).parts[0] == "static":
                 covered.add(Path(hit).relative_to("static").as_posix())
     missing = [f for f in smoke.source_static_files() if f not in covered]
     assert not missing, "pyproject package-data would leave out: %s" % missing[:5]

@@ -1,6 +1,7 @@
 """Model save/load/version management with metadata tracking."""
 
 import json
+import time
 import os
 import pickle
 import shutil
@@ -30,12 +31,15 @@ class ModelRegistry:
         The directory name is <name>_<YYYYmmdd_HHMMSS>_<mmm>[_<role>]: millisecond
         precision plus the hand, and a numeric suffix if the name is still taken,
         so a left and a right model trained back to back (or two runs in the
-        same second) can never write into the same directory. Names still sort
-        in the order they were created, which the "newest model" lookups rely on.
+        same second) can never write into the same directory. Creation order is
+        kept in metadata.json as created_ns, and list_models() orders by it, so
+        the "newest model" lookups do not depend on how the names sort (two
+        saves in the same millisecond would otherwise sort by hand, not by age).
         `extra` is merged into metadata.json at the top level (provenance such as
         participant and band ids).
         """
         now = datetime.now()
+        created_ns = time.time_ns()
         ts = now.strftime("%Y%m%d_%H%M%S")
         stem = f"{name}_{ts}_{now.microsecond // 1000:03d}"
         if role in ("left", "right"):
@@ -59,6 +63,7 @@ class ModelRegistry:
         meta = {
             "name": name,
             "created": ts,
+            "created_ns": created_ns,
             "dir": model_dir.name,
             "model_type": type(model).__name__,
             "metrics": metrics or {},
@@ -76,9 +81,13 @@ class ModelRegistry:
             return pickle.load(f)
 
     def list_models(self) -> list[dict]:
-        """List all models in the registry with their metadata, oldest first."""
-        models = []
-        for d in sorted(self.base_dir.iterdir()):
+        """List all models in the registry with their metadata, oldest first.
+
+        Order is by creation time (created_ns in metadata.json; a folder saved
+        before that field existed uses its own mtime), then by name.
+        """
+        found = []
+        for d in self.base_dir.iterdir():
             if not d.is_dir():
                 continue
             meta_path = d / "metadata.json"
@@ -91,8 +100,15 @@ class ModelRegistry:
                 meta["path"] = str(d / "model.pkl")
                 meta["dir"] = d.name
                 meta["size_bytes"] = self.folder_size(d)
-                models.append(meta)
-        return models
+                created = meta.get("created_ns")
+                if not isinstance(created, int):
+                    try:
+                        created = d.stat().st_mtime_ns
+                    except OSError:
+                        created = 0
+                found.append((created, d.name, meta))
+        found.sort(key=lambda item: (item[0], item[1]))
+        return [meta for _, _, meta in found]
 
     @staticmethod
     def folder_size(folder: Path) -> int:
