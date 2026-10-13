@@ -194,9 +194,14 @@ def _windows_sandbox(tmp_path, port_text):
     (home / "logs" / "last-port.txt").write_text(port_text)
     raw = (INSTALLERS / "windows" / "OpenMuscle.bat").read_bytes()
     opener = b'start "" "http://localhost:%RUNNING%"'
-    assert opener in raw
-    bat = tmp_path / "OpenMuscle.bat"                          # a copy that opens no browser
-    bat.write_bytes(raw.replace(opener, b"echo OPENED http://localhost:%RUNNING%"))
+    launch = b'"%EXE%" web %*'
+    assert opener in raw and launch in raw
+    # A copy that opens no browser and starts no program: the stand-in exe is
+    # empty, and running it would leave the real launcher at its "press any
+    # key" prompt (which a CI runner never answers).
+    bat = tmp_path / "OpenMuscle.bat"
+    bat.write_bytes(raw.replace(opener, b"echo OPENED http://localhost:%RUNNING%")
+                       .replace(launch, b"echo LAUNCH %EXE% web %*"))
     env = dict(os.environ, OPENMUSCLE_HOME=str(home))
     env.pop("OPENMUSCLE_DRY_RUN", None)
     return bat, env
@@ -221,6 +226,9 @@ def test_windows_launcher_ignores_a_damaged_port_file(tmp_path):
     r = subprocess.run(["cmd.exe", "/c", str(bat)], capture_output=True, text=True,
                        env=env, timeout=90, stdin=subprocess.DEVNULL)
     assert "HACKED" not in r.stdout
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "already running" not in r.stdout                  # nothing answered the probes
+    assert "LAUNCH " in r.stdout                              # so it went on to start the app
 
 
 # -------------------------------------------------- unfinished sessions ----
