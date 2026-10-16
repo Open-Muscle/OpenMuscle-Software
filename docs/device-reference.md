@@ -111,7 +111,7 @@ The band has two buttons the firmware reads: **MENU** and **SELECT** (nets MENU 
 | Tap SELECT | Streaming to paused, or paused back to streaming | In charge or record mode a tap leaves that mode and restarts the band. |
 | Hold SELECT 2 s | Record to SD on or off | Happens at the 2 s mark. Refused (nothing changes, Wi-Fi stays on) if no SD card mounts: screen shows `NO SD CARD / Record needs one / Wi-Fi stays on` for 3 s. Switched off by the setting `record_enabled: false`; the screen then shows `RECORD OFF`. |
 | Hold MENU and SELECT 3 s | Forget the Wi-Fi password and return to `WIFI SETUP` | The light blinks magenta from the moment both are down. At 3 s the band erases the Wi-Fi name and password and restarts by itself, even if you are still holding. Letting go of either button before 3 s cancels it, and the button still held is ignored until both are up. |
-| Power button (SW_PWR1, top edge) | Short press: switch on. Short press again: switch off | Wired to the MAX16054 soft-power controller, not to the firmware. Press feel, and whether a press switches the band off while USB is plugged in, are on the [confirm list](#facts-still-to-confirm-on-a-physical-band). |
+| Power button (SW_PWR1, top edge) | Short press: switch on. Short press again: switch off | Wired to the MAX16054 soft-power controller, not to the firmware. With USB plugged in the band stays on whatever the button does; a short press switches it off only once USB is unplugged (seen on a kit band). Press feel is still to note. |
 | BOOT (BOOT1) | Restart the band | Wired to the chip's reset line (EN), not to the firmware. It does nothing else. |
 | SW_RST1 (bottom left) | Nothing in normal use | Wired to the net the schematic labels `100`, which is the ESP32-S3 IO0 boot-strap pin. Hold it while you press BOOT, then let go of both: the chip starts in download mode, for reflashing a stuck board that `flash.py` cannot reach. The firmware never reads this pin (it is a boot-strap pin, so using it would change how the chip starts). |
 
@@ -322,7 +322,7 @@ These are not guessed in this document. Each one needs someone holding a band. W
 
 Already settled from the V4 schematic and board, so not listed: which switch is the power button (SW_PWR1, short press on and short press off), that MENU1 and SELECT1 are the firmware buttons, that BOOT1 is the chip reset, that SW_RST1 is the IO0 boot-strap switch, and that kit bands ship without the screen.
 
-1. **Power button feel.** How firm a press must be, whether the band ever needs a longer hold, whether a press while USB is plugged in switches the band off, and whether a band that is switched off still charges when USB is plugged in.
+1. **Power button feel.** How firm a press must be, whether the band ever needs a longer hold (a press while USB is plugged in does not switch the band off: seen on a kit band), and whether a band that is switched off still charges when USB is plugged in.
 2. **CHRG light.** The colour of D2, whether it is visible through the case or sleeve, whether it lights while charging and goes out when full, and how it behaves with no battery connected.
 3. **Charging.** Time from empty to full on a computer port and on a wall charger, and the actual running time while streaming.
 4. **Charge-state accuracy.** Battery percent against a meter; whether the 4.05 V USB guess behaves with the supplied cable and a typical charger.
