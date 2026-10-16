@@ -11,6 +11,9 @@ stdlib client in openmuscle.provision.
     POST /api/setup/reprovision  put an already-online device back in setup mode
     GET  /api/setup/wait         did the device show up on the user's network?
     GET  /api/setup/wifi-hint    the Wi-Fi network this computer is on, if known
+    GET  /api/setup/usb/ports    bands plugged in with a USB cable, and who they are
+    POST /api/setup/usb/provision  hand the Wi-Fi name + password to one of them
+                                 over the cable (no setup network needed)
 
 Rules every route follows:
 
@@ -19,6 +22,8 @@ Rules every route follows:
     local is refused too, so another web page cannot drive the wizard.
   * The device address is limited to the setup network 192.168.4.0/24. The one
     exception is reprovision, which uses the address discovery already holds.
+    The USB routes only ever open a serial port that the operating system lists
+    with the band's USB ids, never a name the page makes up.
   * The Wi-Fi name and password travel only in the JSON body. They are never
     put in a log line, the log buffer or the access log, and validation errors
     never echo them back.
@@ -42,12 +47,15 @@ from pydantic import BaseModel, Field, ValidationError
 
 from openmuscle.discovery.manager import default_lan_ip
 from openmuscle.provision import client as pclient
+from openmuscle.provision import usb as pusb
 from openmuscle.provision.client import ProvisionError
 
 SETUP_NET = ipaddress.ip_network("192.168.4.0/24")
 LOCAL_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "::1"}
 WAIT_S = 60                   # how long the UI should keep waiting before it offers help
 MAX_WAIT_POLL_S = 30.0        # one /wait call never blocks longer than this
+USB_PROBE_TIMEOUT_S = 2.0     # how long the USB listing waits on each plugged-in band
+USB_RESTART_GRACE_S = 1.5     # a band reboots about a second after it saves the Wi-Fi
 ENV_AP = "OPENMUSCLE_SETUP_AP"   # dev only: "127.0.0.1:PORT" stands in for 192.168.4.1:80
 
 # Error code -> HTTP status for the JSON {ok: false, code, message} replies.
@@ -62,6 +70,10 @@ _STATUS = {
     "not_in_setup_mode": 409,
     "unknown_device": 404,
     "discovery_disabled": 409,
+    "no_port": 404,
+    "many_ports": 409,
+    "no_answer": 504,
+    "rejected": 422,
 }
 
 
@@ -255,10 +267,26 @@ def _fail_from(e: ProvisionError):
     return _fail(e.code, e.message)
 
 
+def _fail_usb(e: pusb.UsbSetupError):
+    """A USB step failed. A band that answered with a refusal keeps its own code
+    in `band_code`; the wrong band on the port is the same wrong_device the
+    setup-network route reports."""
+    if e.code == "rejected" and e.band_code == "wrong_device":
+        return _fail("wrong_device", e.message)
+    return _fail(e.code, e.message, band_code=e.band_code)
+
+
 class SetupProvisionBody(BaseModel):
     ssid: str = Field(min_length=1, max_length=64)
     password: str = Field(default="", max_length=128)
     host: Optional[str] = Field(default=None, max_length=64)
+    expect_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class UsbProvisionBody(BaseModel):
+    port: str = Field(min_length=1, max_length=128)
+    ssid: str = Field(min_length=1, max_length=64)
+    password: str = Field(default="", max_length=128)
     expect_id: Optional[str] = Field(default=None, max_length=64)
 
 
@@ -438,6 +466,51 @@ def register(app, state):
             return {"found": False, "waited_s": round(time.monotonic() - t0, 1)}
         return {"found": True, "device": dev,
                 "waited_s": round(time.monotonic() - t0, 1)}
+
+    @app.get("/api/setup/usb/ports")
+    async def setup_usb_ports(request: Request):
+        """Bands plugged into this computer with a USB cable. Each port carries
+        what the band said (id, role, state, Wi-Fi name) when it answered; a
+        port that is listed with answered:false is a band that is plugged in
+        but silent."""
+        require_local(request)
+        try:
+            ports = await asyncio.to_thread(
+                pusb.list_ports, True, USB_PROBE_TIMEOUT_S, 1)
+        except pusb.UsbSetupError as e:
+            return {"ports": [], "reason": e.code, "message": e.message}
+        return {"ports": [p.to_dict() for p in ports]}
+
+    @app.post("/api/setup/usb/provision")
+    async def setup_usb_provision(request: Request):
+        require_local(request)
+        body, err = await _read_json(request, UsbProvisionBody)
+        if err is not None:
+            return err
+        scrub.add(body.ssid, body.password)
+        try:
+            known = await asyncio.to_thread(pusb.find_ports)
+        except pusb.UsbSetupError as e:
+            return _fail_usb(e)
+        if body.port not in [p.port for p in known]:
+            return _fail("no_port", "That USB port is not a band any more. Check the "
+                         "cable, then look for the band again.")
+        try:
+            res = await asyncio.to_thread(pusb.set_wifi, body.port, body.ssid,
+                                          body.password, body.expect_id or "",
+                                          pusb.COMMAND_TIMEOUT_S)
+        except ProvisionError as e:
+            return _fail_from(e)
+        except pusb.UsbSetupError as e:
+            return _fail_usb(e)
+        # A band that was already online may still announce in the second before
+        # it reboots; only a sighting after that counts as it joining the new Wi-Fi.
+        since = res.completed_at + USB_RESTART_GRACE_S
+        pending[res.band_id] = since
+        state.log_buffer.info("setup", "sent Wi-Fi details to %s over USB"
+                              % (res.band_id or "band"))
+        return {"ok": True, "id": res.band_id, "role": res.role,
+                "reboot_in_ms": 1000, "wait_s": WAIT_S, "since": since}
 
     @app.get("/api/setup/wifi-hint")
     async def setup_wifi_hint(request: Request):
