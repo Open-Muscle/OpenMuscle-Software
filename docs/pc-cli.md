@@ -159,6 +159,18 @@ The rule is `netsh advfirewall firewall add rule name="OpenMuscle UDP 3140-3141"
 action=allow protocol=UDP localport=3140,3141 profile=private,domain`. On macOS and
 Linux the command only explains what to allow.
 
+### `openmuscle setup-usb`
+
+Gives a band its Wi-Fi name and password over its USB cable, with no setup network to join. Plug the band into this computer with a cable that carries data, then run it. The band saves the details, restarts, and joins your Wi-Fi within about 20 seconds; the Studio then shows it. The password is only sent down the cable to the band, and is never printed or logged. The Studio's **Set up a device** page does the same thing with buttons; see [wifi-setup.md](wifi-setup.md).
+
+```bash
+openmuscle setup-usb --ssid "My Wi-Fi"                 # asks for the password, shows nothing while you type
+openmuscle setup-usb --port COM5 --ssid "My Wi-Fi"    # when more than one band is plugged in
+openmuscle setup-usb --forget                          # make the band forget its Wi-Fi (it restarts into setup mode)
+```
+
+With no `--port` it uses the one band that answers on USB (a band is recognised by its USB ids, port names look like `COM5`, `/dev/ttyACM0` or `/dev/cu.usbmodem...`). It stops with a plain sentence when no band is found, when more than one answers, or when the band does not answer (unplug the cable and plug it back in, or press the BOOT button). A `--password` on the command line stays in your shell history, so leave it out and type it when asked.
+
 ### `openmuscle record`
 
 Record paired band + labeler data to CSV with temporal matching, without the browser. Only labelers that send UDP (the LASK5) work here; the camera and headset need the browser, so use `openmuscle web` for those.

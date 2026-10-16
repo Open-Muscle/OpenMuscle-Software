@@ -11,6 +11,7 @@ Usage:
     openmuscle web         Launch the browser-based UI (live + record + captures)
     openmuscle doctor      Check this computer and network, say what to fix
     openmuscle firewall    Show (and, if you agree, add) the Windows firewall rule
+    openmuscle setup-usb   Give a band its Wi-Fi over the USB cable
     openmuscle assets      Download the hand tracker + 3D viewer for offline use
 
 Everything is saved under one folder, ~/OpenMuscle (override with OPENMUSCLE_HOME
@@ -925,3 +926,60 @@ def firewall(public, yes, remove, print_only):
     else:
         click.echo("The rule was added, but it may not cover your current network "
                    "type; run 'openmuscle doctor' to check.")
+
+
+@main.command("setup-usb")
+@click.option("--port", "port_name", default=None, metavar="NAME",
+              help="The band's USB port (COM5, /dev/ttyACM0, /dev/cu.usbmodem...). "
+                   "Left out, the one band that answers is used.")
+@click.option("--ssid", default=None, metavar="NAME",
+              help="The Wi-Fi name to give the band (2.4 GHz networks only).")
+@click.option("--password", default=None, metavar="PW",
+              help="The Wi-Fi password. Left out, you are asked for it and nothing "
+                   "is shown while you type. Empty for a network with no password.")
+@click.option("--forget", is_flag=True, default=False,
+              help="Make the band forget its Wi-Fi instead (it restarts into setup mode).")
+def setup_usb(port_name, ssid, password, forget):
+    """Give a band its Wi-Fi over the USB cable, no setup network needed.
+
+    Plug the band into this computer with its USB cable (a cable that carries
+    data, not a charge-only one), then run this. The band saves the Wi-Fi name
+    and password, restarts, and joins your Wi-Fi within about 20 seconds; the
+    Studio then shows it. The password is only ever sent down the cable to the
+    band; it is not printed or written to a log.
+
+    \b
+    openmuscle setup-usb --ssid "My Wi-Fi"            asks for the password
+    openmuscle setup-usb --port COM5 --ssid "My Wi-Fi"
+    openmuscle setup-usb --forget                     start the band over
+    """
+    from openmuscle.provision import usb
+    from openmuscle.provision.client import ProvisionError
+
+    if forget and (ssid is not None or password is not None):
+        raise click.UsageError("--forget does not take --ssid or --password.")
+    if not forget and not ssid:
+        raise click.UsageError("Give the Wi-Fi name with --ssid NAME (or use --forget "
+                               "to clear the band's Wi-Fi).")
+    try:
+        if port_name:
+            band = usb.info(port_name)
+            band_id = band.band_id
+        else:
+            found = usb.pick_port(usb.list_ports())
+            port_name, band_id = found.port, found.band_id
+        click.echo(f"Found band {band_id} on {port_name}.")
+        if forget:
+            usb.forget_wifi(port_name, expect_id=band_id)
+            click.echo("The band has forgotten its Wi-Fi and is restarting into setup "
+                       "mode. Unplug and replug it if its light does not change.")
+            return
+        if password is None:
+            password = click.prompt("Wi-Fi password (empty if there is none)",
+                                    hide_input=True, default="", show_default=False)
+        usb.set_wifi(port_name, ssid, password, expect_id=band_id)
+    except (usb.UsbSetupError, ProvisionError) as e:
+        raise click.ClickException(e.message)
+    click.echo(f"Sent the Wi-Fi details to band {band_id}. It is restarting to join "
+               f'"{ssid}" and should appear in the Studio within about '
+               f"{usb.RESTART_WAIT_S} seconds. Keep the cable plugged in until then.")

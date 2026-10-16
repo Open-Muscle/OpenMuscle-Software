@@ -73,7 +73,8 @@ def check_python():
 
 
 def check_packages():
-    need = ["fastapi", "uvicorn", "numpy", "pandas", "sklearn", "click", "matplotlib"]
+    need = ["fastapi", "uvicorn", "numpy", "pandas", "sklearn", "click", "matplotlib",
+            "serial"]
     missing = [m for m in need if importlib.util.find_spec(m) is None]
     if not missing:
         return _chk("packages", "Required packages", PASS,
@@ -765,7 +766,7 @@ def versions():
            "platform": _platform.platform(),
            "machine": _platform.machine()}
     for name in ("openmuscle", "fastapi", "uvicorn", "numpy", "pandas",
-                 "scikit-learn", "click", "matplotlib", "pydantic"):
+                 "scikit-learn", "click", "matplotlib", "pydantic", "pyserial"):
         try:
             out[name] = importlib.metadata.version(name)
         except Exception:

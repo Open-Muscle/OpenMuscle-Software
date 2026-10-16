@@ -35,7 +35,9 @@ For a second instance during development use other ports (`--port 8020 --udp-por
 The **Set up a device** link in the top bar (and the empty state on the live view) opens a step-by-step page at `http://localhost:8000/setup` that puts a band, or the optional finger labeler, on your Wi-Fi. The user-facing walkthrough is [wifi-setup.md](../../../../docs/wifi-setup.md); the steps in code are:
 
 1. **Get ready:** a 2.4 GHz Wi-Fi, its name and password, no sign-in page (phone hotspot help included).
-2. **Choose** band or labeler, with the sticker name and light pattern to look for (and the screen text, if your device has one) and how to get it into setup mode (a band needs its USB cable plugged in for this).
+2. **Choose** band or labeler. A band goes to the **Plug the band into this computer** step (the USB road, below); the labeler goes to Join.
+
+   **The USB road (a band, the default).** The page polls `GET /api/setup/usb/ports` while the step is open, shows the band it finds (id and role; a chooser when several), asks for the Wi-Fi name (prefilled from `wifi-hint`) and password, and posts them to `POST /api/setup/usb/provision`. The band restarts and the page hands over to the Finish step with the band's id, so the green tick comes from the band announcing on the LAN. The computer never leaves its Wi-Fi. The button **Use the band's own Wi-Fi instead** leads to steps 3 to 5 below, for people without a data cable. The host side of the USB line protocol is `provision/usb.py`; `openmuscle setup-usb` is the same thing on the command line.
 3. **Join** the device's own `OM-...` network from this computer's Wi-Fi menu. The page notices when it is connected, shows the device id, and asks you to check it against the end of the name on the sticker (or the code on the device screen, if it has one).
 4. **Your Wi-Fi:** pick the name from the list the device sees (or type it), enter the password (Show/Hide), and send. "Remember for the next device" keeps the details in this browser tab only (`sessionStorage`; never `localStorage`, never on disk), so the second band needs no typing.
 5. **Finish:** reconnect this computer to your usual Wi-Fi; a checklist follows the restart and ends with "Band ... is online at <address>". After 60 seconds without the device it shows an ordered troubleshooting list (wrong password, 5 GHz or sign-in network, different network, firewall, router client isolation, add by address).
@@ -50,6 +52,8 @@ The page only talks to this program, which relays to the device (a browser on th
 | `POST /api/setup/reprovision` | `{device_id}`: put an online device (address taken from discovery) back in setup mode |
 | `GET /api/setup/wait?device_id=&timeout=&since=` | Long-poll (max 30 s) for the device to show up on your network: `{found, device?, waited_s}` |
 | `GET /api/setup/wifi-hint` | `{ssid}`: the Wi-Fi this computer is on (`netsh`, `nmcli` or `networksetup`), or `null` |
+| `GET /api/setup/usb/ports` | Bands plugged in with a USB cable: `{ports:[{port,description,answered,id,role,state,fw,wifi_ssid}]}`. A port with `answered:false` is plugged in but silent. Each answering band is asked `get_info` on its serial port; ports are found by the band's USB ids and nothing else is opened |
+| `POST /api/setup/usb/provision` | `{port, ssid, password, expect_id?}` to `{ok:true, id, role, reboot_in_ms, wait_s, since}` or `{ok:false, code, message}`. Codes: `no_port` (404), `many_ports`, `no_answer` (504, replug the band), `rejected` (422, with the band's own `band_code`), `wrong_device` (409), plus the same `ssid_length_invalid` / `password_length_invalid` as above. `port` must be one the operating system lists as a band. `since` is a moment after the band saves, so a beacon sent just before it restarts does not count as it joining |
 
 The troubleshooting list calls `GET /api/discovery/diagnose` when this version has it and shows a plain message when it does not.
 

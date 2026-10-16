@@ -1,8 +1,10 @@
 """Wi-Fi provisioning client for OpenMuscle bands and labelers.
 
 Talks to the small HTTP server a factory-fresh (or reset) device runs on its own
-access point (see PROVISIONING.md in the OpenMuscle-Hub repo). Stdlib only. No
-UI and no web routes live here; callers (CLI, web app) wrap these functions.
+access point (see PROVISIONING.md in the OpenMuscle-Hub repo), client.py, which is
+stdlib only; or, for a band on a USB cable, to the command channel on its USB
+serial port (usb.py, which needs pyserial). No UI and no web routes live here;
+callers (CLI, web app) wrap these functions.
 """
 
 from openmuscle.provision.client import (

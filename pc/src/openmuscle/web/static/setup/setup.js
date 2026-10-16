@@ -88,7 +88,8 @@
         else if (ev.type === 'restart') saveRemembered(null);
         if (state.step !== prev.step || ev.type === 'confirmId' || ev.type === 'pick'
             || ev.type === 'probe' || ev.type === 'changeWifi' || ev.type === 'send'
-            || ev.type === 'sendFail' || ev.type === 'restart' || ev.type === 'nextDevice') {
+            || ev.type === 'sendFail' || ev.type === 'restart' || ev.type === 'nextDevice'
+            || ev.type === 'useBandWifi' || ev.type === 'usbSend') {
             render();
         }
         return true;
@@ -96,7 +97,7 @@
 
     // ---- rendering ------------------------------------------------------------
     function drawProgress() {
-        const at = { prepare: 0, kind: 1, join: 2, wifi: 3, sending: 3, wait: 4, done: 4 }[state.step];
+        const at = { prepare: 0, kind: 1, join: 2, usb: 3, wifi: 3, sending: 3, wait: 4, done: 4 }[state.step];
         Array.prototype.forEach.call(progress.children, (li, i) => {
             li.className = i < at ? 'past' : i === at ? 'on' : '';
         });
@@ -106,7 +107,7 @@
         stopTimers();
         card.textContent = '';
         drawProgress();
-        const view = { prepare, kind, join, wifi, sending, wait, done }[state.step];
+        const view = { prepare, kind, join, usb, wifi, sending, wait, done }[state.step];
         view();
         window.scrollTo(0, 0);
     }
@@ -175,7 +176,11 @@
         banner().forEach(b => card.appendChild(b));
         card.appendChild(h('h2', { text: T.joinTitle }));
         card.appendChild(h('p', { class: 'dim', text: T.joinIntro }));
-        if (state.kind === 'band') card.appendChild(h('p', { class: 'dim', text: T.joinUsbBand }));
+        if (state.kind === 'band') {
+            card.appendChild(h('p', { class: 'dim', text: T.joinUsbBand }));
+            card.appendChild(h('p', { class: 'dim', text: T.joinBandLook }));
+            card.appendChild(h('p', { class: 'dim', text: T.joinBandReset }));
+        }
         card.appendChild(h('ol', { class: 'how' }, T.joinOs[state.os].map(t => h('li', { text: t }))));
         card.appendChild(h('p', { class: 'dim small', text: T.joinBrief }));
 
@@ -211,6 +216,120 @@
 
     function showJoinHint(el) {
         el.textContent = lastHint ? T.joinWifiNow(lastHint) : '';
+    }
+
+    // 3b. A band on the USB cable: find it, ask for the Wi-Fi, send it down the cable.
+    function usb() {
+        banner().forEach(b => card.appendChild(b));
+        card.appendChild(h('h2', { text: T.usbTitle }));
+        card.appendChild(h('p', { class: 'dim', text: T.usbIntro }));
+
+        const bandBox = h('div', { id: 'usb-bands' });
+        card.appendChild(bandBox);
+        const sendBtn = h('button', { class: 'primary', id: 'usb-send', text: T.wifiSend });
+        const own = h('div', { class: 'row' }, [
+            h('button', { id: 'usb-own', text: T.usbOwn, onclick: () => dispatch({ type: 'useBandWifi' }) }),
+            h('span', { class: 'dim small', text: T.usbOwnHelp }),
+        ]);
+
+        // The band list is redrawn in place on every poll; the form below it is not,
+        // so what the person has typed is never lost.
+        function paintBands() {
+            bandBox.textContent = '';
+            const bands = state.usbBands;
+            const picked = bands.find(b => b.port === state.usbPort) || null;
+            sendBtn.disabled = !picked;
+            if (!bands.length) {
+                bandBox.appendChild(h('div', { class: 'status' }, [
+                    h('span', { class: 'tick spin' }),
+                    h('div', { text: state.usbSilent ? T.usbSilent : T.usbWaiting }),
+                ]));
+                if (!state.usbSilent) bandBox.appendChild(h('p', { class: 'dim small', text: T.usbNone }));
+                return;
+            }
+            if (bands.length > 1) {
+                bandBox.appendChild(h('p', { text: T.usbChoose }));
+                bands.forEach(b => {
+                    const radio = h('input', { type: 'radio', name: 'usb-band', value: b.port });
+                    radio.checked = b.port === state.usbPort;
+                    radio.addEventListener('change', () => { dispatch({ type: 'usbPick', port: b.port }); paintBands(); });
+                    bandBox.appendChild(h('label', { class: 'check' }, [radio, h('span', { text: W.usbBandLabel(b) })]));
+                });
+            }
+            if (picked) {
+                const line = h('div', {}, [h('div', { text: T.usbFound(W.usbBandLabel(picked)) })]);
+                line.appendChild(h('div', { class: 'dim', text: T.usbCheck(W.idTail(picked.id)) }));
+                if (picked.state === 'provisioned' && picked.wifi_ssid) {
+                    line.appendChild(h('div', { class: 'dim', text: T.usbAlready(picked.wifi_ssid) }));
+                }
+                bandBox.appendChild(h('div', { class: 'status ok' }, [h('span', { class: 'tick on' }), line]));
+            }
+            if (state.usbSilent) bandBox.appendChild(h('p', { class: 'dim small', text: T.usbSilent }));
+        }
+        paintBands();
+
+        const msg = h('p', { class: 'dim small', id: 'usb-msg' });
+
+        if (state.useSaved && state.creds) {
+            sendBtn.textContent = T.wifiSavedSend;
+            sendBtn.addEventListener('click', () => sendUsb(null));
+            card.appendChild(h('p', { text: T.wifiSaved(state.creds.ssid) }));
+            card.appendChild(h('div', { class: 'row' }, [
+                sendBtn,
+                h('button', { text: T.wifiChange, onclick: () => dispatch({ type: 'changeWifi' }) }),
+                backButton(),
+            ]));
+        } else {
+            const nameInput = h('input', { type: 'text', id: 'wifi-name', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+            nameInput.value = typedName || (state.creds && state.creds.ssid) || state.hint || '';
+            const pw = h('input', { type: 'password', id: 'wifi-password', autocomplete: 'off', spellcheck: 'false' });
+            pw.value = typedPassword;
+            const toggle = h('button', { type: 'button', text: T.wifiShow, onclick: () => {
+                const show = pw.type === 'password';
+                pw.type = show ? 'text' : 'password';
+                toggle.textContent = show ? T.wifiHide : T.wifiShow;
+            } });
+            const rememberBox = h('input', { type: 'checkbox', id: 'wifi-remember' });
+            rememberBox.checked = rememberChoice;
+            card.appendChild(h('label', { for: 'wifi-name', text: T.wifiName }));
+            card.appendChild(h('div', { class: 'help', text: T.usbNameHelp }));
+            card.appendChild(nameInput);
+            card.appendChild(h('label', { for: 'wifi-password', text: T.wifiPassword }));
+            card.appendChild(h('div', { class: 'help', text: T.wifiPasswordHelp }));
+            card.appendChild(h('div', { class: 'pw' }, [pw, toggle]));
+            card.appendChild(h('label', { class: 'check', for: 'wifi-remember' }, [rememberBox, h('span', { text: T.wifiRemember })]));
+            sendBtn.addEventListener('click', () => {
+                typedName = nameInput.value;
+                typedPassword = pw.value;
+                rememberChoice = rememberBox.checked;
+                sendUsb({ ssid: nameInput.value, password: pw.value, remember: rememberBox.checked });
+            });
+            card.appendChild(h('div', { class: 'row' }, [sendBtn, backButton()]));
+            // Fill the box with this computer's Wi-Fi name if it is still empty once we know it.
+            refreshHint().then(() => {
+                if (state.step === 'usb' && nameInput.isConnected && !nameInput.value && state.hint) nameInput.value = state.hint;
+            });
+        }
+        card.appendChild(msg);
+        card.appendChild(own);
+
+        let inFlight = false;
+        const poll = async () => {
+            if (inFlight) return;
+            inFlight = true;
+            const r = await api('GET', '/api/setup/usb/ports');
+            inFlight = false;
+            if (state.step !== 'usb') return;
+            if (r.offline) { msg.textContent = T.errOffline; return; }
+            if (r.status === 403) { msg.textContent = T.errLocalOnly; return; }
+            msg.textContent = '';
+            if (r.ok && r.data) {
+                dispatch({ type: 'usbPorts', result: r.data });
+                if (bandBox.isConnected) paintBands();
+            }
+        };
+        poll();
+        timers.push(setInterval(poll, 2500));
     }
 
     // 4. Your Wi-Fi
@@ -321,6 +440,30 @@
         }
     }
 
+    // The same hand-over, down the USB cable: one call, and the band restarts.
+    async function sendUsb(form) {
+        const ev = form ? { type: 'usbSend', ssid: form.ssid, password: form.password, remember: form.remember }
+            : { type: 'usbSend', ssid: '', password: '', remember: true };
+        if (!dispatch(ev)) return;
+        if (state.step !== 'sending') return;      // validation said no; error is shown
+        const body = {
+            port: state.device.port,
+            ssid: state.sentSsid,
+            password: form ? form.password : state.creds.password,
+            expect_id: state.device.id,
+        };
+        const r = await api('POST', '/api/setup/usb/provision', body);
+        body.password = '';
+        if (r.offline) { dispatch({ type: 'sendFail', code: 'offline', message: T.errOffline }); return; }
+        const d = r.data || {};
+        if (r.ok && d.ok) {
+            typedPassword = '';
+            dispatch({ type: 'sendOk', id: d.id, since: d.since, now: Date.now() });
+        } else {
+            dispatch({ type: 'sendFail', code: d.code, message: d.message });
+        }
+    }
+
     // sending: a moment between the click and the device's answer
     function sending() {
         card.appendChild(h('div', { class: 'status' }, [h('span', { class: 'tick spin' }), h('div', { text: T.sending })]));
@@ -329,7 +472,8 @@
     // 5. Waiting for the device
     function wait() {
         const name = state.sentSsid;
-        card.appendChild(h('p', { class: 'big', text: name ? T.waitSaved(name) : T.waitSavedNoName }));
+        const viaUsb = state.via === 'usb';
+        card.appendChild(h('p', { class: 'big', text: viaUsb && name ? T.waitSavedUsb(name) : name ? T.waitSaved(name) : T.waitSavedNoName }));
         const list = h('div', {});
         card.appendChild(list);
         card.appendChild(h('p', { class: 'dim small', text: T.waitKeepOpen }));
@@ -357,10 +501,12 @@
         // Wi-Fi is this computer on now?
         async function sample() {
             if (token !== waitToken) return;
-            const [p, hint] = await Promise.all([api('GET', '/api/setup/probe'), api('GET', '/api/setup/wifi-hint')]);
-            if (token !== waitToken) return;
-            if (p.ok && p.data) signals.probeAnswering = !!p.data.reachable;
-            signals.hintSsid = hint.ok && hint.data ? (hint.data.ssid || null) : null;
+            if (!viaUsb) {
+                const [p, hint] = await Promise.all([api('GET', '/api/setup/probe'), api('GET', '/api/setup/wifi-hint')]);
+                if (token !== waitToken) return;
+                if (p.ok && p.data) signals.probeAnswering = !!p.data.reachable;
+                signals.hintSsid = hint.ok && hint.data ? (hint.data.ssid || null) : null;
+            }
             const v = paint();
             if (W.shouldScanNow(v.elapsedS, lastScanS)) {
                 lastScanS = v.elapsedS;
@@ -395,7 +541,7 @@
         wrap.appendChild(h('h3', { text: T.troubleTitle }));
         wrap.appendChild(h('p', { class: 'dim', text: T.troubleIntro }));
         const result = h('div', { class: 'small' });
-        const items = W.troubleshootingSteps(state.os).map(s => {
+        const items = W.troubleshootingSteps(state.os, state.via).map(s => {
             const li = h('li', {}, [h('strong', { text: s.title }), h('span', { text: s.body })]);
             if (s.action === 'restart') {
                 li.appendChild(h('div', {}, [h('button', { class: 'link', text: T.troubleAgain, onclick: () => dispatch({ type: 'restart' }) })]));
@@ -406,7 +552,7 @@
         });
         wrap.appendChild(h('ol', {}, items));
         wrap.appendChild(result);
-        wrap.appendChild(h('p', { class: 'dim small', text: T.doneForget }));
+        if (state.via !== 'usb') wrap.appendChild(h('p', { class: 'dim small', text: T.doneForget }));
         box.appendChild(wrap);
     }
 
@@ -457,7 +603,7 @@
             h('div', { class: 'tick on mark', 'aria-hidden': 'true' }),
             h('div', { class: 'big', text: T.doneOnline(W.deviceTitle(f.id, f.dev), f.ip || '?') }),
         ]));
-        card.appendChild(h('p', { class: 'dim small', text: T.doneForget }));
+        if (state.via !== 'usb') card.appendChild(h('p', { class: 'dim small', text: T.doneForget }));
         card.appendChild(h('div', { class: 'row' }, [
             h('button', { class: 'primary', text: T.doneNext, onclick: () => dispatch({ type: 'nextDevice' }) }),
             h('a', { class: 'btn', href: '/', text: T.doneFinish }),

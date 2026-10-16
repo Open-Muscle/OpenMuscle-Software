@@ -10,7 +10,7 @@ You have a kit with two FlexGrid bands and a laptop. You do not need to be a pro
 
 1. **[Getting started](docs/getting-started.md)**: the whole journey in order, with what you should see at every step (charge, install, start, see the heatmap, record, train, predict).
 2. **[Install](docs/getting-started.md#2-install-the-software)**: Windows, Mac and Linux installers; a by-hand fallback is on the same page.
-3. **[Put your bands on Wi-Fi](docs/wifi-setup.md)**: what network works, and the step-by-step setup.
+3. **[Put your bands on Wi-Fi](docs/wifi-setup.md)**: what network works, and the step-by-step setup. You plug each band into your computer with its USB cable and the Studio gives it your Wi-Fi; there is no setup network to join.
 4. **[Troubleshooting](docs/troubleshooting.md)**: find your problem by what you see.
 
 More guides:
@@ -106,6 +106,7 @@ openmuscle predict -m ~/OpenMuscle/models/<model folder>/model.pkl
 | `openmuscle web --model M.pkl --hand IP` | Same plus live inference, with optional UDP forwarding of predictions to an OpenHand device |
 | `openmuscle doctor [--report]` | Check the computer and network; `--report` writes a text file to send to support |
 | `openmuscle firewall` | Windows: show and add the firewall rule for UDP 3140 and 3141 |
+| `openmuscle setup-usb --ssid NAME` | Give a band its Wi-Fi over its USB cable (asks for the password); `--forget` clears it |
 | `openmuscle assets fetch` | Download offline copies of the camera hand tracker and the 3D hand viewer |
 | `openmuscle bundle <session>` | Pack a session into one zip to send to someone |
 | `openmuscle receive` | Live heatmap of sensor data (matplotlib) |
