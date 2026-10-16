@@ -175,6 +175,7 @@
         banner().forEach(b => card.appendChild(b));
         card.appendChild(h('h2', { text: T.joinTitle }));
         card.appendChild(h('p', { class: 'dim', text: T.joinIntro }));
+        if (state.kind === 'band') card.appendChild(h('p', { class: 'dim', text: T.joinUsbBand }));
         card.appendChild(h('ol', { class: 'how' }, T.joinOs[state.os].map(t => h('li', { text: t }))));
         card.appendChild(h('p', { class: 'dim small', text: T.joinBrief }));
 

@@ -301,6 +301,15 @@ test('the setup wording offers the sticker and the no-screen light pattern', () 
     assert.match(T.kindIntro, /sticker/i);
     assert.match(T.kinds.band.look, /two quick blinks then a pause/i);
     assert.match(T.kinds.band.reset, /light/i);
+    // Setup mode needs the USB cable: the Choose and Join steps say so, and say what the light does.
+    assert.match(T.kindIntro, /USB cable/i);
+    assert.match(T.kindIntro, /battery alone/i);
+    assert.match(T.kinds.band.look, /USB cable/i);
+    assert.match(T.kinds.band.look, /faint glow/i);
+    assert.match(T.kinds.band.reset, /faint glow/i);
+    assert.match(T.kinds.band.reset, /dark light means the band is switched off/i);
+    assert.match(T.joinUsbBand, /USB cable/i);
+    assert.match(T.joinUsbBand, /battery alone/i);
     ['windows', 'mac', 'linux'].forEach(os => {
         const pw = T.joinOs[os].filter(l => /password/i.test(l)).join(' ');
         assert.match(pw, /sticker/i, os);
