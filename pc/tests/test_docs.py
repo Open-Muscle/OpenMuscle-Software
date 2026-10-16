@@ -235,3 +235,37 @@ def test_cheat_sheet_light_table_and_setup_steps_match_the_band():
     assert "Plug in for Wi-Fi setup" in text
     assert "USB cable plugged in, blue light blinking" in text
     assert EM_DASH not in _read(sheet)
+
+
+def test_windows_install_prompts_and_the_private_network_check():
+    """A cold run of the Windows install showed two dialogs a recipient must
+    answer (the administrator question for the firewall rule, and the Windows
+    Security Alert for python.exe during the installer's own check) and a trap:
+    a network Windows calls Public is outside the firewall rule, so no band is
+    ever found. Every install page says so, in the same words."""
+    started = _read(DOCS / "getting-started.md")
+    installers = _read(REPO / "installers" / "README.md")
+    trouble = _read(DOCS / "troubleshooting.md")
+    for name, text in (("getting-started.md", started), ("installers/README.md", installers)):
+        assert "Windows Security Alert" in text, name
+        assert "python.exe" in text, name
+        assert "Allow access" in text, name
+        assert "make changes" in text, name
+        assert "Network profile type" in text, name
+        assert "Private" in text and "Public" in text, name
+    # The alert is described inside the install step, before Start the Studio.
+    install = started.split("## 3. Start the Studio")[0]
+    assert "Windows Security Alert" in install and "make changes" in install
+    # The Private check is its own step straight after the install.
+    assert re.search(r"(?m)^## 2b\. Windows: check your Wi-Fi is set to Private$", started)
+    assert started.index("## 2b.") < started.index("## 3. Start the Studio")
+    section = started.split("## 2b.")[1].split("\n## 3.")[0]
+    assert "You should see" in section
+    # The Wi-Fi step says the band gets its Wi-Fi over USB from the wizard.
+    step4 = started.split("## 4. Put the bands on your Wi-Fi")[1].split("\n## 5.")[0]
+    assert "USB cable" in step4 and "Set up a device" in step4 and "wifi-setup.md" in step4
+    # The "No band found yet" row in troubleshooting leads with the Public profile.
+    row = [l for l in trouble.splitlines() if l.startswith("| No band found yet.")]
+    assert row and "Private" in row[0] and "Public" in row[0]
+    assert row[0].index("Private") < row[0].index("A band does not show up")
+
