@@ -324,6 +324,28 @@ def test_open_serial_sets_dtr_and_rts_before_the_open(monkeypatch):
     assert not [e for e in events[i_open + 1:] if e[0] == "set"]
 
 
+def test_open_serial_permission_denied_on_linux_names_the_dialout_group(monkeypatch):
+    serial = pytest.importorskip("serial")
+
+    class Denied:
+        def __setattr__(self, name, value):
+            pass
+
+        def open(self):
+            raise serial.SerialException(
+                "could not open port '/dev/ttyACM0': PermissionError(13, 'Permission denied')")
+
+    monkeypatch.setattr(serial, "Serial", Denied)
+    monkeypatch.setattr(usb.sys, "platform", "linux")
+    with pytest.raises(usb.UsbSetupError) as e:
+        usb._open_serial("/dev/ttyACM0")
+    assert e.value.code == "no_port" and "dialout" in e.value.message
+    monkeypatch.setattr(usb.sys, "platform", "win32")
+    with pytest.raises(usb.UsbSetupError) as e:
+        usb._open_serial("COM5")
+    assert "dialout" not in e.value.message and "serial monitor" in e.value.message
+
+
 def test_open_serial_failure_is_no_port(monkeypatch):
     serial = pytest.importorskip("serial")
 

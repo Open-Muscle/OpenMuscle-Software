@@ -144,6 +144,21 @@ Screens (only on a band that has a screen; the kit bands do not): `WIFI SETUP` (
 
 ## Wi-Fi problems
 
+### Setting up over the USB cable
+
+This is about Method 1 in [wifi-setup.md](wifi-setup.md): the Studio gives the band your Wi-Fi down its USB cable. Find what you see in the first column.
+
+| What you see | What is wrong | What to do |
+|---|---|---|
+| **Looking for a band on the USB cable...** and it never turns into **Found Band ...**; or **No band found yet** | The computer cannot see the band on USB. Most often the cable only charges (it has no data wires), is not pushed in at both ends, or is plugged into a hub or a charger | Use the cable that came with the kit, which carries data. Push it in at both ends, use a USB port on the computer itself, and try another port. A data cable is needed: a charge-only cable lights the band but is never found |
+| **A band is plugged in but is not answering** | The band is on USB but is not listening. A band that has sat on USB for a few minutes with nothing talking to it can stop answering | Unplug the cable and plug it back in (or press the BOOT button), then try again |
+| **More than one band is plugged in** | Two bands are on USB, and the page cannot know which one you mean | Unplug all but the one you are setting up, or choose it in the list. The last six characters of the name match the **Setup Wi-Fi** line on the band's sticker |
+| **Could not open the USB port** | Another program has the band open, such as a serial monitor or a flashing tool, or the cable came out | Close the other program, unplug the cable, plug it back in, and try again |
+| **Could not open the USB port**, and it says this account is not allowed to use USB serial devices (Linux only) | Linux keeps USB serial devices for the `dialout` group, and your account is not in it | In a terminal run `sudo usermod -a -G dialout $USER` (on Arch Linux the group is `uucp`), log out and back in, then try again |
+| **The band could not save the Wi-Fi details** | The band received them but could not store them | Unplug the cable, plug it back in, and try again. If it keeps happening, use the band's own Wi-Fi instead (Method 2 in [wifi-setup.md](wifi-setup.md)) |
+| **This band's software does not know how to be set up over USB** | The band has older software than this page expects | Use the band's own Wi-Fi instead, or ask for a firmware update |
+| It said **Saved on the band** but the band never appears | The band could not join your Wi-Fi (wrong password, 5 GHz only, a sign-in page, or a guest network) | Click **Start over with this device** when the list opens, retype the password with **Show** turned on, and go through the list in [wifi-setup.md](wifi-setup.md#if-the-band-does-not-appear-within-a-minute) |
+
 ### The band keeps going back to setup mode
 
 It could not join. Its light shows an amber fast blink and then the blue setup pattern again. A band with a screen shows `WIFI SETUP` and, on its top line, `LAST TRY FAILED` and a reason: `check password` (retype it), `network not found or 5 GHz` (check the name, move closer, use a 2.4 GHz network) or `join timed out` (check the router). Run [wifi-setup.md](wifi-setup.md) again. Use **Show** in the wizard to see what you typed.

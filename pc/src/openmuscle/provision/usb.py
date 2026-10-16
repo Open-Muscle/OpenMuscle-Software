@@ -36,6 +36,7 @@ of any repr. Lines received from the band are not logged either.
 import itertools
 import json
 import logging
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -62,8 +63,9 @@ _MESSAGES = {
                 "try again."),
     "many_ports": ("More than one band is plugged in. Unplug all but the one you "
                    "want to set up, then try again."),
-    "no_answer": ("The band did not answer on the USB cable. Unplug the cable and "
-                  "plug it back in (or press the BOOT button), then try again."),
+    "no_answer": (
+        "The band did not answer on the USB cable. "
+        "Unplug the cable and plug it back in (or press the BOOT button), then try again."),
     "rejected": "The band did not accept that request.",
 }
 
@@ -211,12 +213,17 @@ def _open_serial(port):
         ser.rts = False
         ser.open()
     except (OSError, ValueError, serial.SerialException) as e:
-        raise UsbSetupError(
-            "no_port",
-            "Could not open the USB port %s. Another program may be using the band "
-            "(close any serial monitor), or the cable was unplugged. Unplug the "
-            "cable, plug it back in, and try again." % port,
-            detail="%s: %s" % (type(e).__name__, e))
+        text = "%s: %s" % (type(e).__name__, e)
+        if "permission" in text.lower() and sys.platform.startswith("linux"):
+            msg = ("Could not open the USB port %s: this account is not allowed to use "
+                   "USB serial devices. Add yourself to the dialout group (the "
+                   "Troubleshooting guide shows how), log out and back in, then try "
+                   "again." % port)
+        else:
+            msg = ("Could not open the USB port %s. Another program may be using the band "
+                   "(close any serial monitor), or the cable was unplugged. Unplug the "
+                   "cable, plug it back in, and try again." % port)
+        raise UsbSetupError("no_port", msg, detail=text)
     return ser
 
 
