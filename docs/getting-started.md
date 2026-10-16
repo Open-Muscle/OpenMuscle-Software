@@ -46,11 +46,11 @@ Some words on this page are explained in the [glossary](glossary.md).
 
 ## 1. Charge the bands and switch them on
 
-1. Plug a USB-C cable into a band and into a USB power source. A band switches on whenever USB power is connected, and charges whenever USB is connected.
-2. If the light on the band stays off, press its power button once (the switch at the top edge). Pressing it again switches the band off.
+1. Plug a USB-C cable into a band and into a USB power source. The band charges whenever USB is connected. Leave the cable plugged in through step 4, because on battery alone the band cannot start its setup network.
+2. Look at the light. A band that is powered always shows a **faint glow** (it can look white or yellow); a dark light means the band is switched off. If the light is dark, press its power button once (the switch at the top edge). The faint glow tells you the press switched it on. Pressing the button again switches the band off.
 3. Leave it plugged in for the first hour or two.
 
-**You should see:** a light on the band blinking **blue, two quick blinks then a pause**. The kit bands have no screen, so that is the normal pattern for a band that has never been set up, not a fault. It is setup mode, exactly what you want for step 4.
+**You should see:** the faint glow, and over it a light blinking **blue, two quick blinks then a pause**. The kit bands have no screen, so that is the normal pattern for a band that has never been set up, not a fault. It is setup mode, exactly what you want for step 4.
 
 Find the **sticker** on each band. It carries the band's own setup Wi-Fi name and password, which you need in step 4:
 
@@ -61,7 +61,7 @@ Setup password   kd3mpq72xy
 
 The name and the password are different on every band (yours will differ from this example). Keep each band with its own sticker. If a band does have a small screen, it shows the same name and password and its light blinks blue once a second. The lights are listed on the [device reference](device-reference.md) card and in [troubleshooting.md](troubleshooting.md#what-the-bands-light-and-screen-mean).
 
-Not seeing any light at all? Try another USB cable or port and give it a few minutes. See [Battery and charging](troubleshooting.md#battery-and-charging).
+Light dark, even after you press the power button? Try another USB cable or port and give it a few minutes. Only the faint glow, and never a blue blink? Check the USB cable is plugged in. See [Battery and charging](troubleshooting.md#battery-and-charging) and [the light table](troubleshooting.md#what-the-bands-light-and-screen-mean).
 
 ## 2. Install the software
 
@@ -119,7 +119,7 @@ and your browser opens a page called **OpenMuscle Studio**. If it does not open,
 
 ## 4. Put the bands on your Wi-Fi
 
-You do this once per band. The Studio walks you through it.
+You do this once per band. The Studio walks you through it. Keep each band plugged into its USB cable until the page says it is online; after that it also runs on battery.
 
 1. In the Studio, click **Set up a device** (top right).
 2. Follow the pages: **Get ready**, **Choose** (**A band**), **Join** (connect your computer to the `OM-flexgrid-...` network named on the band's sticker, using the setup password from the sticker), **Your Wi-Fi** (pick your network and type its password), **Finish**.

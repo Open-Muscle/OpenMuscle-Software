@@ -96,7 +96,7 @@ OpenMuscle asks Windows and macOS not to sleep from inactivity, but closing the 
 
 **You should see**, a few seconds after the band joined your Wi-Fi, a row for the band with a heatmap. Instead you see **No band found yet.** Check these in order:
 
-1. **Is the band on and joined?** Look at its light. After joining it is green for 2 seconds, then it pulses every 3 seconds (waiting for a computer) or is steady orange (a computer is receiving). If it is still blinking blue, it is not on your Wi-Fi yet: see [wifi-setup.md](wifi-setup.md). (A band with a screen also shows `WIFI OK` and then the heatmap, and tapping **MENU** shows its status page with its address. The kit bands have no screen, so use the light; the band's address is also in your router's list of devices.)
+1. **Is the band on and joined?** Look at its light. A powered band always shows a faint glow, and a dark light means it is switched off (press the power button once). After joining it is green for 2 seconds, then it pulses every 3 seconds (waiting for a computer) or is steady orange (a computer is receiving). If it is still blinking blue, it is not on your Wi-Fi yet: see [wifi-setup.md](wifi-setup.md). (A band with a screen also shows `WIFI OK` and then the heatmap, and tapping **MENU** shows its status page with its address. The kit bands have no screen, so use the light; the band's address is also in your router's list of devices.)
 2. **Is your computer on the same Wi-Fi?** Check the Wi-Fi icon. A computer on the guest network, on another router, on a VPN, or still on the band's `OM-` network cannot see the band. Turn off any VPN while you work.
 3. **Is the Wi-Fi 2.4 GHz and is it a normal network?** See [Wi-Fi problems](#wi-fi-problems). Guest networks and networks with a sign-in page hide devices from each other.
 4. **Is the firewall blocking it?** This is the most common reason on Windows. See [Firewall](#firewall-windows-mac-linux).
@@ -112,6 +112,9 @@ The full card is [device-reference.md](device-reference.md). In short:
 
 | Light | Meaning | What to do |
 |---|---|---|
+| Faint glow, always (it can look white or yellow) | The band is powered on. The glow sits under every other pattern, so a powered band is never fully dark | Nothing |
+| Dark, no light at all | The band is switched off | Press the power button once; the faint glow shows that it is on. If it stays dark, try another USB cable or port |
+| Faint glow only, and it never blinks blue when you want to set up Wi-Fi | The band's setup network has not started. On battery alone the band cannot start its setup network | Plug the band into USB, then look again for the blue double blink. See [wifi-setup.md](wifi-setup.md) |
 | Blue, one blink per second | Setup mode: ready for Wi-Fi details | [wifi-setup.md](wifi-setup.md) |
 | Blue, two quick blinks then a pause | Setup mode on a band without a screen. This is the normal pattern for the kit bands, not a fault | Read the setup name and password from the sticker on the band, then follow [wifi-setup.md](wifi-setup.md) |
 | Blue, steady | Joining your Wi-Fi | Wait up to 20 seconds |
@@ -133,7 +136,7 @@ Screens (only on a band that has a screen; the kit bands do not): `WIFI SETUP` (
 
 ### The buttons on the band
 
-- **Power button** (the switch at the top edge): a short press switches the band on, and a short press again switches it off. How the press feels, and whether a press while USB is plugged in switches it off, is still to be confirmed on a band; if it will not switch off, unplug USB-C first.
+- **Power button** (the switch at the top edge): a short press switches the band on, and a short press again switches it off. The faint glow shows which one your press did: lit means on, dark means off. How the press feels, and whether a press while USB is plugged in switches it off, is still to be confirmed on a band; if it will not switch off, unplug USB-C first.
 - **MENU** and **SELECT**: the two buttons the band itself reads. Hold MENU for 2 seconds for charge mode, tap SELECT to leave it (or to pause and resume), and hold both together for 3 seconds to forget the Wi-Fi.
 - **The switch printed BOOT**: restarts the band, like a reset button. It does not erase your Wi-Fi settings.
 - **The switch printed SW_RST1 at the bottom left**: not used in normal use. Holding it while pressing BOOT puts the chip in download mode so that a stuck board can be reflashed. If you did that by accident, press BOOT alone to restart.
@@ -155,7 +158,7 @@ That is expected while you are joined to the band's own network. Rejoin your nor
 
 ### The setup page at 192.168.4.1 will not open
 
-Check, in order: you are joined to the band's `OM-flexgrid-...` network (not your normal one); you typed `http://192.168.4.1` with `http`, not `https`; you turned off mobile data on a phone and any VPN on a computer; and the band's light is still blinking blue (setup mode). On a phone, answer yes if it asks to stay connected to a network without internet.
+Check, in order: you are joined to the band's `OM-flexgrid-...` network (not your normal one); you typed `http://192.168.4.1` with `http`, not `https`; you turned off mobile data on a phone and any VPN on a computer; the USB cable is plugged into the band (setup mode does not start on battery alone); and the band's light is still blinking blue (setup mode). On a phone, answer yes if it asks to stay connected to a network without internet.
 
 ### The Wi-Fi is 5 GHz only
 
@@ -273,6 +276,8 @@ The Camera panel says in plain words what happened. The causes and fixes (camera
 
 - Plug in USB-C. The band charges whenever USB is connected. For the fastest charge, hold **MENU** for 2 seconds to enter charge mode (the Wi-Fi turns off and the light pulses purple, then turns steady purple when full; a band with a screen also says `CHARGING`). Leaving charge mode restarts the band.
 - If it does not charge, try another cable and another USB port or a phone charger.
+- Setting up Wi-Fi needs the USB cable plugged in: on battery alone the band cannot start its setup network. After that it runs on battery.
+- A band that sits on USB for five minutes with no app listening stops answering the USB check tool from the firmware repository. Press **BOOT** or unplug and replug the cable to bring it back.
 - A band with a low battery shows an amber blink (once a second), and `LOW BATTERY` on its screen if it has one.
 
 ## Still stuck

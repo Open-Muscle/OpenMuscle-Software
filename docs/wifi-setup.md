@@ -10,6 +10,8 @@ Until it knows your Wi-Fi, a band makes a small Wi-Fi network of its own, named 
 
 Your Wi-Fi password is stored in the band's own memory, so you only do this once per band (and again only if you change networks).
 
+**Do this setup with the USB cable plugged in.** On battery alone the band cannot start its setup network. Once the band has your Wi-Fi saved, it runs on battery as normal.
+
 **The kit bands have no screen.** The small screen header on the band is left empty, so there is nothing to read. The name and the password of the band's own setup network are on the **sticker** on the band, in the lines **Setup Wi-Fi** and **Setup password**. The band's light tells you what it is doing; the table in [troubleshooting.md](troubleshooting.md#what-the-bands-light-and-screen-mean) lists every pattern. A band that does have a screen shows the same name and password on it.
 
 ## Before you start
@@ -40,7 +42,7 @@ While your computer is joined to the band's `OM-` network it **has no internet**
 
 You need the Studio running first (see [getting-started.md](getting-started.md), step 3). The wizard works only in the browser on the computer that runs OpenMuscle.
 
-1. **Turn the band on, and find its name and password on the sticker.** Look at the light. If it stays off, press the power button at the top edge once; if it still does nothing, plug in USB-C for a few minutes. A band that has never been set up goes straight to setup mode. You should see its light blink **blue, two quick blinks then a pause**. For a band without a screen, that is the normal setup pattern and not a fault.
+1. **Plug the band into USB, turn it on, and find its name and password on the sticker.** Plug the USB-C cable into the band and into a USB power source (a laptop port or a phone charger) and leave it plugged in until setup is finished. Look at the light. A band that is powered always shows a **faint glow** (it can look white or yellow); a dark light means the band is switched off. If the light is dark, press the power button at the top edge once: the faint glow tells you that the press switched the band on. A band that has never been set up goes straight to setup mode. You should see its light blink **blue, two quick blinks then a pause**. For a band without a screen, that is the normal setup pattern and not a fault.
 
    Find the sticker on the band. It has lines like these (yours will differ):
 
@@ -62,7 +64,7 @@ You need the Studio running first (see [getting-started.md](getting-started.md),
 
    The network name is long, so the screen splits it over two lines: read them together as `OM-flexgrid-d7af0b`. The last line, after `PW`, is the password.
 
-   Not blinking blue? The band already has a Wi-Fi saved. Hold the **MENU** and **SELECT** buttons together for 3 seconds (see [Starting over](#starting-over) below). If the light is off, press the power button once; if it still does nothing, plug in USB-C for a few minutes.
+   Only the faint glow, and it never blinks blue? Check that the USB cable is plugged in at both ends (try another cable or port), because on battery alone the band cannot start its setup network. If the light is dark, press the power button once. If the band shows green or another pattern instead, it already has a Wi-Fi saved: hold the **MENU** and **SELECT** buttons together for 3 seconds (see [Starting over](#starting-over) below).
 
 2. **Open the wizard.** In the Studio, click **Set up a device** in the top right. (Or open `http://localhost:8000/setup`; use the address your start-up window printed if it is not 8000.)
 
@@ -81,7 +83,7 @@ You need the Studio running first (see [getting-started.md](getting-started.md),
 
 7. **Reconnect your computer.** The page says **Saved. The device is restarting (about 20 seconds). Now reconnect this computer to "your Wi-Fi name".** Join your normal Wi-Fi again from the Wi-Fi menu. The page shows a checklist that ticks off as the band restarts, your computer comes back, and the band appears.
 
-8. **Done.** You should see **Band flexgrid-d7af0b is online at 192.168.x.x** (the numbers are the band's address on your network; you never need to type them). The band's light is green for two seconds, then steady orange once your computer is receiving its readings (a band with a screen also shows `WIFI OK` and the same address). Click **Set up the next device** for the second band, or **Go to the live view**.
+8. **Done.** You should see **Band flexgrid-d7af0b is online at 192.168.x.x** (the numbers are the band's address on your network; you never need to type them). The band's light is green for two seconds, then steady orange once your computer is receiving its readings (a band with a screen also shows `WIFI OK` and the same address). From now on the band also runs on battery alone. Click **Set up the next device** for the second band, or **Go to the live view**.
 
 9. **Tidy up.** In your computer's Wi-Fi list, tell it to forget the `OM-` network so it does not reconnect to the band by mistake:
    - **Windows:** Settings, Network and internet, Wi-Fi, Manage known networks, choose the `OM-` network, **Forget**.
@@ -115,7 +117,7 @@ A failed first join shows an amber fast blink for about 2 seconds, then the band
 
 You can skip the wizard. This works from a phone too, which is handy if your computer is busy.
 
-1. Turn the band on and find its name and password on the sticker as in Method 1, step 1.
+1. Plug the band into USB, turn it on and find its name and password on the sticker as in Method 1, step 1. Keep it plugged in until it has joined.
 2. On the computer or phone, join the `OM-flexgrid-...` network with the **Setup password** from the sticker. (On a phone, if it asks whether to stay connected to a network with no internet, say yes. Turning off mobile data for a minute helps.)
 3. Open a browser and type exactly `http://192.168.4.1` (use `http`, not `https`). The page is titled **OpenMuscle: connect to Wi-Fi**.
 4. Fill in **Wi-Fi name (SSID)** and **Wi-Fi password**, and press **Connect**. The page says **Saved. Device is rebooting; reconnect to your home Wi-Fi.**
@@ -127,7 +129,7 @@ The band shows up in the Studio by itself within about half a minute.
 
 To make a band forget its Wi-Fi and go back to setup mode (you changed networks, or typed the wrong one and it joined something else):
 
-1. Hold the **MENU** and **SELECT** buttons together.
+1. Keep the band plugged into USB (setup mode does not start on battery alone), and hold the **MENU** and **SELECT** buttons together.
 2. The light blinks magenta. If you let go now, the Wi-Fi settings are wiped.
 3. Keep holding for 3 seconds, then let go. The band restarts into setup mode (blue light; a band with a screen shows `WIFI SETUP`). Its network name and password are the same as before, and still match the sticker.
 

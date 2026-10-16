@@ -190,7 +190,7 @@ The **card** shows:
 Set **role** to **left** or **right** to say which arm each band is on. With two
 bands, each must have a different arm before **Record** will work.
 
-The role is sent to the band too, so its light (and its screen, if it has one) show it. A band that
+The role is sent to the band too, so its light (and its screen, if it has one) show it. The band's light always keeps a faint glow underneath while the band is powered, so a dark light means it is switched off. A band that
 already has a role stored (for example one tagged before it was sent to you) shows
 that role here by itself the first time the Studio hears from it. If the Studio
 cannot reach a band when you change its role, your choice still stands in the
