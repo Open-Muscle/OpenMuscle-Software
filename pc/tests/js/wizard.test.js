@@ -112,7 +112,7 @@ const probeOk = (id, dev, st) => ({ type: 'probe', result: { reachable: true, in
 
 test('happy path reaches the send step from the start', () => {
     let s = W.initial({ os: 'windows', hint: 'HomeNet' });
-    s = pass(s, [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-d7af0b'), { type: 'confirmId', yes: true }]);
+    s = pass(s, [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-d7af0b'), { type: 'confirmId', yes: true }]);
     assert.equal(s.step, 'wifi');
     assert.equal(s.hint, 'HomeNet');
     s = W.reduce(s, { type: 'send', ssid: 'HomeNet', password: 'correct horse', remember: true });
@@ -128,14 +128,14 @@ test('happy path reaches the send step from the start', () => {
 test('probe is ignored outside the join step and unreachable clears an unconfirmed match', () => {
     const s0 = W.initial({});
     assert.equal(W.reduce(s0, probeOk('a')), s0);
-    let s = pass(s0, [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa')]);
+    let s = pass(s0, [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa')]);
     assert.equal(s.device.id, 'flexgrid-aaaaaa');
     s = W.reduce(s, { type: 'probe', result: { reachable: false } });
     assert.equal(s.device, null);
 });
 
 test('a device that is already on Wi-Fi is not accepted', () => {
-    const s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa', 'flexgrid', 'provisioned')]);
+    const s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa', 'flexgrid', 'provisioned')]);
     assert.equal(s.device, null);
     assert.equal(s.notice, T.joinAlreadyOnline);
 });
@@ -147,7 +147,7 @@ test('picking the wrong kind is corrected to what answered', () => {
 });
 
 test('saying no to the device id keeps it from coming straight back', () => {
-    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa')]);
+    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa')]);
     s = W.reduce(s, { type: 'confirmId', yes: false });
     assert.equal(s.device, null);
     assert.equal(s.step, 'join');
@@ -156,7 +156,7 @@ test('saying no to the device id keeps it from coming straight back', () => {
 });
 
 test('validation failure stays on the Wi-Fi step with a plain error', () => {
-    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true }]);
+    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true }]);
     s = W.reduce(s, { type: 'send', ssid: 'Home', password: 'short' });
     assert.equal(s.step, 'wifi');
     assert.equal(s.error.message, T.errPasswordShort);
@@ -164,7 +164,7 @@ test('validation failure stays on the Wi-Fi step with a plain error', () => {
 });
 
 test('send failure returns to the Wi-Fi step with the mapped message', () => {
-    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'),
+    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa'),
         { type: 'confirmId', yes: true }, { type: 'send', ssid: 'Home', password: 'correct horse' }]);
     s = W.reduce(s, { type: 'sendFail', code: 'wrong_device', message: 'x' });
     assert.equal(s.step, 'wifi');
@@ -177,7 +177,7 @@ test('three devices in a row need the Wi-Fi password entered once', () => {
     s = pass(s, [{ type: 'next' }]);
     for (let i = 0; i < 3; i++) {
         const id = 'flexgrid-00000' + i;
-        s = pass(s, [{ type: 'pick', kind: 'band' }, probeOk(id), { type: 'confirmId', yes: true }]);
+        s = pass(s, [{ type: 'pick', kind: 'band', setupNetwork: true }, probeOk(id), { type: 'confirmId', yes: true }]);
         assert.equal(s.step, 'wifi');
         if (s.useSaved && s.creds) {
             s = W.reduce(s, { type: 'send', ssid: '', password: '' });          // "send the same details"
@@ -196,7 +196,7 @@ test('three devices in a row need the Wi-Fi password entered once', () => {
 });
 
 test('not remembering clears the details after sending', () => {
-    const s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'),
+    const s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa'),
         { type: 'confirmId', yes: true }, { type: 'send', ssid: 'Home', password: 'correct horse', remember: false }]);
     assert.equal(s.creds, null);
     assert.equal(s.useSaved, false);
@@ -211,7 +211,7 @@ test('remembered details from the tab skip the Wi-Fi entry', () => {
 
 test('restart from the troubleshooting list drops the saved details and goes back to joining', () => {
     let s = W.initial({ remembered: { ssid: 'Home', password: 'correct horse' } });
-    s = pass(s, [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true },
+    s = pass(s, [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true },
         { type: 'send', ssid: '', password: '' }, { type: 'sendOk', id: 'flexgrid-aaaaaa', now: 0 }]);
     s = W.reduce(s, { type: 'restart' });
     assert.equal(s.step, 'join');
@@ -220,7 +220,7 @@ test('restart from the troubleshooting list drops the saved details and goes bac
 });
 
 test('restart clears typed details too, so a wrong password is never offered again', () => {
-    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true },
+    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa'), { type: 'confirmId', yes: true },
         { type: 'send', ssid: 'Home', password: 'wrong guess' }, { type: 'sendOk', id: 'flexgrid-aaaaaa', now: 0 }]);
     assert.equal(s.creds.password, 'wrong guess');
     s = W.reduce(s, { type: 'restart' });
@@ -229,7 +229,7 @@ test('restart clears typed details too, so a wrong password is never offered aga
 });
 
 test('back moves one step and never past the first', () => {
-    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }]);
+    let s = pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }]);
     s = W.reduce(s, { type: 'back' });
     assert.equal(s.step, 'kind');
     s = W.reduce(s, { type: 'back' });
@@ -239,7 +239,7 @@ test('back moves one step and never past the first', () => {
 
 // ---- waiting ----
 function waiting() {
-    return pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band' }, probeOk('flexgrid-aaaaaa'),
+    return pass(W.initial({}), [{ type: 'next' }, { type: 'pick', kind: 'band', setupNetwork: true }, probeOk('flexgrid-aaaaaa'),
         { type: 'confirmId', yes: true }, { type: 'send', ssid: 'HomeNet', password: 'correct horse' },
         { type: 'sendOk', id: 'flexgrid-aaaaaa', since: 5, now: 100000 }]);
 }
@@ -297,17 +297,19 @@ test('describeDiagnose is tolerant', () => {
 });
 
 // ---- the kit bands have no screen ----
-test('the setup wording offers the sticker and the no-screen light pattern', () => {
-    assert.match(T.kindIntro, /sticker/i);
-    assert.match(T.kinds.band.look, /two quick blinks then a pause/i);
-    assert.match(T.kinds.band.reset, /light/i);
-    // Setup mode needs the USB cable: the Choose and Join steps say so, and say what the light does.
+test('the setup-network wording offers the sticker and the no-screen light pattern', () => {
+    // The USB cable is the first choice for a band; the band's own Wi-Fi keeps its old wording.
     assert.match(T.kindIntro, /USB cable/i);
-    assert.match(T.kindIntro, /battery alone/i);
     assert.match(T.kinds.band.look, /USB cable/i);
-    assert.match(T.kinds.band.look, /faint glow/i);
-    assert.match(T.kinds.band.reset, /faint glow/i);
-    assert.match(T.kinds.band.reset, /dark light means the band is switched off/i);
+    assert.match(T.kinds.band.reset, /own Wi-Fi/i);
+    assert.match(T.joinBandLook, /sticker/i);
+    assert.match(T.joinBandLook, /two quick blinks then a pause/i);
+    assert.match(T.joinBandLook, /USB cable/i);
+    assert.match(T.joinBandLook, /faint glow/i);
+    assert.match(T.joinBandReset, /light/i);
+    assert.match(T.joinBandReset, /faint glow/i);
+    assert.match(T.joinBandReset, /dark light means the band is switched off/i);
+    // Setup mode needs the USB cable: the Join step says so.
     assert.match(T.joinUsbBand, /USB cable/i);
     assert.match(T.joinUsbBand, /battery alone/i);
     ['windows', 'mac', 'linux'].forEach(os => {
