@@ -8,6 +8,7 @@ Allow about an hour the first time: most of it is waiting for the install and fo
 
 1. [Charge the bands and switch them on](#1-charge-the-bands-and-switch-them-on)
 2. [Install the software](#2-install-the-software)
+   - Windows only: [check your Wi-Fi is set to Private](#2b-windows-check-your-wi-fi-is-set-to-private)
 3. [Start the Studio](#3-start-the-studio)
 4. [Put the bands on your Wi-Fi](#4-put-the-bands-on-your-wi-fi)
 5. [See the heatmap and do the squeeze test](#5-see-the-heatmap-and-do-the-squeeze-test)
@@ -76,8 +77,9 @@ You do this once. It needs internet and takes about five to ten minutes.
 1. Open the `windows` folder and double-click **Install-OpenMuscle.bat**.
 2. If Windows shows a blue **Windows protected your PC** window, click **More info**, then **Run anyway**.
 3. The black window counts through the steps. If Python 3.10 or newer is missing, the installer tries to install it for you; if that does not work it opens the Python download page. Download it, run it, and **tick "Add python.exe to PATH"** on its first screen, then run the installer again.
-4. Near the end it asks **Add the firewall rule now? (Y/n)**. Press Enter (yes). Windows then shows a normal "Do you want to allow this app to make changes" question: answer **Yes**. This lets the bands reach your computer.
-5. Wait for **OpenMuscle is installed.** Press any key to close the window.
+4. Near the end it asks **Add the firewall rule now? (Y/n)**. Press Enter (yes). Windows then shows a normal "Do you want to allow this app to make changes" question (a dark screen may dim behind it): answer **Yes**. This lets the bands reach your computer. If you miss it, the installer carries on without the rule; run it again and answer Yes.
+5. The installer ends with a quick computer check. While it runs, a window called **Windows Security Alert** may pop up saying Windows Defender Firewall has blocked some features of Python (`python.exe`). Leave **Private networks** ticked, leave **Public networks** unticked, and click **Allow access**. It can appear behind the black window; look for it on the taskbar if the installer seems stuck.
+6. Wait for **OpenMuscle is installed.** Press any key to close the window.
 
 ### macOS
 
@@ -96,11 +98,25 @@ You do this once. It needs internet and takes about five to ten minutes.
 
 Problems? See [Installing and starting](troubleshooting.md#installing-and-starting). If the installer will not run on your computer, use [Install by hand](#install-by-hand) at the end of this page.
 
+## 2b. Windows: check your Wi-Fi is set to Private
+
+Mac and Linux users can skip to step 3.
+
+Windows sorts every Wi-Fi network into **Public** or **Private**. Some home networks get marked Public. The firewall rule from step 2 covers Private networks only, so on a Public network your computer would never see the bands, even though everything else is correct. Check it now, before you go on:
+
+1. Open **Settings**, then **Network & internet**, then **Wi-Fi**.
+2. On Windows 11 click the properties of your Wi-Fi network (the line with its name, at the top). On Windows 10 click the name of the network you are connected to.
+3. Under **Network profile type**, choose **Private** (Windows may word it "Private network").
+
+Use your normal home Wi-Fi for this, not a guest network. If you later use your phone as a hotspot, check the same setting for the hotspot.
+
+**You should see** **Private** selected under **Network profile type**. If it already said Private, there is nothing to change.
+
 ## 3. Start the Studio
 
 1. Start OpenMuscle from its shortcut: double-click **OpenMuscle** on your Desktop (Windows and Mac), or open **OpenMuscle** from the applications menu (Linux).
 2. A black window opens. **Leave it open** while you work; closing it stops OpenMuscle.
-3. The first time, your computer may ask whether to let Python or OpenMuscle receive network connections (macOS: "accept incoming network connections" and "find and connect to devices on your local network"; Windows: the firewall prompt). Choose **Allow**, and on Windows keep **Private networks** ticked.
+3. The first time, your computer may ask whether to let Python or OpenMuscle receive network connections (macOS: "accept incoming network connections" and "find and connect to devices on your local network"). Choose **Allow**. On Windows this question normally appeared already at the end of the installer (step 2); if it shows up now, choose **Allow access** and keep only **Private networks** ticked.
 
 **You should see** in the black window:
 
@@ -119,7 +135,7 @@ and your browser opens a page called **OpenMuscle Studio**. If it does not open,
 
 ## 4. Put the bands on your Wi-Fi
 
-You do this once per band. The Studio walks you through it. Keep each band plugged into its USB cable until the page says it is online; after that it also runs on battery.
+You do this once per band. The Studio walks you through it. The band gets its Wi-Fi name and password over the USB cable from the **Set up a device** wizard in the Studio; the details are in [wifi-setup.md](wifi-setup.md). Keep each band plugged into its USB cable until the page says it is online; after that it also runs on battery.
 
 1. In the Studio, click **Set up a device** (top right).
 2. Follow the pages: **Get ready**, **Choose** (**A band**), **Join** (connect your computer to the `OM-flexgrid-...` network named on the band's sticker, using the setup password from the sticker), **Your Wi-Fi** (pick your network and type its password), **Finish**.
@@ -204,7 +220,7 @@ Everything is saved on your computer, in the `OpenMuscle` folder in your home fo
 
 ## Notes for your operating system
 
-- **Windows:** keep the black OpenMuscle window open and do not click inside it (clicking can pause it; press Enter or Esc if the page stops updating). If SmartScreen blocks the installer, use **More info**, then **Run anyway**.
+- **Windows:** the Wi-Fi must be set to **Private** ([step 2b](#2b-windows-check-your-wi-fi-is-set-to-private)), or the bands will not be found. Keep the black OpenMuscle window open and do not click inside it (clicking can pause it; press Enter or Esc if the page stops updating). If SmartScreen blocks the installer, use **More info**, then **Run anyway**.
 - **Mac:** allow the "accept incoming network connections" prompt. The first time the camera starts, macOS asks for camera permission for your browser.
 - **Linux:** if a firewall is on, run `sudo ufw allow 3140:3141/udp`.
 - **Everywhere:** use Chrome or Edge. Keep the laptop plugged in and awake while recording; closing the lid puts it to sleep.

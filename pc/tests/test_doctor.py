@@ -291,6 +291,46 @@ def test_public_network_with_a_private_only_rule(calm):
     c = _by_id(r)["firewall"]
     assert c["status"] == "fail" and "Public" in c["detail"]
     assert "Public" in c["fix"] and "Private" in c["fix"]
+    # Plain words for a non-technical reader: where to click and what to pick.
+    for words in ("Settings", "Network & internet", "Wi-Fi", "Network profile type"):
+        assert words in c["fix"], words
+    assert c["fix"].startswith("Windows has marked your Wi-Fi as Public")
+    assert r["firewall"]["how_to_fix"] == c["fix"]
+    # The status logic is unchanged: the same Public network with a rule that
+    # covers it (installed with --public) passes and needs no advice.
+
+
+def test_public_network_with_a_public_rule_passes(calm):
+    calm["fw"] = _fw(_rule("OpenMuscle", ports="3140,3141", profiles="Public"),
+                     profile="public")
+    c = _by_id(_run(calm))["firewall"]
+    assert c["status"] == "pass"
+
+
+def test_private_network_advice_does_not_mention_public(calm):
+    calm["fw"] = _fw(NOISE, profile="private")
+    r = _run(calm)
+    assert "Public" not in _by_id(r)["firewall"]["fix"]
+    assert "Public" not in r["firewall"]["how_to_fix"]
+
+
+def test_public_advice_is_given_even_if_the_rules_are_unreadable():
+    text = doctor.firewall_advice("windows", {"readable": False, "profile": "public"})
+    assert "Network profile type" in text and "Private" in text
+    assert "Public" not in doctor.firewall_advice("windows", {"profile": "domain"})
+
+
+def test_public_network_changes_the_firewall_cause_action(calm):
+    calm["fw"] = _fw(_rule("OpenMuscle", ports="3140,3141", profiles="Private"),
+                     profile="public")
+    r = _run(calm)
+    assert r["likely_cause"] == "firewall"
+    assert "Network profile type" in r["advice"]["action"]
+    calm["fw"] = _fw(NOISE, profile="private")
+    r = _run(calm)
+    assert r["likely_cause"] == "firewall"
+    assert "Network profile type" not in r["advice"]["action"]
+    assert "openmuscle firewall" in r["advice"]["action"]
 
 
 def test_unreadable_firewall_is_a_warning_not_a_guess(calm):

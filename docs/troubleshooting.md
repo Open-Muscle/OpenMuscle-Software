@@ -94,12 +94,12 @@ OpenMuscle asks Windows and macOS not to sleep from inactivity, but closing the 
 
 ## A band does not show up in the Studio
 
-**You should see**, a few seconds after the band joined your Wi-Fi, a row for the band with a heatmap. Instead you see **No band found yet.** Check these in order:
+**You should see**, a few seconds after the band joined your Wi-Fi, a row for the band with a heatmap. Instead you see **No band found yet.** On Windows, check the network profile first. The most common cause is a Wi-Fi network that Windows calls **Public**: the installer's firewall rule covers Private networks only, so the bands cannot reach your computer. Open Settings, Network & internet, Wi-Fi, the properties of your network (Windows 10: click its name), and under **Network profile type** choose **Private** (more in [Firewall](#firewall-windows-mac-linux)). Then check these in order:
 
 1. **Is the band on and joined?** Look at its light. A powered band always shows a faint glow, and a dark light means it is switched off (press the power button once). After joining it is green for 2 seconds, then it pulses every 3 seconds (waiting for a computer) or is steady orange (a computer is receiving). If it is still blinking blue, it is not on your Wi-Fi yet: see [wifi-setup.md](wifi-setup.md). (A band with a screen also shows `WIFI OK` and then the heatmap, and tapping **MENU** shows its status page with its address. The kit bands have no screen, so use the light; the band's address is also in your router's list of devices.)
 2. **Is your computer on the same Wi-Fi?** Check the Wi-Fi icon. A computer on the guest network, on another router, on a VPN, or still on the band's `OM-` network cannot see the band. Turn off any VPN while you work.
 3. **Is the Wi-Fi 2.4 GHz and is it a normal network?** See [Wi-Fi problems](#wi-fi-problems). Guest networks and networks with a sign-in page hide devices from each other.
-4. **Is the firewall blocking it?** This is the most common reason on Windows. See [Firewall](#firewall-windows-mac-linux).
+4. **Is the firewall blocking it?** On Windows this is often the Public profile from the line above, or a missed firewall prompt. See [Firewall](#firewall-windows-mac-linux).
 5. **Wait 30 seconds, then use the search buttons.** In the Studio, click **Add a device by IP address** under the band cards, then **Scan subnet**. If you know the band's address (shown on its status page, or on your router's list of devices), type it into the box and press the plus button.
 6. **Restart the band.** Turn it off and on with the power button, or unplug and replug USB-C, and wait for the green light (or `WIFI OK` on a band with a screen).
 7. **Run `openmuscle doctor`** ([above](#run-the-check-first)). The last line names the most likely cause.
@@ -194,7 +194,7 @@ A firewall can stop the bands' readings reaching your computer. OpenMuscle needs
 ### Windows
 
 1. Easiest: in PowerShell run `& "$env:USERPROFILE\OpenMuscle\app\Scripts\openmuscle.exe" firewall`. It shows the rule it will add, asks, and only then opens the normal Windows administrator prompt. Answer **Yes**.
-2. A rule applies to one network type. If Windows calls your Wi-Fi **Public**, a Private-only rule does nothing: either change the network to Private (Settings, Network and internet, Wi-Fi, your network, **Private**), or run the same command with `--public` added.
+2. A rule applies to one network type. If Windows calls your Wi-Fi **Public**, a Private-only rule does nothing, and this is the most common reason bands are not found. Change the network to Private: Settings, Network & internet, Wi-Fi, open the properties of your network (Windows 10: click its name), and under **Network profile type** choose **Private**. Or run the same command with `--public` added.
 3. Or add the rule yourself, in an administrator PowerShell: `New-NetFirewallRule -DisplayName "OpenMuscle UDP 3140-3141" -Direction Inbound -Protocol UDP -LocalPort 3140,3141 -Action Allow -Profile Private,Domain`.
 4. Antivirus programs with their own firewall (not Windows Security) need the same two ports allowed for Python.
 
@@ -234,7 +234,7 @@ The sentence next to the **Record** button says what is wrong:
 
 | It says | What to do |
 |---|---|
-| No band found yet. Turn your band on and wait about 10 seconds. | See [A band does not show up](#a-band-does-not-show-up-in-the-studio) |
+| No band found yet. Turn your band on and wait about 10 seconds. | On Windows, first check that your Wi-Fi is set to **Private** (Settings, Network & internet, Wi-Fi, your network, **Network profile type**); a Public network hides the bands. Then see [A band does not show up](#a-band-does-not-show-up-in-the-studio) |
 | The camera is not on. Open the Camera panel on this page, press Start camera and hold your hand up. | See [Camera problems](#camera-problems) |
 | The camera has stopped sending hand data. | Keep the Camera panel on this page open and the tab in front |
 | Tell me which arm each band is on. | Set **left** or **right** with the **role** menu on each band's card |

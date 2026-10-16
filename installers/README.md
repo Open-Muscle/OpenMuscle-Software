@@ -47,10 +47,22 @@ else; the launcher remembers it.
      installer, tick **Add python.exe to PATH**, finish, then double-click
      `Install-OpenMuscle.bat` again.
    - It asks once whether to add the Windows firewall rule the bands need (UDP ports
-     3140 and 3141, home and work networks only). Answer Y, then Yes to the Windows
-     administrator question. Nothing else asks for administrator rights.
+     3140 and 3141, Private and Domain networks only). Answer Y, then Yes to the Windows
+     "allow this app to make changes" (administrator) question. Nothing else asks for
+     administrator rights. If you miss it, run the installer again.
+   - During the last step, the computer check, a **Windows Security Alert** may say Windows
+     Defender Firewall has blocked some features of Python (`python.exe`). Leave **Private
+     networks** ticked, leave Public unticked, and click **Allow access**. It can open
+     behind the installer window; look in the taskbar if the installer seems to wait.
 4. When it says "OpenMuscle is installed", double-click the **OpenMuscle** icon on your
    Desktop (or find it in the Start menu).
+5. **Check that Windows calls your Wi-Fi Private.** Windows sorts each network into Public
+   or Private, and some home networks are marked Public. The firewall rule covers Private
+   and Domain networks only, so on a Public network the bands are never found, with no
+   error shown. Open Settings, Network & internet, Wi-Fi, open the properties of your
+   network (on Windows 10, click its name), and under **Network profile type** choose
+   **Private**. If you would rather leave the network Public, run
+   `openmuscle firewall --public` once instead.
 
 Files in `installers\windows`:
 

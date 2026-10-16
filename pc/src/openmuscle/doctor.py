@@ -394,6 +394,9 @@ def infer_cause(facts):
     """
     devices = facts.get("devices") or []
     pc_net = netutil.subnet_of(facts.get("pc_host"))
+    fw_action = (PUBLIC_NETWORK_FIX if facts.get("fw_profile") == "public" else
+                 "Allow OpenMuscle through the firewall (Windows: run "
+                 "'openmuscle firewall').")
     # "Here": announced itself by broadcast a moment ago. A device only found by
     # a TCP probe, or remembered from last time, says nothing about broadcasts
     # reaching us, and one on this very computer (a simulator) proves nothing
@@ -426,8 +429,7 @@ def infer_cause(facts):
             return ("firewall",
                     "The band is found and connected, but its data is not arriving, "
                     "so the firewall is probably blocking incoming UDP data.",
-                    "Allow OpenMuscle through the firewall (Windows: run "
-                    "'openmuscle firewall').")
+                    fw_action)
         return ("none", "Bands are reaching this computer.", "")
     if facts.get("data_flowing"):
         return ("none", "Data is arriving from a band.", "")
@@ -437,8 +439,7 @@ def infer_cause(facts):
         return ("firewall",
                 "The firewall is probably blocking the bands from reaching this "
                 "computer.",
-                "Allow OpenMuscle through the firewall (Windows: run "
-                "'openmuscle firewall').")
+                fw_action)
     elsewhere = [d for d in devices
                  if netutil.subnet_of(d["ip"]) and pc_net
                  and netutil.subnet_of(d["ip"]) != pc_net
@@ -455,8 +456,7 @@ def infer_cause(facts):
         return ("firewall",
                 "A band answers when asked, but nothing it sends is reaching this "
                 "computer, so the firewall is probably blocking incoming UDP.",
-                "Allow OpenMuscle through the firewall (Windows: run "
-                "'openmuscle firewall').")
+                fw_action)
     ssid = facts.get("ssid") or ""
     if ssid and _GUEST_HINT.search(ssid) and not ssid.upper().startswith("OM-"):
         return ("client_isolation",
@@ -478,16 +478,25 @@ def infer_cause(facts):
             "still in setup), and that this computer is on the same Wi-Fi.")
 
 
+PUBLIC_NETWORK_FIX = (
+    "Windows has marked your Wi-Fi as Public, and a Public network hides this "
+    "computer from the bands. Switch it to Private: open Settings, then Network "
+    "& internet, then Wi-Fi, click the name of your Wi-Fi network, and under "
+    "Network profile type choose Private. Then run 'openmuscle firewall' once if "
+    "you have not, and answer yes to the Windows prompt. (Or run "
+    "'openmuscle firewall --public' to allow the bands on a Public network too.)")
+
+
+def _is_public(fwinfo):
+    return bool(fwinfo) and (fwinfo.get("profile") or "").lower() == "public"
+
+
 def firewall_advice(plat, fwinfo=None):
     if plat == "windows":
-        text = ("Run 'openmuscle firewall' and answer yes to the Windows prompt; it "
+        if _is_public(fwinfo):
+            return PUBLIC_NETWORK_FIX
+        return ("Run 'openmuscle firewall' and answer yes to the Windows prompt; it "
                 "allows UDP 3140 and 3141 for Private networks.")
-        if fwinfo and fwinfo.get("readable") and \
-                (fwinfo.get("profile") or "").lower() == "public":
-            text += (" Your network is set to Public: change it to Private in "
-                     "Windows Settings > Network & internet > Wi-Fi > your network, "
-                     "or run 'openmuscle firewall --public'.")
-        return text
     if plat == "darwin":
         return ("Open System Settings > Network > Firewall > Options and allow "
                 "incoming connections for Python, or turn the firewall off while "
@@ -653,7 +662,10 @@ def run_doctor(http_port=8000, udp_port=3141, announce_port=3140,
     facts = {
         "lan_ip_ok": netutil.is_usable_ipv4(ctx["pc_host"]),
         "listener_ok": False if listener_bad else None,
-        "firewall_blocked": fw_blocked, "beacon_recent": beacon_recent,
+        "firewall_blocked": fw_blocked,
+        "fw_profile": ((fwinfo.get("profile") or "").lower()
+                       if plat == "windows" and isinstance(fwinfo, dict) else None),
+        "beacon_recent": beacon_recent,
         "data_flowing": data_flowing, "ssid": ssid, "pc_host": ctx["pc_host"],
         "devices": devices,
     }
