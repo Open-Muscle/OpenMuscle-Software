@@ -150,7 +150,8 @@ A model is saved as files in the models folder and can be loaded again later.
 **OLED** The small screen on a labeler, and on a band that has one, that shows
 its name, Wi-Fi status and setup details. The kit bands do not have this screen:
 read the setup name and password from the band's sticker and watch its light
-instead.
+instead. A powered band always shows a faint glow; a dark light means
+it is switched off.
 
 ## P
 
@@ -207,7 +208,8 @@ arm remembered. Start one with **New session**.
 **Setup mode** What a band does when it has no Wi-Fi to join. It makes its own
 temporary network (an access point), named `OM-...`, so you can tell it your Wi-Fi.
 Its light blinks blue; on a band without a screen the pattern is two quick blinks
-then a pause.
+then a pause. A band can start setup mode only with its USB cable plugged in, not
+on battery alone.
 
 **Sidecar files** Small companion files saved next to a recording's CSV. They end
 in `.meta.json` (who, which arm, how it went), `.sensor.jsonl` (every band reading

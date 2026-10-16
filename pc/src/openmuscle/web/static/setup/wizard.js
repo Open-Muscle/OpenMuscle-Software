@@ -43,12 +43,12 @@
         prepareReady: 'I am ready',
 
         kindTitle: 'What are you setting up?',
-        kindIntro: 'Turn the device on and check its light. The kit bands have no screen: their name and password are on the sticker on the band.',
+        kindIntro: 'Turn the device on and check its light. For a band, plug it into its USB cable first and keep it plugged in: on battery alone a band cannot start its setup network. The kit bands have no screen: their name and password are on the sticker on the band.',
         kinds: {
             band: {
                 title: 'A band',
-                look: 'The light blinks blue, two quick blinks then a pause. That is normal for a band without a screen. (A band with a screen says WIFI SETUP.)',
-                reset: 'Not blinking blue? If the light is off, press the power button once. Otherwise hold MENU and SELECT together for 3 seconds. The light then goes back to blinking blue.',
+                look: 'With the USB cable plugged in, the light blinks blue, two quick blinks then a pause, over a faint glow. That is normal for a band without a screen. (A band with a screen says WIFI SETUP.)',
+                reset: 'Only the faint glow, and no blue blink? Check the USB cable is plugged in. A dark light means the band is switched off: press the power button once. Otherwise hold MENU and SELECT together for 3 seconds. The light then goes back to blinking blue.',
             },
             labeler: {
                 title: 'A finger labeler (optional)',
@@ -76,6 +76,7 @@
                 'Type the Setup password from the sticker on the device (on a device with a screen, the part after PW), then connect.',
             ],
         },
+        joinUsbBand: 'Keep the band plugged into its USB cable during setup. On battery alone it cannot start its setup network.',
         joinBrief: 'This computer will briefly leave your usual Wi-Fi, so web pages may stop loading for a few minutes. This page keeps working. We bring you back at the end.',
         joinWaiting: 'Looking for the device. This ticks green as soon as your computer is connected to it.',
         joinFound: title => 'Found ' + title,

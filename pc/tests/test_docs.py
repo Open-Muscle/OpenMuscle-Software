@@ -186,3 +186,52 @@ def test_kit_pages_offer_the_no_screen_path():
     row = [l for l in trouble.splitlines()
            if l.startswith("| Blue, two quick blinks then a pause")]
     assert row and "normal" in row[0].lower() and "contact support" not in row[0]
+
+
+def _html_text(path):
+    """Visible words of an HTML file: tags dropped, entities left alone."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", _read(path)))
+
+
+def test_setup_is_described_with_usb_and_the_faint_glow():
+    """The band keeps its status light faintly lit whenever it is powered, so
+    dark means switched off, and its setup network does not start on battery
+    alone: every place that describes setup says to plug in USB first."""
+    wifi = _read(DOCS / "wifi-setup.md")
+    started = _read(DOCS / "getting-started.md")
+    trouble = _read(DOCS / "troubleshooting.md")
+    for name, text in (("wifi-setup.md", wifi), ("getting-started.md", started),
+                       ("troubleshooting.md", trouble)):
+        assert "faint glow" in text, name
+        assert "battery alone" in text, name
+    # The light table has the glow row and a dark row that means "switched off".
+    rows = [l for l in trouble.splitlines() if l.startswith("| ")]
+    assert any(l.startswith("| Faint glow, always") and "powered on" in l for l in rows)
+    assert any(l.startswith("| Dark") and "switched off" in l for l in rows)
+    stuck = [l for l in rows if l.startswith("| Faint glow only")]
+    assert stuck and "never blinks blue" in stuck[0] and "Plug the band into USB" in stuck[0]
+    # The old wrong rows and instructions are gone.
+    for text in (wifi, started, trouble):
+        assert "battery empty with USB unplugged" not in text
+        assert "plug in USB-C for a few minutes" not in text
+        assert "A band switches on whenever USB power is connected" not in text
+    # The step that starts setup says to plug in before anything else.
+    assert "Plug the band into USB, turn it on" in wifi
+    assert "faint glow" in _read(DOCS / "studio-tour.md")
+    assert "faint glow" in _read(DOCS / "glossary.md")
+
+
+def test_cheat_sheet_light_table_and_setup_steps_match_the_band():
+    sheet = DOCS / "cheat-sheet" / "openmuscle-kit-cheat-sheet.html"
+    text = _html_text(sheet)
+    assert "Faint glow, always." in text
+    assert "dark means switched off" in text
+    assert "Dark. Switched off." in text
+    assert "Light off" not in text
+    assert "battery empty with USB unplugged" not in text
+    # Page 1 switch-on step and board legend, page 3 Wi-Fi step 1.
+    assert "Keep USB plugged in for Wi-Fi setup" in text
+    assert "on battery alone the band cannot start its setup network" in text
+    assert "Plug in for Wi-Fi setup" in text
+    assert "USB cable plugged in, blue light blinking" in text
+    assert EM_DASH not in _read(sheet)
