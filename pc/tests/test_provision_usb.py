@@ -324,6 +324,46 @@ def test_open_serial_sets_dtr_and_rts_before_the_open(monkeypatch):
     assert not [e for e in events[i_open + 1:] if e[0] == "set"]
 
 
+def test_a_real_pyserial_port_object_works_with_the_session(monkeypatch):
+    """pyserial's in-memory loop:// port (no hardware, no COM port) echoes every
+    write back, so the session also sees its own command line and must ignore
+    it; the band's reply is added behind the echo."""
+    serial = pytest.importorskip("serial")
+
+    class LoopBand:
+        def __init__(self):
+            self.port = serial.serial_for_url("loop://", timeout=usb.POLL_S)
+            self.sent = []
+
+        def reset_input_buffer(self):
+            self.port.reset_input_buffer()
+
+        def flush(self):
+            pass
+
+        def readline(self):
+            return self.port.readline()
+
+        def close(self):
+            self.port.close()
+
+        def write(self, data):
+            cmd = json.loads(data)
+            self.sent.append(cmd)
+            self.port.write(data)                                   # the loop's echo
+            self.port.write(b"I (5) boot: log noise\r\n")
+            ack = {"v": "1.0", "type": "ack", "id": cmd["id"], "ok": True,
+                   "data": {"id": BAND_ID, "role": "left", "fw": "1", "state": "unprovisioned",
+                            "wifi_ssid": "", "ip": "", "usb_console": 1}}
+            self.port.write((json.dumps(ack) + "\r\n").encode())
+
+    band = LoopBand()
+    monkeypatch.setattr(usb, "_open_serial", lambda port: band)
+    got = usb.info("loop://", timeout=1.0)
+    assert got.band_id == BAND_ID and got.state == "unprovisioned"
+    assert band.sent[0]["data"] == {"verb": "get_info"}
+
+
 def test_open_serial_permission_denied_on_linux_names_the_dialout_group(monkeypatch):
     serial = pytest.importorskip("serial")
 
